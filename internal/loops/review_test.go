@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/lionelchamorro/orquesta-lite/internal/results"
-	"github.com/lionelchamorro/orquesta-lite/internal/tasks"
+	"github.com/lionelchamorro/orquestalite/internal/results"
+	"github.com/lionelchamorro/orquestalite/internal/tasks"
 )
 
 type stubReviewDeps struct {

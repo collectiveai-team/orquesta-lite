@@ -1,15 +1,14 @@
-# pyorquesta
+# orquestalite
 
 Minimalist **Go** orchestrator for the **Ralph** technique: a single binary that
 drives multiple CLI-based AI agents in nested loops to autonomously implement a
 plan.
 
-> Implementation language is Go despite the `py-` prefix in the project name.
-> The name is kept as an artefact and is not load-bearing.
+> The CLI command is `orq-lite`; the project/runtime name is `orquestalite`.
 
 ## Stack
 
-- **Go** (modules, single binary output `pyorquesta`).
+- **Go** (modules, single binary output `orq-lite`).
 - Standard library first; only add deps when needed (likely candidates: a JSON
   schema validator and a TUI/colour library for `status --watch`).
 - Subprocess execution via `os/exec`. JSON via `encoding/json`. Logging via
@@ -20,7 +19,7 @@ plan.
 - **plan** — raw user input describing what to build. Free-form (markdown / text).
   Lives outside the orchestrator's structured state.
 - **task** — atomic unit of work extracted from a plan. Sized for one focused
-  change. Lives in `.pyorquesta/tasks.json`.
+  change. Lives in `.orquestalite/tasks.json`.
 - **role** — function performed in the team: `parser`, `coder`, `tester`,
   `critic`, `reviewer`. Roles are abstract; agents are concrete.
 - **agent** — concrete binding of a role to a CLI tool + model
@@ -40,7 +39,7 @@ plan.
   with a prompt as argument. The orchestrator does not implement tool-use,
   file editing, or test execution — it delegates to the underlying CLIs.
 - **JSON result contracts at known paths.** Each agent's last action is to
-  write `.pyorquesta/results/<role>.json`. The orchestrator parses this file
+  write `.orquestalite/results/<role>.json`. The orchestrator parses this file
   to determine outcome. Stdout and exit codes are not used as control signals
   (CLIs like `claude -p` always exit 0 absent crashes).
 - **Atomic task granularity.** The `parser` role splits the plan into small,
@@ -48,7 +47,7 @@ plan.
 
 ## Task schema
 
-`.pyorquesta/tasks.json`:
+`.orquestalite/tasks.json`:
 
 ```json
 {
@@ -90,11 +89,11 @@ fallbacks after) plus role-specific fields (prompt, result path, timeout).
     }
   },
   "roles": {
-    "parser":   { "agents": ["claude_opus"],                                 "prompt": "prompts/parser.md",   "result_path": ".pyorquesta/results/parser.json",   "timeout_seconds": 300 },
-    "coder":    { "agents": ["claude_sonnet", "codex_gpt5", "claude_opus"],  "prompt": "prompts/coder.md",    "result_path": ".pyorquesta/results/coder.json",    "timeout_seconds": 900 },
-    "tester":   { "agents": ["claude_sonnet", "codex_gpt5"],                 "prompt": "prompts/tester.md",   "result_path": ".pyorquesta/results/tester.json",   "timeout_seconds": 600 },
-    "critic":   { "agents": ["claude_opus", "claude_sonnet"],                "prompt": "prompts/critic.md",   "result_path": ".pyorquesta/results/critic.json",   "timeout_seconds": 300 },
-    "reviewer": { "agents": ["claude_opus"],                                 "prompt": "prompts/reviewer.md", "result_path": ".pyorquesta/results/reviewer.json", "timeout_seconds": 600 }
+    "parser":   { "agents": ["claude_opus"],                                 "prompt": "prompts/parser.md",   "result_path": ".orquestalite/results/parser.json",   "timeout_seconds": 300 },
+    "coder":    { "agents": ["claude_sonnet", "codex_gpt5", "claude_opus"],  "prompt": "prompts/coder.md",    "result_path": ".orquestalite/results/coder.json",    "timeout_seconds": 900 },
+    "tester":   { "agents": ["claude_sonnet", "codex_gpt5"],                 "prompt": "prompts/tester.md",   "result_path": ".orquestalite/results/tester.json",   "timeout_seconds": 600 },
+    "critic":   { "agents": ["claude_opus", "claude_sonnet"],                "prompt": "prompts/critic.md",   "result_path": ".orquestalite/results/critic.json",   "timeout_seconds": 300 },
+    "reviewer": { "agents": ["claude_opus"],                                 "prompt": "prompts/reviewer.md", "result_path": ".orquestalite/results/reviewer.json", "timeout_seconds": 600 }
   },
   "limits": {
     "max_review_cycles": 3,
@@ -164,7 +163,7 @@ Standard interpolation variables passed by the orchestrator:
   Failed tasks: orchestrator runs `git checkout .` before moving on, so the
   next task starts from a clean tree. Uncommitted work from the failed
   attempt is discarded.
-- **Global memory file**, write-on-discretion: `.pyorquesta/memory.md`.
+- **Global memory file**, write-on-discretion: `.orquestalite/memory.md`.
   Each role's result schema includes an optional `notes_for_memory: string | null`
   field. The orchestrator appends non-null entries with metadata:
 
@@ -193,7 +192,7 @@ orchestrator validates the shape and uses it to drive control flow.
   "notes_for_memory": null
 }
 ```
-The orchestrator persists these to `.pyorquesta/tasks.json` adding
+The orchestrator persists these to `.orquestalite/tasks.json` adding
 `status: "pending"`, `attempts: 0`, `created_in_review_cycle`.
 
 ### `coder.json`
@@ -267,30 +266,30 @@ condition stops the outer loop. The reviewer prompt receives:
 ## CLI surface
 
 ```
-pyorquesta init                # scaffold team.json + prompts/ + .pyorquesta/
-pyorquesta plan plan.md        # run parser, write tasks.json, do NOT start loops
-pyorquesta run                 # run loops over existing tasks.json
-pyorquesta run plan.md         # plan + run in one call (AFK mode)
-pyorquesta status              # print current tasks.json with statuses
-pyorquesta reset               # wipe .pyorquesta/ state
+orq-lite init                # scaffold team.json + prompts/ + .orquestalite/
+orq-lite plan plan.md        # run parser, write tasks.json, do NOT start loops
+orq-lite run                 # run loops over existing tasks.json
+orq-lite run plan.md         # plan + run in one call (AFK mode)
+orq-lite status              # print current tasks.json with statuses
+orq-lite reset               # wipe .orquestalite/ state
 ```
 
 - **Plan input is free-form markdown.** The parser role is responsible for
   splitting verbose human intent into atomic, testable tasks.
-- **Resume is idempotent.** `pyorquesta run` without args continues the
-  existing `tasks.json`. `pyorquesta run plan.md` with prior state asks for
+- **Resume is idempotent.** `orq-lite run` without args continues the
+  existing `tasks.json`. `orq-lite run plan.md` with prior state asks for
   confirmation (or `--force`).
-- **`pyorquesta plan plan.md --append`** adds tasks to an existing backlog.
+- **`orq-lite plan plan.md --append`** adds tasks to an existing backlog.
 
 ## Observability
 
 - **Dual output**: human-readable lines on stdout + structured JSONL events
-  appended to `.pyorquesta/run.log`. The log file is the canonical history.
-- **Result files are not versioned.** `.pyorquesta/results/<role>.json` always
+  appended to `.orquestalite/run.log`. The log file is the canonical history.
+- **Result files are not versioned.** `.orquestalite/results/<role>.json` always
   holds the latest result. The full history of each agent invocation lives in
   `run.log` as `agent_run` events with a `result_snapshot` field containing the
   JSON the agent returned.
-- **Log rotation** at 50MB → `.pyorquesta/run-<timestamp>.log.gz`.
+- **Log rotation** at 50MB → `.orquestalite/run-<timestamp>.log.gz`.
 
 ### Event types in `run.log`
 
@@ -304,7 +303,7 @@ pyorquesta reset               # wipe .pyorquesta/ state
 {"ts":"...","event":"cycle_end","cycle":1,"new_tasks_proposed":4,"reviewer_should_stop":false}
 ```
 
-### `pyorquesta status`
+### `orq-lite status`
 
 - One-shot: prints the tasks table (id, title, status, attempts, failure_reason)
   + a "currently:" line derived from the tail of `run.log`.
@@ -312,10 +311,10 @@ pyorquesta reset               # wipe .pyorquesta/ state
 
 ### Repo hygiene
 
-- `.pyorquesta/` is added to `.gitignore` by `pyorquesta init`. The directory
+- `.orquestalite/` is added to `.gitignore` by `orq-lite init`. The directory
   holds runtime state, never committed to the user's repo.
 - `team.json` and `prompts/` are committed (they are project configuration).
-- `plan.md` location is at the user's discretion; pyorquesta accepts any path.
+- `plan.md` location is at the user's discretion; orq-lite accepts any path.
 
 ## Fix loop semantics
 
@@ -334,4 +333,4 @@ For each task, the orchestrator runs the fix loop:
    for reading `tester.json` / `critic.json` and embedding their feedback
    into the next coder prompt. Agents do not read each other's result files
    directly — only the orchestrator does. This keeps the file layout an
-   internal detail of pyorquesta.
+   internal detail of orq-lite.

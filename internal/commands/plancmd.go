@@ -8,11 +8,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/lionelchamorro/orquesta-lite/internal/config"
-	"github.com/lionelchamorro/orquesta-lite/internal/eventlog"
-	"github.com/lionelchamorro/orquesta-lite/internal/fallback"
-	"github.com/lionelchamorro/orquesta-lite/internal/results"
-	"github.com/lionelchamorro/orquesta-lite/internal/tasks"
+	"github.com/lionelchamorro/orquestalite/internal/config"
+	"github.com/lionelchamorro/orquestalite/internal/eventlog"
+	"github.com/lionelchamorro/orquestalite/internal/fallback"
+	"github.com/lionelchamorro/orquestalite/internal/results"
+	"github.com/lionelchamorro/orquestalite/internal/tasks"
 )
 
 // PlanWithLiveCaller is a convenience wrapper that wires up the real subprocess
@@ -25,15 +25,15 @@ func PlanWithLiveCaller(ctx context.Context, projectDir, planPath string, append
 		return err
 	}
 
-	logPath := filepath.Join(projectDir, ".pyorquesta", "run.log")
+	logPath := filepath.Join(projectDir, ".orquestalite", "run.log")
 	logger, err := eventlog.Open(logPath, os.Stdout)
 	if err != nil {
 		return err
 	}
 	defer logger.Close()
 
-	memPath := filepath.Join(projectDir, ".pyorquesta", "memory.md")
-	tasksPath := filepath.Join(projectDir, ".pyorquesta", "tasks.json")
+	memPath := filepath.Join(projectDir, ".orquestalite", "memory.md")
+	tasksPath := filepath.Join(projectDir, ".orquestalite", "tasks.json")
 
 	fc := fallback.NewCaller(fallback.Config{
 		InitialBackoff: time.Duration(cfg.RateLimitBackoff.InitialSeconds) * time.Second,
@@ -60,7 +60,7 @@ type ParserCaller interface {
 }
 
 // Plan reads the plan file at planPath, calls the parser via caller, converts
-// the resulting tasks, and writes them to <projectDir>/.pyorquesta/tasks.json.
+// the resulting tasks, and writes them to <projectDir>/.orquestalite/tasks.json.
 // When appendMode is true, any existing tasks.json is loaded first so that new
 // tasks are appended rather than overwriting the list.
 func Plan(ctx context.Context, projectDir, planPath string, appendMode bool, caller ParserCaller) error {
@@ -74,7 +74,7 @@ func Plan(ctx context.Context, projectDir, planPath string, appendMode bool, cal
 		return fmt.Errorf("parser: %w", err)
 	}
 
-	tasksPath := filepath.Join(projectDir, ".pyorquesta", "tasks.json")
+	tasksPath := filepath.Join(projectDir, ".orquestalite", "tasks.json")
 
 	var tl *tasks.TaskList
 	if appendMode {

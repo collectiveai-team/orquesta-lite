@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/lionelchamorro/orquesta-lite/internal/results"
-	"github.com/lionelchamorro/orquesta-lite/internal/tasks"
+	"github.com/lionelchamorro/orquestalite/internal/results"
+	"github.com/lionelchamorro/orquestalite/internal/tasks"
 )
 
 type stubParserCaller struct {
@@ -23,7 +23,7 @@ func TestPlan_WritesTasksJSON(t *testing.T) {
 	dir := t.TempDir()
 	planPath := filepath.Join(dir, "plan.md")
 	_ = os.WriteFile(planPath, []byte("# build x\nadd login flow"), 0o644)
-	_ = os.MkdirAll(filepath.Join(dir, ".pyorquesta"), 0o755)
+	_ = os.MkdirAll(filepath.Join(dir, ".orquestalite"), 0o755)
 
 	stub := &stubParserCaller{out: results.ParserResult{Tasks: []results.ParserTask{
 		{Title: "scaffold", Description: "set up repo", Priority: 1},
@@ -34,7 +34,7 @@ func TestPlan_WritesTasksJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	raw, _ := os.ReadFile(filepath.Join(dir, ".pyorquesta", "tasks.json"))
+	raw, _ := os.ReadFile(filepath.Join(dir, ".orquestalite", "tasks.json"))
 	var tl tasks.TaskList
 	if err := json.Unmarshal(raw, &tl); err != nil {
 		t.Fatal(err)
@@ -49,10 +49,10 @@ func TestPlan_WritesTasksJSON(t *testing.T) {
 
 func TestPlan_AppendPreservesExisting(t *testing.T) {
 	dir := t.TempDir()
-	_ = os.MkdirAll(filepath.Join(dir, ".pyorquesta"), 0o755)
+	_ = os.MkdirAll(filepath.Join(dir, ".orquestalite"), 0o755)
 	prev := &tasks.TaskList{Tasks: []tasks.Task{{ID: "T001", Title: "old", Status: tasks.StatusDone}}}
 	raw, _ := json.MarshalIndent(prev, "", "  ")
-	_ = os.WriteFile(filepath.Join(dir, ".pyorquesta", "tasks.json"), raw, 0o644)
+	_ = os.WriteFile(filepath.Join(dir, ".orquestalite", "tasks.json"), raw, 0o644)
 
 	planPath := filepath.Join(dir, "plan.md")
 	_ = os.WriteFile(planPath, []byte("more"), 0o644)
@@ -61,7 +61,7 @@ func TestPlan_AppendPreservesExisting(t *testing.T) {
 	if err := Plan(context.Background(), dir, planPath, true, stub); err != nil {
 		t.Fatal(err)
 	}
-	out, _ := os.ReadFile(filepath.Join(dir, ".pyorquesta", "tasks.json"))
+	out, _ := os.ReadFile(filepath.Join(dir, ".orquestalite", "tasks.json"))
 	var tl tasks.TaskList
 	_ = json.Unmarshal(out, &tl)
 	if len(tl.Tasks) != 2 || tl.Tasks[1].ID != "T002" {

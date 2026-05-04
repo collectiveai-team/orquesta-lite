@@ -1,36 +1,36 @@
-![orquesta-lite hero](docs/hero.png)
+![orquestalite hero](docs/hero.png)
 
-# orquesta-lite
+# orquestalite
 
 Minimalist Go orchestrator for the Ralph technique: a single binary that drives
 multiple CLI-based AI agents through parser, coder, tester, critic, and reviewer
 roles until a plan is implemented task by task.
 
-The Go module is `github.com/lionelchamorro/orquesta-lite`. The current CLI
-entrypoint and runtime state still use the historical `pyorquesta` name.
+The Go module is `github.com/lionelchamorro/orquestalite`. The CLI command is
+`orq-lite`, and runtime state lives under `.orquestalite/`.
 
 ## What It Does
 
-`orquesta-lite` turns a free-form plan into structured tasks, runs those tasks
+`orquestalite` turns a free-form plan into structured tasks, runs those tasks
 through nested review/fix loops, and uses JSON result files written by each agent
 to decide what happens next.
 
 The orchestrator itself does not edit files or run model tool calls. It invokes
 configured CLI agents as subprocesses, reads their result contracts, tracks
-task state in `.pyorquesta/tasks.json`, and commits successful tasks.
+task state in `.orquestalite/tasks.json`, and commits successful tasks.
 
 ## Quick Start
 
 Build the binary:
 
 ```bash
-go build -o pyorquesta ./cmd/pyorquesta
+go build -o orq-lite ./cmd/orq-lite
 ```
 
 Scaffold project state, prompts, and `team.json`:
 
 ```bash
-./pyorquesta init
+./orq-lite init
 ```
 
 Create a plan file:
@@ -44,37 +44,37 @@ EOF
 Convert the plan into tasks:
 
 ```bash
-./pyorquesta plan plan.md
+./orq-lite plan plan.md
 ```
 
 Run the orchestration loop:
 
 ```bash
-./pyorquesta run
+./orq-lite run
 ```
 
 Check progress:
 
 ```bash
-./pyorquesta status
-./pyorquesta status --watch
+./orq-lite status
+./orq-lite status --watch
 ```
 
 Reset local orchestration state:
 
 ```bash
-./pyorquesta reset
+./orq-lite reset
 ```
 
 ## Commands
 
 ```text
-pyorquesta init [dir]            scaffold .pyorquesta, team.json, prompts/
-pyorquesta plan <plan.md>        invoke parser, write tasks.json
-pyorquesta plan <plan.md> --append
-pyorquesta run                   run review/task/fix loops
-pyorquesta status [--watch]      print task status
-pyorquesta reset                 remove .pyorquesta state
+orq-lite init [dir]            scaffold .orquestalite, team.json, prompts/
+orq-lite plan <plan.md>        invoke parser, write tasks.json
+orq-lite plan <plan.md> --append
+orq-lite run                   run review/task/fix loops
+orq-lite status [--watch]      print task status
+orq-lite reset                 remove .orquestalite state
 ```
 
 ## Configuration
@@ -89,7 +89,7 @@ pyorquesta reset                 remove .pyorquesta state
 
 Prompts live in `prompts/` and use `{{VAR}}` interpolation markers.
 
-Runtime state lives in `.pyorquesta/`, including:
+Runtime state lives in `.orquestalite/`, including:
 
 - `tasks.json` for task state
 - `results/<role>.json` for agent result contracts

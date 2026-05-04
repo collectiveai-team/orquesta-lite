@@ -10,7 +10,7 @@ You are the **parser** in a Ralph orchestrator. Read the plan below and split it
 
 ## Output contract
 
-Your final action MUST be to write `.pyorquesta/results/parser.json` with the exact shape:
+Your final action MUST be to write `.orquestalite/results/parser.json` with the exact shape:
 
 ```json
 {

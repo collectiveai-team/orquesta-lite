@@ -5,7 +5,7 @@ Status: Accepted
 
 ## Context
 
-pyorquesta drives multiple AI agents (coder, tester, critic, reviewer, parser)
+orquestalite drives multiple AI agents (coder, tester, critic, reviewer, parser)
 in nested loops to autonomously implement a plan. Each agent needs to read and
 write files, run tests, execute commands, and (for the coder) interact with
 git.
@@ -24,7 +24,7 @@ file editing, sandboxed command execution, test runners, git operations.
 ## Decision
 
 We orchestrate via **CLI subprocesses (option A)**. Every agent is invoked
-as a process; pyorquesta itself does not implement tool-use, file editing,
+as a process; orquestalite itself does not implement tool-use, file editing,
 or command execution.
 
 The role-to-agent binding is declared in `team.json` as an explicit `cmd`
@@ -34,12 +34,12 @@ template, e.g. `["claude", "-p", "{{PROMPT}}", "--model", "claude-sonnet-4-6"]`.
 
 **Positive:**
 
-- pyorquesta stays minimalist. The orchestrator is essentially a loop driver:
+- orquestalite stays minimalist. The orchestrator is essentially a loop driver:
   build prompt → exec subprocess → read result.json → decide next step.
 - We inherit, for free, the entire tool-use surface of mature CLIs (file
   editing, git integration, MCP servers, sandboxing, telemetry).
 - Multi-provider support is a config concern, not a code concern. Adding a
-  new CLI means adding an entry to `team.json`, not editing pyorquesta source.
+  new CLI means adding an entry to `team.json`, not editing orquestalite source.
 - Per-task model swaps (sonnet for coder, opus for critic) are trivial.
 
 **Negative:**

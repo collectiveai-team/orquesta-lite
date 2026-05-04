@@ -13,7 +13,7 @@ import (
 var defaultAssets embed.FS
 
 func Init(dir string) error {
-	if err := os.MkdirAll(filepath.Join(dir, ".pyorquesta", "results"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dir, ".orquestalite", "results"), 0o755); err != nil {
 		return err
 	}
 	if err := writeIfMissing(filepath.Join(dir, "team.json"), mustReadAsset("assets/team.json")); err != nil {
@@ -34,7 +34,7 @@ func Init(dir string) error {
 			return err
 		}
 	}
-	return ensureGitignoreEntry(filepath.Join(dir, ".gitignore"), ".pyorquesta/")
+	return ensureGitignoreEntry(filepath.Join(dir, ".gitignore"), ".orquestalite/")
 }
 
 func writeIfMissing(path string, content []byte) error {

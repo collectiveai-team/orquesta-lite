@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/lionelchamorro/orquesta-lite/internal/tasks"
+	"github.com/lionelchamorro/orquestalite/internal/tasks"
 )
 
 func Status(projectDir string, w io.Writer) error {
@@ -51,10 +51,10 @@ func StatusWatch(ctx context.Context, projectDir string, w io.Writer, interval t
 }
 
 func printStatus(projectDir string, w io.Writer) error {
-	p := filepath.Join(projectDir, ".pyorquesta", "tasks.json")
+	p := filepath.Join(projectDir, ".orquestalite", "tasks.json")
 	tl, err := tasks.Load(p)
 	if errors.Is(err, os.ErrNotExist) {
-		fmt.Fprintln(w, "no tasks (run `pyorquesta plan plan.md` first)")
+		fmt.Fprintln(w, "no tasks (run `orq-lite plan plan.md` first)")
 		return nil
 	}
 	if err != nil {

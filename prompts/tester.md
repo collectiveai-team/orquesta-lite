@@ -10,7 +10,7 @@ You are the **tester**. Run the relevant tests for the change just made. Do not 
 
 ## Output contract
 
-Run the tests, then write `.pyorquesta/results/tester.json`:
+Run the tests, then write `.orquestalite/results/tester.json`:
 
 ```json
 {

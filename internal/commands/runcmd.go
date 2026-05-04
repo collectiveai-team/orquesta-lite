@@ -14,16 +14,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lionelchamorro/orquesta-lite/internal/config"
-	"github.com/lionelchamorro/orquesta-lite/internal/eventlog"
-	"github.com/lionelchamorro/orquesta-lite/internal/fallback"
-	"github.com/lionelchamorro/orquesta-lite/internal/gitx"
-	"github.com/lionelchamorro/orquesta-lite/internal/loops"
-	"github.com/lionelchamorro/orquesta-lite/internal/memory"
-	"github.com/lionelchamorro/orquesta-lite/internal/prompts"
-	"github.com/lionelchamorro/orquesta-lite/internal/results"
-	"github.com/lionelchamorro/orquesta-lite/internal/runner"
-	"github.com/lionelchamorro/orquesta-lite/internal/tasks"
+	"github.com/lionelchamorro/orquestalite/internal/config"
+	"github.com/lionelchamorro/orquestalite/internal/eventlog"
+	"github.com/lionelchamorro/orquestalite/internal/fallback"
+	"github.com/lionelchamorro/orquestalite/internal/gitx"
+	"github.com/lionelchamorro/orquestalite/internal/loops"
+	"github.com/lionelchamorro/orquestalite/internal/memory"
+	"github.com/lionelchamorro/orquestalite/internal/prompts"
+	"github.com/lionelchamorro/orquestalite/internal/results"
+	"github.com/lionelchamorro/orquestalite/internal/runner"
+	"github.com/lionelchamorro/orquestalite/internal/tasks"
 )
 
 // RunOptions holds the parameters for the run command.
@@ -40,20 +40,20 @@ func Run(ctx context.Context, opts RunOptions) error {
 		return err
 	}
 
-	tasksPath := filepath.Join(opts.ProjectDir, ".pyorquesta", "tasks.json")
+	tasksPath := filepath.Join(opts.ProjectDir, ".orquestalite", "tasks.json")
 	tl, err := tasks.Load(tasksPath)
 	if err != nil {
 		return err
 	}
 
-	logPath := filepath.Join(opts.ProjectDir, ".pyorquesta", "run.log")
+	logPath := filepath.Join(opts.ProjectDir, ".orquestalite", "run.log")
 	logger, err := eventlog.Open(logPath, os.Stdout)
 	if err != nil {
 		return err
 	}
 	defer logger.Close()
 
-	memPath := filepath.Join(opts.ProjectDir, ".pyorquesta", "memory.md")
+	memPath := filepath.Join(opts.ProjectDir, ".orquestalite", "memory.md")
 
 	fc := fallback.NewCaller(fallback.Config{
 		InitialBackoff: time.Duration(cfg.RateLimitBackoff.InitialSeconds) * time.Second,

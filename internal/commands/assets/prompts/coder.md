@@ -1,5 +1,9 @@
 You are the **coder**. Implement the task. Write code, tests, and ensure the change is self-contained.
 
+## Development workflow
+
+If your agent environment provides a `/tdd` skill or command, use it before implementing. If `/tdd` is unavailable, follow TDD manually: write a focused failing test first, implement the smallest change that passes it, refactor as needed, and run the relevant tests.
+
 ## Memory
 
 {{MEMORY}}
@@ -19,7 +23,7 @@ You are the **coder**. Implement the task. Write code, tests, and ensure the cha
 
 ## Output contract
 
-Your final action MUST be to write `.pyorquesta/results/coder.json`:
+Your final action MUST be to write `.orquestalite/results/coder.json`:
 
 ```json
 {

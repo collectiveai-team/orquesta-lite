@@ -8,14 +8,14 @@ import (
 
 func TestReset_RemovesPyorquestaDir(t *testing.T) {
 	dir := t.TempDir()
-	state := filepath.Join(dir, ".pyorquesta")
+	state := filepath.Join(dir, ".orquestalite")
 	_ = os.MkdirAll(filepath.Join(state, "results"), 0o755)
 	_ = os.WriteFile(filepath.Join(state, "tasks.json"), []byte("{}"), 0o644)
 	if err := Reset(dir); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(state); !os.IsNotExist(err) {
-		t.Errorf("expected .pyorquesta to be gone")
+		t.Errorf("expected .orquestalite to be gone")
 	}
 }
 

@@ -1,9 +1,9 @@
 # binaries
-/pyorquesta
+/orq-lite
 /dist/
 
 # runtime state (orchestrator writes here)
-/.pyorquesta/
+/.orquestalite/
 
 # go
 *.test

@@ -23,7 +23,7 @@ func TestLoad_Valid(t *testing.T) {
 			"a1": {"cmd": ["claude", "-p", "{{PROMPT}}"], "rate_limit_pattern": "rate_?limit"}
 		},
 		"roles": {
-			"coder": {"agents": ["a1"], "prompt": "prompts/coder.md", "result_path": ".pyorquesta/results/coder.json", "timeout_seconds": 900}
+			"coder": {"agents": ["a1"], "prompt": "prompts/coder.md", "result_path": ".orquestalite/results/coder.json", "timeout_seconds": 900}
 		},
 		"limits": {"max_review_cycles": 3, "max_fix_iterations": 5},
 		"rate_limit_backoff": {"initial_seconds": 30, "factor": 2, "max_seconds": 1800, "default_pattern": "rate_?limit|429"},

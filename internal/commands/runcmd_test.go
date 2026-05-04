@@ -9,7 +9,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/lionelchamorro/orquesta-lite/internal/tasks"
+	"github.com/lionelchamorro/orquestalite/internal/tasks"
 )
 
 // fakeCLI is a POSIX shell script that acts as every role's agent.
@@ -50,7 +50,7 @@ func writeFakeTeamJSON(t *testing.T, dir, cliPath string) {
 
 	// Absolute result paths so the shell script writes to the right place
 	// regardless of working directory.
-	resultDir := filepath.Join(dir, ".pyorquesta", "results")
+	resultDir := filepath.Join(dir, ".orquestalite", "results")
 
 	type agentDef struct {
 		Cmd []string `json:"cmd"`
@@ -83,7 +83,7 @@ func writeFakeTeamJSON(t *testing.T, dir, cliPath string) {
 
 	// Relative result paths for config (used by ParseX calls which join dir+resultPath).
 	relResult := func(kind string) string {
-		return filepath.Join(".pyorquesta", "results", kind+".json")
+		return filepath.Join(".orquestalite", "results", kind+".json")
 	}
 
 	team := teamJSON{
@@ -152,7 +152,7 @@ func TestRun_EndToEndWithFakeCLI(t *testing.T) {
 		}
 	}
 
-	// Scaffold the .pyorquesta directory and default prompts.
+	// Scaffold the .orquestalite directory and default prompts.
 	if err := Init(dir); err != nil {
 		t.Fatalf("Init: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestRun_EndToEndWithFakeCLI(t *testing.T) {
 		{ID: "T001", Title: "demo task", Description: "a demo task", Status: tasks.StatusPending, Priority: 1},
 	}}
 	raw, _ := json.MarshalIndent(tl, "", "  ")
-	tasksPath := filepath.Join(dir, ".pyorquesta", "tasks.json")
+	tasksPath := filepath.Join(dir, ".orquestalite", "tasks.json")
 	if err := os.WriteFile(tasksPath, raw, 0o644); err != nil {
 		t.Fatalf("write tasks.json: %v", err)
 	}
@@ -266,7 +266,7 @@ func TestRun_EmptyTaskList(t *testing.T) {
 	// Empty task list — only the reviewer will run, and it signals stop.
 	tl := &tasks.TaskList{Tasks: []tasks.Task{}}
 	raw, _ := json.MarshalIndent(tl, "", "  ")
-	if err := os.WriteFile(filepath.Join(dir, ".pyorquesta", "tasks.json"), raw, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, ".orquestalite", "tasks.json"), raw, 0o644); err != nil {
 		t.Fatalf("write tasks.json: %v", err)
 	}
 

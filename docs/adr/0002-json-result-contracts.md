@@ -18,7 +18,7 @@ Three mechanisms were considered:
 2. **Exit codes**: the agent exits 0 on success, non-zero on failure; the
    orchestrator checks the return code.
 3. **JSON files at known paths**: the agent's last action is to write a
-   structured JSON file at `.pyorquesta/results/<role>.json`; the orchestrator
+   structured JSON file at `.orquestalite/results/<role>.json`; the orchestrator
    parses it.
 
 ## Decision

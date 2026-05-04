@@ -8,7 +8,7 @@ import (
 	"os/signal"
 	"time"
 
-	"github.com/lionelchamorro/orquesta-lite/internal/commands"
+	"github.com/lionelchamorro/orquestalite/internal/commands"
 )
 
 func main() {
@@ -33,7 +33,7 @@ func main() {
 		appendFlag := fs.Bool("append", false, "append to existing tasks.json")
 		_ = fs.Parse(args)
 		if fs.NArg() < 1 {
-			fmt.Fprintln(os.Stderr, "usage: pyorquesta plan <plan.md> [--append]")
+			fmt.Fprintln(os.Stderr, "usage: orq-lite plan <plan.md> [--append]")
 			os.Exit(2)
 		}
 		exit(commands.PlanWithLiveCaller(ctx, ".", fs.Arg(0), *appendFlag))
@@ -67,14 +67,14 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, `Usage: pyorquesta <command> [args]
+	fmt.Fprintln(os.Stderr, `Usage: orq-lite <command> [args]
 
 Commands:
-  init [dir]            scaffold .pyorquesta, team.json, prompts/
+  init [dir]            scaffold .orquestalite, team.json, prompts/
   plan <plan.md>        invoke parser, write tasks.json (--append to add)
   run                   run review/task/fix loops over existing tasks.json
   status [--watch]      print tasks table (--watch refreshes until Ctrl+C)
-  reset                 remove .pyorquesta state`)
+  reset                 remove .orquestalite state`)
 }
 
 func exit(err error) {

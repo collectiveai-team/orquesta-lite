@@ -10,18 +10,18 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lionelchamorro/orquesta-lite/internal/tasks"
+	"github.com/lionelchamorro/orquestalite/internal/tasks"
 )
 
 func TestStatus_PrintsTable(t *testing.T) {
 	dir := t.TempDir()
-	_ = os.MkdirAll(filepath.Join(dir, ".pyorquesta"), 0o755)
+	_ = os.MkdirAll(filepath.Join(dir, ".orquestalite"), 0o755)
 	tl := &tasks.TaskList{Tasks: []tasks.Task{
 		{ID: "T001", Title: "first", Status: tasks.StatusDone, Priority: 1},
 		{ID: "T002", Title: "second", Status: tasks.StatusPending, Priority: 2},
 	}}
 	raw, _ := json.MarshalIndent(tl, "", "  ")
-	_ = os.WriteFile(filepath.Join(dir, ".pyorquesta", "tasks.json"), raw, 0o644)
+	_ = os.WriteFile(filepath.Join(dir, ".orquestalite", "tasks.json"), raw, 0o644)
 
 	buf := &bytes.Buffer{}
 	if err := Status(dir, buf); err != nil {
@@ -48,12 +48,12 @@ func TestStatus_HandlesMissingTasksFile(t *testing.T) {
 
 func TestStatusWatch_RendersMultipleTimesAndStopsOnContextCancel(t *testing.T) {
 	dir := t.TempDir()
-	_ = os.MkdirAll(filepath.Join(dir, ".pyorquesta"), 0o755)
+	_ = os.MkdirAll(filepath.Join(dir, ".orquestalite"), 0o755)
 	tl := &tasks.TaskList{Tasks: []tasks.Task{
 		{ID: "T001", Title: "watched", Status: tasks.StatusPending, Priority: 1},
 	}}
 	raw, _ := json.MarshalIndent(tl, "", "  ")
-	_ = os.WriteFile(filepath.Join(dir, ".pyorquesta", "tasks.json"), raw, 0o644)
+	_ = os.WriteFile(filepath.Join(dir, ".orquestalite", "tasks.json"), raw, 0o644)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()

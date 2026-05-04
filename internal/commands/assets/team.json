@@ -4,11 +4,11 @@
     "claude_opus":   { "cmd": ["claude", "-p", "{{PROMPT}}", "--model", "claude-opus-4-7"] }
   },
   "roles": {
-    "parser":   { "agents": ["claude_opus"],                       "prompt": "prompts/parser.md",   "result_path": ".pyorquesta/results/parser.json",   "timeout_seconds": 300 },
-    "coder":    { "agents": ["claude_sonnet", "claude_opus"],      "prompt": "prompts/coder.md",    "result_path": ".pyorquesta/results/coder.json",    "timeout_seconds": 900 },
-    "tester":   { "agents": ["claude_sonnet"],                     "prompt": "prompts/tester.md",   "result_path": ".pyorquesta/results/tester.json",   "timeout_seconds": 600 },
-    "critic":   { "agents": ["claude_opus", "claude_sonnet"],      "prompt": "prompts/critic.md",   "result_path": ".pyorquesta/results/critic.json",   "timeout_seconds": 300 },
-    "reviewer": { "agents": ["claude_opus"],                       "prompt": "prompts/reviewer.md", "result_path": ".pyorquesta/results/reviewer.json", "timeout_seconds": 600 }
+    "parser":   { "agents": ["claude_opus"],                       "prompt": "prompts/parser.md",   "result_path": ".orquestalite/results/parser.json",   "timeout_seconds": 300 },
+    "coder":    { "agents": ["claude_sonnet", "claude_opus"],      "prompt": "prompts/coder.md",    "result_path": ".orquestalite/results/coder.json",    "timeout_seconds": 900 },
+    "tester":   { "agents": ["claude_sonnet"],                     "prompt": "prompts/tester.md",   "result_path": ".orquestalite/results/tester.json",   "timeout_seconds": 600 },
+    "critic":   { "agents": ["claude_opus", "claude_sonnet"],      "prompt": "prompts/critic.md",   "result_path": ".orquestalite/results/critic.json",   "timeout_seconds": 300 },
+    "reviewer": { "agents": ["claude_opus"],                       "prompt": "prompts/reviewer.md", "result_path": ".orquestalite/results/reviewer.json", "timeout_seconds": 600 }
   },
   "limits": { "max_review_cycles": 3, "max_fix_iterations": 5 },
   "rate_limit_backoff": { "initial_seconds": 30, "factor": 2, "max_seconds": 1800, "default_pattern": "rate_?limit|429|quota|too many requests" },
