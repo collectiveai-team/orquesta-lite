@@ -6,10 +6,53 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
+	"github.com/lionelchamorro/pyorquesta/internal/config"
+	"github.com/lionelchamorro/pyorquesta/internal/eventlog"
+	"github.com/lionelchamorro/pyorquesta/internal/fallback"
 	"github.com/lionelchamorro/pyorquesta/internal/results"
 	"github.com/lionelchamorro/pyorquesta/internal/tasks"
 )
+
+// PlanWithLiveCaller is a convenience wrapper that wires up the real subprocess
+// agent machinery (same as Run does) and delegates to Plan. The team.json is
+// looked up at <projectDir>/team.json.
+func PlanWithLiveCaller(ctx context.Context, projectDir, planPath string, appendMode bool) error {
+	teamPath := filepath.Join(projectDir, "team.json")
+	cfg, err := config.Load(teamPath)
+	if err != nil {
+		return err
+	}
+
+	logPath := filepath.Join(projectDir, ".pyorquesta", "run.log")
+	logger, err := eventlog.Open(logPath, os.Stdout)
+	if err != nil {
+		return err
+	}
+	defer logger.Close()
+
+	memPath := filepath.Join(projectDir, ".pyorquesta", "memory.md")
+	tasksPath := filepath.Join(projectDir, ".pyorquesta", "tasks.json")
+
+	fc := fallback.NewCaller(fallback.Config{
+		InitialBackoff: time.Duration(cfg.RateLimitBackoff.InitialSeconds) * time.Second,
+		Factor:         cfg.RateLimitBackoff.Factor,
+		MaxBackoff:     time.Duration(cfg.RateLimitBackoff.MaxSeconds) * time.Second,
+	})
+
+	deps := &liveDeps{
+		cfg:       cfg,
+		dir:       projectDir,
+		fc:        fc,
+		log:       logger,
+		tl:        &tasks.TaskList{},
+		memPath:   memPath,
+		tasksPath: tasksPath,
+	}
+
+	return Plan(ctx, projectDir, planPath, appendMode, deps)
+}
 
 // ParserCaller is the interface for invoking the parser role.
 type ParserCaller interface {
