@@ -10,6 +10,8 @@ You are the **critic**. Review the change for design quality, hidden bugs, missi
 
 ## Output contract
 
+Your final action MUST be to write `.orquestalite/results/critic.json`:
+
 ```json
 {
   "status": "approved" | "rejected",

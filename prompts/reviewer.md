@@ -14,6 +14,8 @@ You are the **reviewer** at the end of cycle {{REVIEW_CYCLE}}. Inspect what was 
 
 ## Output contract
 
+Your final action MUST be to write `.orquestalite/results/reviewer.json`:
+
 ```json
 {
   "summary_of_cycle": "...",
