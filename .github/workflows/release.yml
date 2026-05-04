@@ -1,0 +1,77 @@
+name: release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+          - goos: windows
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+          VERSION: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          ext=""
+          [ "$GOOS" = "windows" ] && ext=".exe"
+          dist="dist/orq-lite-${VERSION}-${GOOS}-${GOARCH}"
+          mkdir -p "$dist"
+          go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" \
+            -o "${dist}/orq-lite${ext}" ./cmd/orq-lite
+          cp README.md LICENSE "$dist/" 2>/dev/null || true
+
+      - name: package
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          cd dist
+          name="orq-lite-${VERSION}-${GOOS}-${GOARCH}"
+          if [ "$GOOS" = "windows" ]; then
+            zip -r "${name}.zip" "$name"
+            sha256sum "${name}.zip" > "${name}.zip.sha256"
+          else
+            tar -czf "${name}.tar.gz" "$name"
+            sha256sum "${name}.tar.gz" > "${name}.tar.gz.sha256"
+          fi
+
+      - name: upload to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/*.sha256
