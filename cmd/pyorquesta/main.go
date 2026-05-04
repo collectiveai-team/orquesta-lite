@@ -5,6 +5,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
+	"time"
 
 	"github.com/lionelchamorro/pyorquesta/internal/commands"
 )
@@ -43,7 +45,17 @@ func main() {
 		exit(commands.Run(ctx, commands.RunOptions{ProjectDir: ".", TeamPath: teamPath}))
 
 	case "status":
-		exit(commands.Status(".", os.Stdout))
+		fs := flag.NewFlagSet("status", flag.ExitOnError)
+		watch := fs.Bool("watch", false, "refresh status every interval until Ctrl+C")
+		interval := fs.Duration("interval", time.Second, "watch refresh interval")
+		_ = fs.Parse(args)
+		if *watch {
+			watchCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
+			defer stop()
+			exit(commands.StatusWatch(watchCtx, ".", os.Stdout, *interval))
+		} else {
+			exit(commands.Status(".", os.Stdout))
+		}
 
 	case "reset":
 		exit(commands.Reset("."))
@@ -61,7 +73,7 @@ Commands:
   init [dir]            scaffold .pyorquesta, team.json, prompts/
   plan <plan.md>        invoke parser, write tasks.json (--append to add)
   run                   run review/task/fix loops over existing tasks.json
-  status                print tasks table
+  status [--watch]      print tasks table (--watch refreshes until Ctrl+C)
   reset                 remove .pyorquesta state`)
 }
 
