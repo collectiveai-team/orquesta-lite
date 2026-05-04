@@ -121,7 +121,21 @@ orq-lite plan <plan.md> --append
 orq-lite run                   run review/task/fix loops
 orq-lite status [--watch]      print task status
 orq-lite reset                 remove .orquestalite state
+orq-lite update [--check]      install the latest release from GitHub
+orq-lite version               print the binary version
 ```
+
+### Updating
+
+```bash
+orq-lite update --check   # is a newer release available?
+orq-lite update           # download, verify sha256, and install in place
+```
+
+`update` queries the GitHub Releases API, picks the archive matching your
+OS/arch, verifies the published `.sha256`, and atomically replaces the running
+binary. It only works for binaries installed from a release (a `dev` build
+will always report itself as outdated).
 
 ## Configuration
 

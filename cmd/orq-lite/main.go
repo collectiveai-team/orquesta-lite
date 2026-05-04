@@ -11,6 +11,8 @@ import (
 	"github.com/lionelchamorro/orquestalite/internal/commands"
 )
 
+var version = "dev"
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
@@ -60,6 +62,19 @@ func main() {
 	case "reset":
 		exit(commands.Reset("."))
 
+	case "update", "upgrade":
+		fs := flag.NewFlagSet("update", flag.ExitOnError)
+		check := fs.Bool("check", false, "report whether an update is available without installing")
+		_ = fs.Parse(args)
+		exit(commands.Update(ctx, commands.UpdateOptions{
+			CurrentVersion: version,
+			CheckOnly:      *check,
+			Out:            os.Stdout,
+		}))
+
+	case "version", "--version", "-v":
+		fmt.Println(version)
+
 	default:
 		usage()
 		os.Exit(2)
@@ -74,7 +89,9 @@ Commands:
   plan <plan.md>        invoke parser, write tasks.json (--append to add)
   run                   run review/task/fix loops over existing tasks.json
   status [--watch]      print tasks table (--watch refreshes until Ctrl+C)
-  reset                 remove .orquestalite state`)
+  reset                 remove .orquestalite state
+  update [--check]      download and install the latest release from GitHub
+  version               print the binary version`)
 }
 
 func exit(err error) {
