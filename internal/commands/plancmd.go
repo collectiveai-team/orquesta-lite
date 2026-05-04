@@ -8,11 +8,11 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/lionelchamorro/pyorquesta/internal/config"
-	"github.com/lionelchamorro/pyorquesta/internal/eventlog"
-	"github.com/lionelchamorro/pyorquesta/internal/fallback"
-	"github.com/lionelchamorro/pyorquesta/internal/results"
-	"github.com/lionelchamorro/pyorquesta/internal/tasks"
+	"github.com/lionelchamorro/orquesta-lite/internal/config"
+	"github.com/lionelchamorro/orquesta-lite/internal/eventlog"
+	"github.com/lionelchamorro/orquesta-lite/internal/fallback"
+	"github.com/lionelchamorro/orquesta-lite/internal/results"
+	"github.com/lionelchamorro/orquesta-lite/internal/tasks"
 )
 
 // PlanWithLiveCaller is a convenience wrapper that wires up the real subprocess

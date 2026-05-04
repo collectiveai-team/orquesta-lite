@@ -3,8 +3,8 @@ package loops
 import (
 	"context"
 
-	"github.com/lionelchamorro/pyorquesta/internal/results"
-	"github.com/lionelchamorro/pyorquesta/internal/tasks"
+	"github.com/lionelchamorro/orquesta-lite/internal/results"
+	"github.com/lionelchamorro/orquesta-lite/internal/tasks"
 )
 
 // ReviewDeps extends TaskDeps with the reviewer agent call.

@@ -8,7 +8,7 @@ import (
 	"os/signal"
 	"time"
 
-	"github.com/lionelchamorro/pyorquesta/internal/commands"
+	"github.com/lionelchamorro/orquesta-lite/internal/commands"
 )
 
 func main() {

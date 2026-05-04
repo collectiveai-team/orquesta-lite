@@ -9,7 +9,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/lionelchamorro/pyorquesta/internal/tasks"
+	"github.com/lionelchamorro/orquesta-lite/internal/tasks"
 )
 
 // fakeCLI is a POSIX shell script that acts as every role's agent.

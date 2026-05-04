@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/lionelchamorro/pyorquesta/internal/results"
-	"github.com/lionelchamorro/pyorquesta/internal/tasks"
+	"github.com/lionelchamorro/orquesta-lite/internal/results"
+	"github.com/lionelchamorro/orquesta-lite/internal/tasks"
 )
 
 type stubParserCaller struct {

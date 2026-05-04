@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/lionelchamorro/pyorquesta/internal/tasks"
+	"github.com/lionelchamorro/orquesta-lite/internal/tasks"
 )
 
 func Status(projectDir string, w io.Writer) error {

@@ -14,16 +14,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lionelchamorro/pyorquesta/internal/config"
-	"github.com/lionelchamorro/pyorquesta/internal/eventlog"
-	"github.com/lionelchamorro/pyorquesta/internal/fallback"
-	"github.com/lionelchamorro/pyorquesta/internal/gitx"
-	"github.com/lionelchamorro/pyorquesta/internal/loops"
-	"github.com/lionelchamorro/pyorquesta/internal/memory"
-	"github.com/lionelchamorro/pyorquesta/internal/prompts"
-	"github.com/lionelchamorro/pyorquesta/internal/results"
-	"github.com/lionelchamorro/pyorquesta/internal/runner"
-	"github.com/lionelchamorro/pyorquesta/internal/tasks"
+	"github.com/lionelchamorro/orquesta-lite/internal/config"
+	"github.com/lionelchamorro/orquesta-lite/internal/eventlog"
+	"github.com/lionelchamorro/orquesta-lite/internal/fallback"
+	"github.com/lionelchamorro/orquesta-lite/internal/gitx"
+	"github.com/lionelchamorro/orquesta-lite/internal/loops"
+	"github.com/lionelchamorro/orquesta-lite/internal/memory"
+	"github.com/lionelchamorro/orquesta-lite/internal/prompts"
+	"github.com/lionelchamorro/orquesta-lite/internal/results"
+	"github.com/lionelchamorro/orquesta-lite/internal/runner"
+	"github.com/lionelchamorro/orquesta-lite/internal/tasks"
 )
 
 // RunOptions holds the parameters for the run command.

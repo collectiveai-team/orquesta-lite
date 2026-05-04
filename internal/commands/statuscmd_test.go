@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lionelchamorro/pyorquesta/internal/tasks"
+	"github.com/lionelchamorro/orquesta-lite/internal/tasks"
 )
 
 func TestStatus_PrintsTable(t *testing.T) {

@@ -1,3 +1,3 @@
-module github.com/lionelchamorro/pyorquesta
+module github.com/lionelchamorro/orquesta-lite
 
 go 1.24.4
