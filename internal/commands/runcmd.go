@@ -96,8 +96,15 @@ func (d *liveDeps) RunFix(ctx context.Context, taskID string) (*loops.FixResult,
 			break
 		}
 	}
+	escalationLadder := []string{}
+	if coderRole, ok := d.cfg.Roles["coder"]; ok {
+		escalationLadder = coderRole.EscalationLadder
+	}
 	rr := &liveRoleRunner{deps: d}
-	return loops.RunFix(ctx, loops.FixConfig{MaxIterations: d.cfg.Limits.MaxFixIterations}, rr)
+	return loops.RunFix(ctx, loops.FixConfig{
+		MaxIterations:    d.cfg.Limits.MaxFixIterations,
+		EscalationLadder: escalationLadder,
+	}, rr)
 }
 
 // FullSuite runs the full test command specified in team.json.
@@ -333,9 +340,19 @@ type liveRoleRunner struct {
 }
 
 // RunCoder invokes the coder role for a single fix attempt.
-func (rr *liveRoleRunner) RunCoder(ctx context.Context, attempt int, testerFB, criticFB string) (loops.CoderOutcome, error) {
+func (rr *liveRoleRunner) RunCoder(ctx context.Context, attempt int, fb loops.CoderFeedback) (loops.CoderOutcome, error) {
 	d := rr.deps
 	role := d.cfg.Roles["coder"]
+
+	// When AgentOverride is set, route through a single-agent chain instead of
+	// the default chain so the escalated agent is used exclusively.
+	effectiveAgents := role.Agents
+	if fb.AgentOverride != "" {
+		effectiveAgents = []string{fb.AgentOverride}
+	}
+	effectiveRole := role
+	effectiveRole.Agents = effectiveAgents
+
 	tmpl, err := prompts.Load(filepath.Join(d.dir, role.Prompt))
 	if err != nil {
 		return loops.CoderOutcome{}, err
@@ -352,16 +369,18 @@ func (rr *liveRoleRunner) RunCoder(ctx context.Context, attempt int, testerFB, c
 	}
 
 	prompt := prompts.Interpolate(tmpl, map[string]string{
-		"MEMORY":           mem,
-		"TASK_ID":          taskID,
-		"TASK_TITLE":       taskTitle,
-		"TASK_DESCRIPTION": taskDesc,
-		"ATTEMPT_NUMBER":   strconv.Itoa(attempt),
-		"TESTER_FEEDBACK":  testerFB,
-		"CRITIC_FEEDBACK":  criticFB,
+		"MEMORY":                   mem,
+		"TASK_ID":                  taskID,
+		"TASK_TITLE":               taskTitle,
+		"TASK_DESCRIPTION":         taskDesc,
+		"ATTEMPT_NUMBER":           strconv.Itoa(attempt),
+		"TESTER_FEEDBACK":          fb.TesterFeedback,
+		"CRITIC_FEEDBACK":          fb.CriticFeedback,
+		"PREVIOUS_ATTEMPT_SUMMARY": fb.PreviousAttemptSummary,
+		"FILES_CHANGED_SO_FAR":     strings.Join(fb.FilesChangedSoFar, "\n"),
 	})
 
-	if err := d.callRole(ctx, "coder", prompt, role); err != nil {
+	if err := d.callRole(ctx, "coder", prompt, effectiveRole); err != nil {
 		return loops.CoderOutcome{}, err
 	}
 
@@ -382,7 +401,7 @@ func (rr *liveRoleRunner) RunCoder(ctx context.Context, attempt int, testerFB, c
 	// Store files changed so tester and critic can reference them.
 	rr.filesChanged = r.FilesChanged
 
-	return loops.CoderOutcome{Status: r.Status, Summary: r.Summary}, nil
+	return loops.CoderOutcome{Status: r.Status, Summary: r.Summary, FilesChanged: r.FilesChanged}, nil
 }
 
 // RunTester invokes the tester role after a coder attempt.

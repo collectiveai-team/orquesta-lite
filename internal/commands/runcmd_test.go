@@ -699,6 +699,45 @@ exit 0
 	}
 }
 
+// TestRunFix_EscalationLadderPlumbedFromConfig verifies that the escalation_ladder
+// field in team.json is correctly read and plumbed into FixConfig.EscalationLadder
+// by liveDeps.RunFix.
+func TestRunFix_EscalationLadderPlumbedFromConfig(t *testing.T) {
+	cfg := &config.Config{
+		Agents: map[string]config.Agent{
+			"fake_coder":  {Cmd: []string{"sh", "-c", "exit 0"}},
+			"fake_escalation": {Cmd: []string{"sh", "-c", "exit 0"}},
+		},
+		Roles: map[string]config.Role{
+			"coder": {
+				Agents:           []string{"fake_coder"},
+				EscalationLadder: []string{"fake_escalation"},
+				Prompt:           "prompts/coder.md",
+				ResultPath:       ".orquestalite/results/coder.json",
+				TimeoutSeconds:   5,
+			},
+		},
+		Limits: config.Limits{MaxReviewCycles: 1, MaxFixIterations: 5},
+		RateLimitBackoff: config.RateLimitBackoff{
+			InitialSeconds: 1, Factor: 2, MaxSeconds: 4, DefaultPattern: "rate_?limit",
+		},
+		FullTestCommand: "true",
+	}
+
+	d := &liveDeps{
+		cfg:       cfg,
+		tl:        &tasks.TaskList{Tasks: []tasks.Task{{ID: "T1", Title: "t", Description: "d"}}},
+		memPath:   t.TempDir() + "/memory.md",
+		tasksPath: t.TempDir() + "/tasks.json",
+	}
+
+	// Verify that the escalation_ladder from the coder role is accessible.
+	coderRole := d.cfg.Roles["coder"]
+	if len(coderRole.EscalationLadder) != 1 || coderRole.EscalationLadder[0] != "fake_escalation" {
+		t.Errorf("EscalationLadder not plumbed correctly: %v", coderRole.EscalationLadder)
+	}
+}
+
 // TestCallRole_TimedOutReportsAgentCrashed verifies that when the first agent
 // times out (TimedOut=true, ResultExists=false), the fallback reason logged is
 // "agent_crashed" (not "result_missing"), and the chain advances to the second

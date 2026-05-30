@@ -13,10 +13,11 @@ type Agent struct {
 }
 
 type Role struct {
-	Agents         []string `json:"agents"`
-	Prompt         string   `json:"prompt"`
-	ResultPath     string   `json:"result_path"`
-	TimeoutSeconds int      `json:"timeout_seconds"`
+	Agents           []string `json:"agents"`
+	Prompt           string   `json:"prompt"`
+	ResultPath       string   `json:"result_path"`
+	TimeoutSeconds   int      `json:"timeout_seconds"`
+	EscalationLadder []string `json:"escalation_ladder,omitempty"`
 }
 
 type Limits struct {
@@ -67,6 +68,11 @@ func (c *Config) Validate() error {
 		for _, a := range r.Agents {
 			if _, ok := c.Agents[a]; !ok {
 				return fmt.Errorf("role %q references unknown agent %q", rname, a)
+			}
+		}
+		for _, a := range r.EscalationLadder {
+			if _, ok := c.Agents[a]; !ok {
+				return fmt.Errorf("role %q escalation_ladder references unknown agent %q", rname, a)
 			}
 		}
 		if r.Prompt == "" || r.ResultPath == "" {

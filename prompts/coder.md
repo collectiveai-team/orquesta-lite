@@ -21,6 +21,14 @@ If your agent environment provides a `/tdd` skill or command, use it before impl
 
 {{CRITIC_FEEDBACK}}
 
+## Previous attempt (if applicable)
+
+{{PREVIOUS_ATTEMPT_SUMMARY}}
+
+## Files touched so far across attempts
+
+{{FILES_CHANGED_SO_FAR}}
+
 ## Output contract
 
 Your final action MUST be to write `.orquestalite/results/coder.json`:

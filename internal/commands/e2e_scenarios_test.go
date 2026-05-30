@@ -53,16 +53,20 @@ exit 0
 
 // Result JSON templates.
 const (
-	coderDone = `{"status":"completed","summary":"done","files_changed":[],"notes_for_memory":null}`
+	coderDone    = `{"status":"completed","summary":"done","files_changed":[],"notes_for_memory":null}`
 	coderBlocked = `{"status":"blocked","summary":"blocked","files_changed":[],"notes_for_memory":null}`
 
 	testerPass = `{"status":"pass","command_run":"true","failures":[],"notes_for_memory":null}`
 	testerFail = `{"status":"fail","command_run":"true","failures":[{"test":"TestFoo","message":"expected 1 got 0","hint":""}],"notes_for_memory":null}`
+	// testerFail2/3 produce distinct failure hashes so the stuck detector (threshold=2) does
+	// not fire when we want to exercise the max_iterations path with 3 attempts.
+	testerFail2 = `{"status":"fail","command_run":"true","failures":[{"test":"TestFoo","message":"expected 2 got 0","hint":""}],"notes_for_memory":null}`
+	testerFail3 = `{"status":"fail","command_run":"true","failures":[{"test":"TestFoo","message":"expected 3 got 0","hint":""}],"notes_for_memory":null}`
 
 	criticApprove = `{"status":"approved","concerns":[],"notes_for_memory":null}`
 	criticReject  = `{"status":"rejected","concerns":[{"severity":"blocker","where":"x.go:1","issue":"bad","suggestion":"fix it"}],"notes_for_memory":null}`
 
-	reviewerStop = `{"summary_of_cycle":"done","new_tasks":[],"should_stop":true,"notes_for_memory":null}`
+	reviewerStop       = `{"summary_of_cycle":"done","new_tasks":[],"should_stop":true,"notes_for_memory":null}`
 	reviewerProposeTwo = `{"summary_of_cycle":"cycle 1","new_tasks":[{"title":"task-3","description":"desc-3","priority":1},{"title":"task-4","description":"desc-4","priority":2}],"should_stop":false,"notes_for_memory":null}`
 	reviewerProposeOne = `{"summary_of_cycle":"cycle 1","new_tasks":[{"title":"task-3","description":"desc-3","priority":1}],"should_stop":false,"notes_for_memory":null}`
 )
@@ -384,8 +388,10 @@ func TestRun_E2EScenarios(t *testing.T) {
 				{ID: "T001", Title: "task-1", Description: "desc-1", Status: tasks.StatusPending, Priority: 1},
 			},
 			resultsSeq: map[string][]string{
-				"coder":    {coderDone, coderDone, coderDone},
-				"tester":   {testerFail, testerFail, testerFail},
+				"coder": {coderDone, coderDone, coderDone},
+				// Use distinct failures per attempt so stuck detection (threshold=2 consecutive
+				// identical hashes) does not fire before max_iterations is reached.
+				"tester":   {testerFail, testerFail2, testerFail3},
 				"critic":   {}, // critic should not run
 				"reviewer": {reviewerStop},
 			},
