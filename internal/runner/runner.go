@@ -28,6 +28,90 @@ type Result struct {
 	ResultExists bool
 	ExitCode     int
 	Duration     time.Duration
+	// CodexHeader is non-nil when stdout begins with an "OpenAI Codex" banner.
+	// Keys include: workdir, model, provider, approval, sandbox.
+	CodexHeader map[string]string
+}
+
+// StderrTail returns the last n bytes of Stderr, adjusted to a valid UTF-8
+// boundary so the returned string is always valid UTF-8.
+func (r *Result) StderrTail(n int) string {
+	return tailString(r.Stderr, n)
+}
+
+// StdoutTail returns the last n bytes of Stdout, adjusted to a valid UTF-8
+// boundary so the returned string is always valid UTF-8.
+func (r *Result) StdoutTail(n int) string {
+	return tailString(r.Stdout, n)
+}
+
+// TailString returns the last n bytes of s, walking back to a UTF-8 boundary.
+// It is exported so other packages (e.g. commands) can reuse the same helper.
+func TailString(s string, n int) string {
+	return tailString(s, n)
+}
+
+// tailString is the unexported implementation used within this package.
+func tailString(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	raw := s[len(s)-n:]
+	// Advance past any partial UTF-8 leading byte so we start on a boundary.
+	for i, b := range []byte(raw) {
+		if b&0xC0 != 0x80 { // not a continuation byte
+			return raw[i:]
+		}
+	}
+	return raw
+}
+
+// codexHeaderKeys are the keys extracted from a codex startup banner.
+var codexHeaderKeys = map[string]bool{
+	"workdir":  true,
+	"model":    true,
+	"provider": true,
+	"approval": true,
+	"sandbox":  true,
+}
+
+// parseCodexHeader scans stdout for the "OpenAI Codex" banner and extracts
+// key: value pairs between the two "--------" separator lines.
+// Returns nil when no banner is found.
+func parseCodexHeader(stdout string) map[string]string {
+	if !strings.HasPrefix(stdout, "OpenAI Codex") {
+		return nil
+	}
+	lines := strings.SplitN(stdout, "\n", 20) // header is always near the top
+	inBlock := false
+	result := make(map[string]string)
+	for _, line := range lines {
+		trimmed := strings.TrimRight(line, "\r")
+		if trimmed == "--------" {
+			if !inBlock {
+				inBlock = true
+				continue
+			}
+			// Second separator — done.
+			break
+		}
+		if !inBlock {
+			continue
+		}
+		idx := strings.IndexByte(trimmed, ':')
+		if idx < 0 {
+			continue
+		}
+		key := strings.TrimSpace(trimmed[:idx])
+		val := strings.TrimSpace(trimmed[idx+1:])
+		if codexHeaderKeys[key] {
+			result[key] = val
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
 }
 
 // RunAgent executes the agent described by s.
@@ -72,6 +156,7 @@ func RunAgent(ctx context.Context, s Spec) (*Result, error) {
 		Duration: dur,
 		ExitCode: cmd.ProcessState.ExitCode(),
 	}
+	res.CodexHeader = parseCodexHeader(res.Stdout)
 
 	if errors.Is(cctx.Err(), context.DeadlineExceeded) {
 		res.TimedOut = true

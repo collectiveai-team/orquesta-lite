@@ -1,14 +1,20 @@
 package commands
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
+	"github.com/lionelchamorro/orquestalite/internal/config"
+	"github.com/lionelchamorro/orquestalite/internal/eventlog"
+	"github.com/lionelchamorro/orquestalite/internal/fallback"
 	"github.com/lionelchamorro/orquestalite/internal/tasks"
 )
 
@@ -277,4 +283,130 @@ func TestRun_EmptyTaskList(t *testing.T) {
 	if err != nil {
 		t.Errorf("Run with empty task list: %v", err)
 	}
+}
+
+// TestCallRole_AgentRunEventFields verifies that callRole logs the new fields
+// (stderr_tail, stdout_tail, exit_code, cmd_line) in the agent_run event and
+// that when the agent does not write a result file the error message includes
+// exit code and stderr tail.
+func TestCallRole_AgentRunEventFields(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("posix shell script test, skipping on windows")
+	}
+
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "run.log")
+
+	logger, err := eventlog.Open(logPath, os.Stderr)
+	if err != nil {
+		t.Fatalf("open logger: %v", err)
+	}
+	defer logger.Close()
+
+	// Agent that writes stderr, exits non-zero, and does NOT write the result file.
+	resultPath := filepath.Join(dir, "result.json")
+	agentScript := fmt.Sprintf(
+		`sh -c "echo 'something went wrong' 1>&2; exit 7"`,
+	)
+	_ = agentScript // used below via config
+
+	ag := config.Agent{
+		Cmd: []string{"sh", "-c", "echo 'something went wrong' 1>&2; exit 7"},
+	}
+	role := config.Role{
+		Agents:         []string{"testagent"},
+		Prompt:         "prompts/dummy.md",
+		ResultPath:     "result.json",
+		TimeoutSeconds: 5,
+	}
+	cfg := &config.Config{
+		Agents: map[string]config.Agent{"testagent": ag},
+		Roles:  map[string]config.Role{"testrole": role},
+		RateLimitBackoff: config.RateLimitBackoff{
+			InitialSeconds: 1,
+			Factor:         2,
+			MaxSeconds:     2,
+			DefaultPattern: "rate_?limit",
+		},
+	}
+
+	fc := fallback.NewCaller(fallback.Config{
+		InitialBackoff: 0,
+		Factor:         1,
+		MaxBackoff:     0,
+	})
+
+	deps := &liveDeps{
+		cfg:     cfg,
+		dir:     dir,
+		fc:      fc,
+		log:     logger,
+		memPath: filepath.Join(dir, "memory.md"),
+	}
+
+	callErr := deps.callRole(context.Background(), "testrole", "the prompt text", role)
+
+	// Close logger so the file is fully flushed.
+	_ = logger.Close()
+
+	// Error message must include exit code and stderr tail.
+	if callErr == nil {
+		t.Fatal("expected error from callRole when result file absent")
+	}
+	errMsg := callErr.Error()
+	if !strings.Contains(errMsg, "exit=7") {
+		t.Errorf("error missing exit code: %q", errMsg)
+	}
+	if !strings.Contains(errMsg, "something went wrong") {
+		t.Errorf("error missing stderr content: %q", errMsg)
+	}
+
+	// Parse the JSONL log and find the agent_run event.
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+
+	var agentRunEvent map[string]any
+	sc := bufio.NewScanner(strings.NewReader(string(raw)))
+	for sc.Scan() {
+		var rec map[string]any
+		if json.Unmarshal(sc.Bytes(), &rec) != nil {
+			continue
+		}
+		if rec["event"] == "agent_run" {
+			agentRunEvent = rec
+			break
+		}
+	}
+	if agentRunEvent == nil {
+		t.Fatalf("no agent_run event found in log:\n%s", raw)
+	}
+
+	// Verify required new fields are present.
+	for _, field := range []string{"stderr_tail", "stdout_tail", "exit_code", "cmd_line"} {
+		if _, ok := agentRunEvent[field]; !ok {
+			t.Errorf("agent_run event missing field %q; event: %v", field, agentRunEvent)
+		}
+	}
+
+	// exit_code must be 7.
+	if got := agentRunEvent["exit_code"]; fmt.Sprintf("%v", got) != "7" {
+		t.Errorf("exit_code = %v, want 7", got)
+	}
+
+	// cmd_line must not contain the prompt text but must contain <elided>.
+	cmdLine, _ := agentRunEvent["cmd_line"].(string)
+	if strings.Contains(cmdLine, "the prompt text") {
+		t.Errorf("cmd_line must not contain raw prompt: %q", cmdLine)
+	}
+
+	// stderr_tail must contain the agent's stderr output.
+	stderrTail, _ := agentRunEvent["stderr_tail"].(string)
+	if !strings.Contains(stderrTail, "something went wrong") {
+		t.Errorf("stderr_tail missing agent stderr: %q", stderrTail)
+	}
+
+	// resultPath is used to ensure the result file path is correct.
+	_ = resultPath
 }

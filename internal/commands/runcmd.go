@@ -111,7 +111,7 @@ func (d *liveDeps) FullSuite(ctx context.Context) error {
 	out, err := c.CombinedOutput()
 	if err != nil {
 		d.log.Log(eventlog.Event{Type: "full_suite_failed", Fields: map[string]any{
-			"output_tail": tailString(string(out), 1024),
+			"output_tail": runner.TailString(string(out), 1024),
 		}})
 		return loops.ErrFullSuiteFailed
 	}
@@ -207,6 +207,9 @@ func (d *liveDeps) RunReviewer(ctx context.Context, cycle int) (results.Reviewer
 
 // callRole drives a single role invocation through the fallback chain.
 func (d *liveDeps) callRole(ctx context.Context, roleName, prompt string, role config.Role) error {
+	var lastResult *runner.Result
+	var lastAgentName string
+
 	res, _, err := d.fc.Call(ctx, role.Agents, func(ctx context.Context, agentName string) (fallback.Outcome, error) {
 		ag := d.cfg.Agents[agentName]
 		pattern := ag.RateLimitPattern
@@ -224,14 +227,32 @@ func (d *liveDeps) callRole(ctx context.Context, roleName, prompt string, role c
 		if err != nil {
 			return fallback.Outcome{}, err
 		}
-		d.log.Log(eventlog.Event{Type: "agent_run", Fields: map[string]any{
+		lastResult = r
+		lastAgentName = agentName
+
+		// Build cmd_line with {{PROMPT}} replaced by <elided> so prompts aren't logged.
+		cmdLine := make([]string, len(ag.Cmd))
+		for i, tok := range ag.Cmd {
+			cmdLine[i] = strings.ReplaceAll(tok, "{{PROMPT}}", "<elided>")
+		}
+
+		fields := map[string]any{
 			"role":          roleName,
 			"agent":         agentName,
 			"duration_s":    int(r.Duration.Seconds()),
 			"timed_out":     r.TimedOut,
 			"rate_limited":  r.RateLimited,
 			"result_exists": r.ResultExists,
-		}})
+			"exit_code":     r.ExitCode,
+			"stderr_tail":   r.StderrTail(2048),
+			"stdout_tail":   r.StdoutTail(2048),
+			"cmd_line":      strings.Join(cmdLine, " "),
+		}
+		if r.CodexHeader != nil {
+			fields["codex_header"] = r.CodexHeader
+		}
+		d.log.Log(eventlog.Event{Type: "agent_run", Fields: fields})
+
 		return fallback.Outcome{
 			RateLimited:  r.RateLimited,
 			ResultExists: r.ResultExists,
@@ -245,17 +266,17 @@ func (d *liveDeps) callRole(ctx context.Context, roleName, prompt string, role c
 		return err
 	}
 	if !res.ResultExists {
-		return fmt.Errorf("agent %q did not write result file for role %q", roleName, roleName)
+		stderrTail := ""
+		exitCode := -1
+		agentName := lastAgentName
+		if lastResult != nil {
+			stderrTail = lastResult.StderrTail(2048)
+			exitCode = lastResult.ExitCode
+		}
+		return fmt.Errorf("agent %q (role %q) did not write %s: exit=%d; stderr tail: %s",
+			agentName, roleName, role.ResultPath, exitCode, stderrTail)
 	}
 	return nil
-}
-
-// tailString returns the last n bytes of s.
-func tailString(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[len(s)-n:]
 }
 
 // sha256OfFailures hashes a slice of test failures for repeated-failure detection.
