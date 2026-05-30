@@ -86,3 +86,115 @@ func TestCallRole_Exhausted(t *testing.T) {
 		t.Fatalf("expected ErrRateLimitExhausted, got %v", err)
 	}
 }
+
+// TestCall_FallbackOnResultMissing verifies that ShouldFallback=true advances
+// to the next agent in the chain, and the successful second agent is returned.
+func TestCall_FallbackOnResultMissing(t *testing.T) {
+	chain := []string{"a", "b"}
+	cfg := Config{InitialBackoff: time.Millisecond, Factor: 2, MaxBackoff: 10 * time.Millisecond, Now: time.Now}
+	c := NewCaller(cfg)
+
+	out, agentUsed, err := c.Call(context.Background(), chain, func(ctx context.Context, name string) (Outcome, error) {
+		if name == "a" {
+			return Outcome{ShouldFallback: true, FallbackReason: "result_missing"}, nil
+		}
+		return Outcome{ResultExists: true}, nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if agentUsed != "b" {
+		t.Errorf("expected agent b, got %s", agentUsed)
+	}
+	if !out.ResultExists {
+		t.Errorf("expected ResultExists=true from agent b")
+	}
+}
+
+// TestCall_NoCooldownOnNonRateLimit verifies that a result_missing fallback
+// does NOT place the agent in cooldown (agent a is retryable immediately after).
+func TestCall_NoCooldownOnNonRateLimit(t *testing.T) {
+	chain := []string{"a", "b"}
+	cfg := Config{InitialBackoff: time.Millisecond, Factor: 2, MaxBackoff: 10 * time.Millisecond, Now: time.Now}
+	c := NewCaller(cfg)
+
+	// First call: a falls back (result_missing), b succeeds.
+	_, _, err := c.Call(context.Background(), chain, func(ctx context.Context, name string) (Outcome, error) {
+		if name == "a" {
+			return Outcome{ShouldFallback: true, FallbackReason: "result_missing"}, nil
+		}
+		return Outcome{ResultExists: true}, nil
+	})
+	if err != nil {
+		t.Fatalf("first call: %v", err)
+	}
+
+	// Second call immediately: a should be tried again (no cooldown), and succeed this time.
+	var triedA bool
+	_, _, err = c.Call(context.Background(), chain, func(ctx context.Context, name string) (Outcome, error) {
+		if name == "a" {
+			triedA = true
+			return Outcome{ResultExists: true}, nil
+		}
+		return Outcome{ResultExists: true}, nil
+	})
+	if err != nil {
+		t.Fatalf("second call: %v", err)
+	}
+	if !triedA {
+		t.Errorf("expected agent a to be tried on second call (no cooldown), but it was skipped")
+	}
+}
+
+// TestCall_AllAgentsFailMaxAttempts verifies that when every agent returns
+// ShouldFallback=true indefinitely, ErrAllAgentsFailed is returned after
+// the MaxAttempts cap is hit.
+func TestCall_AllAgentsFailMaxAttempts(t *testing.T) {
+	chain := []string{"a", "b"}
+	cfg := Config{InitialBackoff: time.Millisecond, Factor: 2, MaxBackoff: 100 * time.Millisecond, Now: time.Now}
+	c := NewCaller(cfg)
+
+	_, _, err := c.Call(context.Background(), chain, func(ctx context.Context, name string) (Outcome, error) {
+		return Outcome{ShouldFallback: true, FallbackReason: "result_missing"}, nil
+	})
+	if !errors.Is(err, ErrAllAgentsFailed) {
+		t.Fatalf("expected ErrAllAgentsFailed, got %v", err)
+	}
+}
+
+// TestCall_RateLimitStillCausesCooldown verifies backward compat: when
+// RateLimited=true the agent is placed in cooldown as before.
+func TestCall_RateLimitStillCausesCooldown(t *testing.T) {
+	nowT := time.Now()
+	chain := []string{"a", "b"}
+	cfg := Config{
+		InitialBackoff: time.Hour, // large so cooldown is obvious
+		Factor:         2,
+		MaxBackoff:     2 * time.Hour,
+		Now:            func() time.Time { return nowT },
+	}
+	c := NewCaller(cfg)
+
+	// Call once: a is rate-limited, b succeeds.
+	_, agentUsed, err := c.Call(context.Background(), chain, func(ctx context.Context, name string) (Outcome, error) {
+		if name == "a" {
+			return Outcome{RateLimited: true, ShouldFallback: true, FallbackReason: "rate_limit"}, nil
+		}
+		return Outcome{ResultExists: true}, nil
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if agentUsed != "b" {
+		t.Errorf("expected b, got %s", agentUsed)
+	}
+
+	// Immediately after, a should be in cooldown (its entry is in the future).
+	cd, ok := c.cooldown["a"]
+	if !ok {
+		t.Fatal("agent a not in cooldown map after rate_limit fallback")
+	}
+	if !cd.After(nowT) {
+		t.Errorf("cooldown for a (%v) is not after now (%v)", cd, nowT)
+	}
+}

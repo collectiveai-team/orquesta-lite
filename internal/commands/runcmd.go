@@ -208,9 +208,11 @@ func (d *liveDeps) RunReviewer(ctx context.Context, cycle int) (results.Reviewer
 // callRole drives a single role invocation through the fallback chain.
 func (d *liveDeps) callRole(ctx context.Context, roleName, prompt string, role config.Role) error {
 	var lastResult *runner.Result
-	var lastAgentName string
+	var lastErr error
+	// triedAgents tracks agent names in attempt order for error reporting.
+	var triedAgents []string
 
-	res, _, err := d.fc.Call(ctx, role.Agents, func(ctx context.Context, agentName string) (fallback.Outcome, error) {
+	_, _, err := d.fc.Call(ctx, role.Agents, func(ctx context.Context, agentName string) (fallback.Outcome, error) {
 		ag := d.cfg.Agents[agentName]
 		pattern := ag.RateLimitPattern
 		if pattern == "" {
@@ -228,7 +230,7 @@ func (d *liveDeps) callRole(ctx context.Context, roleName, prompt string, role c
 			return fallback.Outcome{}, err
 		}
 		lastResult = r
-		lastAgentName = agentName
+		triedAgents = append(triedAgents, agentName)
 
 		// Build cmd_line with {{PROMPT}} replaced by <elided> so prompts aren't logged.
 		cmdLine := make([]string, len(ag.Cmd))
@@ -236,17 +238,42 @@ func (d *liveDeps) callRole(ctx context.Context, roleName, prompt string, role c
 			cmdLine[i] = strings.ReplaceAll(tok, "{{PROMPT}}", "<elided>")
 		}
 
+		// Determine fallback disposition.
+		var shouldFallback bool
+		var fallbackReason string
+		switch {
+		case r.RateLimited:
+			shouldFallback = true
+			fallbackReason = "rate_limit"
+		case !r.ResultExists:
+			shouldFallback = true
+			fallbackReason = "result_missing"
+		case r.TimedOut:
+			shouldFallback = true
+			fallbackReason = "agent_crashed"
+		// "invalid_contract" is reserved for Phase 3 contract validation.
+		default:
+			shouldFallback = false
+		}
+
+		// Record last non-success error for reporting.
+		if shouldFallback {
+			lastErr = fmt.Errorf("agent %q (role %q) did not write %s: exit=%d; stderr tail: %s",
+				agentName, roleName, role.ResultPath, r.ExitCode, r.StderrTail(2048))
+		}
+
 		fields := map[string]any{
-			"role":          roleName,
-			"agent":         agentName,
-			"duration_s":    int(r.Duration.Seconds()),
-			"timed_out":     r.TimedOut,
-			"rate_limited":  r.RateLimited,
-			"result_exists": r.ResultExists,
-			"exit_code":     r.ExitCode,
-			"stderr_tail":   r.StderrTail(2048),
-			"stdout_tail":   r.StdoutTail(2048),
-			"cmd_line":      strings.Join(cmdLine, " "),
+			"role":            roleName,
+			"agent":           agentName,
+			"duration_s":      int(r.Duration.Seconds()),
+			"timed_out":       r.TimedOut,
+			"rate_limited":    r.RateLimited,
+			"result_exists":   r.ResultExists,
+			"exit_code":       r.ExitCode,
+			"stderr_tail":     r.StderrTail(2048),
+			"stdout_tail":     r.StdoutTail(2048),
+			"cmd_line":        strings.Join(cmdLine, " "),
+			"fallback_reason": fallbackReason,
 		}
 		if r.CodexHeader != nil {
 			fields["codex_header"] = r.CodexHeader
@@ -254,27 +281,30 @@ func (d *liveDeps) callRole(ctx context.Context, roleName, prompt string, role c
 		d.log.Log(eventlog.Event{Type: "agent_run", Fields: fields})
 
 		return fallback.Outcome{
-			RateLimited:  r.RateLimited,
-			ResultExists: r.ResultExists,
-			TimedOut:     r.TimedOut,
+			RateLimited:    r.RateLimited,
+			ResultExists:   r.ResultExists,
+			TimedOut:       r.TimedOut,
+			ShouldFallback: shouldFallback,
+			FallbackReason: fallbackReason,
 		}, nil
 	})
+
+	if errors.Is(err, fallback.ErrAllAgentsFailed) {
+		tried := strings.Join(triedAgents, ", ")
+		lastErrStr := ""
+		if lastErr != nil {
+			lastErrStr = lastErr.Error()
+		} else if lastResult != nil {
+			lastErrStr = fmt.Sprintf("exit=%d; stderr tail: %s", lastResult.ExitCode, lastResult.StderrTail(2048))
+		}
+		return fmt.Errorf("all agents failed for role %q: tried [%s]; last error: %s",
+			roleName, tried, lastErrStr)
+	}
 	if errors.Is(err, fallback.ErrRateLimitExhausted) {
 		return err
 	}
 	if err != nil {
 		return err
-	}
-	if !res.ResultExists {
-		stderrTail := ""
-		exitCode := -1
-		agentName := lastAgentName
-		if lastResult != nil {
-			stderrTail = lastResult.StderrTail(2048)
-			exitCode = lastResult.ExitCode
-		}
-		return fmt.Errorf("agent %q (role %q) did not write %s: exit=%d; stderr tail: %s",
-			agentName, roleName, role.ResultPath, exitCode, stderrTail)
 	}
 	return nil
 }

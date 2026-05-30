@@ -410,3 +410,186 @@ func TestCallRole_AgentRunEventFields(t *testing.T) {
 	// resultPath is used to ensure the result file path is correct.
 	_ = resultPath
 }
+
+// TestCallRole_FallsBackOnResultMissing verifies that when the first agent in a
+// two-agent chain does not write a result file, callRole falls back to the second
+// agent (which does write the file) and returns nil.
+// It also asserts that two agent_run events appear in the log, in order.
+func TestCallRole_FallsBackOnResultMissing(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("posix shell script test, skipping on windows")
+	}
+
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "run.log")
+
+	logger, err := eventlog.Open(logPath, os.Stderr)
+	if err != nil {
+		t.Fatalf("open logger: %v", err)
+	}
+	defer logger.Close()
+
+	resultPath := filepath.Join(dir, "result.json")
+	// Script that accepts --agent <name> and writes result only for "agent_b".
+	scriptPath := filepath.Join(dir, "agent.sh")
+	script := fmt.Sprintf(`#!/bin/sh
+agent=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --agent) agent="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ "$agent" = "agent_b" ]; then
+  mkdir -p "$(dirname '%s')"
+  printf '{}' > '%s'
+fi
+exit 0
+`, resultPath, resultPath)
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	role := config.Role{
+		Agents:         []string{"agent_a", "agent_b"},
+		Prompt:         "prompts/dummy.md",
+		ResultPath:     "result.json",
+		TimeoutSeconds: 5,
+	}
+	cfg := &config.Config{
+		Agents: map[string]config.Agent{
+			"agent_a": {Cmd: []string{"sh", scriptPath, "--agent", "agent_a"}},
+			"agent_b": {Cmd: []string{"sh", scriptPath, "--agent", "agent_b"}},
+		},
+		Roles: map[string]config.Role{"testrole": role},
+		RateLimitBackoff: config.RateLimitBackoff{
+			InitialSeconds: 1,
+			Factor:         2,
+			MaxSeconds:     4,
+			DefaultPattern: "rate_?limit",
+		},
+	}
+
+	fc := fallback.NewCaller(fallback.Config{
+		InitialBackoff: 0,
+		Factor:         2,
+		MaxBackoff:     0,
+	})
+
+	deps := &liveDeps{
+		cfg:     cfg,
+		dir:     dir,
+		fc:      fc,
+		log:     logger,
+		memPath: filepath.Join(dir, "memory.md"),
+	}
+
+	callErr := deps.callRole(context.Background(), "testrole", "prompt", role)
+	_ = logger.Close()
+
+	if callErr != nil {
+		t.Fatalf("expected nil error after fallback, got: %v", callErr)
+	}
+
+	// Parse log and check two agent_run events in order.
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+
+	var agentNames []string
+	sc := bufio.NewScanner(strings.NewReader(string(raw)))
+	for sc.Scan() {
+		var rec map[string]any
+		if json.Unmarshal(sc.Bytes(), &rec) != nil {
+			continue
+		}
+		if rec["event"] == "agent_run" {
+			if name, ok := rec["agent"].(string); ok {
+				agentNames = append(agentNames, name)
+			}
+		}
+	}
+
+	if len(agentNames) != 2 {
+		t.Fatalf("expected 2 agent_run events, got %d: %v", len(agentNames), agentNames)
+	}
+	if agentNames[0] != "agent_a" || agentNames[1] != "agent_b" {
+		t.Errorf("agent_run order = %v, want [agent_a, agent_b]", agentNames)
+	}
+}
+
+// TestCallRole_AllAgentsFailedError verifies that when every agent in the chain
+// fails to write a result file, callRole returns an error matching the format:
+// all agents failed for role %q: tried [...]; last error: ...
+func TestCallRole_AllAgentsFailedError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("posix shell script test, skipping on windows")
+	}
+
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "run.log")
+
+	logger, err := eventlog.Open(logPath, os.Stderr)
+	if err != nil {
+		t.Fatalf("open logger: %v", err)
+	}
+	defer logger.Close()
+
+	// Agent that never writes a result file.
+	scriptPath := filepath.Join(dir, "no_result.sh")
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	role := config.Role{
+		Agents:         []string{"agent_a", "agent_b"},
+		Prompt:         "prompts/dummy.md",
+		ResultPath:     "result.json",
+		TimeoutSeconds: 5,
+	}
+	cfg := &config.Config{
+		Agents: map[string]config.Agent{
+			"agent_a": {Cmd: []string{"sh", scriptPath}},
+			"agent_b": {Cmd: []string{"sh", scriptPath}},
+		},
+		Roles: map[string]config.Role{"testrole": role},
+		RateLimitBackoff: config.RateLimitBackoff{
+			InitialSeconds: 1,
+			Factor:         2,
+			MaxSeconds:     4,
+			DefaultPattern: "rate_?limit",
+		},
+	}
+
+	fc := fallback.NewCaller(fallback.Config{
+		InitialBackoff: 0,
+		Factor:         2,
+		MaxBackoff:     0,
+	})
+
+	deps := &liveDeps{
+		cfg:     cfg,
+		dir:     dir,
+		fc:      fc,
+		log:     logger,
+		memPath: filepath.Join(dir, "memory.md"),
+	}
+
+	callErr := deps.callRole(context.Background(), "testrole", "prompt", role)
+	_ = logger.Close()
+
+	if callErr == nil {
+		t.Fatal("expected error when all agents fail, got nil")
+	}
+	errMsg := callErr.Error()
+	if !strings.Contains(errMsg, `all agents failed for role "testrole"`) {
+		t.Errorf("error missing expected prefix: %q", errMsg)
+	}
+	if !strings.Contains(errMsg, "agent_a") || !strings.Contains(errMsg, "agent_b") {
+		t.Errorf("error missing agent names: %q", errMsg)
+	}
+	if !strings.Contains(errMsg, "last error:") {
+		t.Errorf("error missing 'last error:' segment: %q", errMsg)
+	}
+}
