@@ -16,6 +16,7 @@ const (
 	StatusInProgress Status = "in_progress"
 	StatusDone       Status = "done"
 	StatusFailed     Status = "failed"
+	StatusDecomposed Status = "decomposed"
 )
 
 type FailureReason string
@@ -40,6 +41,7 @@ type Task struct {
 	Attempts             int            `json:"attempts"`
 	LastFeedback         *string        `json:"last_feedback"`
 	FailureReason        *FailureReason `json:"failure_reason,omitempty"`
+	DecomposedIntoIDs    []string       `json:"decomposed_into_ids,omitempty"`
 }
 
 type TaskList struct {

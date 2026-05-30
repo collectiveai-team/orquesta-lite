@@ -326,6 +326,74 @@ func (d *liveDeps) callRole(ctx context.Context, roleName, prompt string, role c
 	return nil
 }
 
+// Decompose invokes the parser in decomposition mode to break a failed task into subtasks.
+// Returns ErrNoDecomposer if the parser role has no decompose_prompt configured.
+// Returns (nil, ErrNoDecomposer) if the result contains 0 or >5 tasks.
+func (d *liveDeps) Decompose(ctx context.Context, t *tasks.Task, fx *loops.FixResult, _ []string) ([]tasks.Task, error) {
+	parserRole := d.cfg.Roles["parser"]
+	if parserRole.DecomposePrompt == "" {
+		return nil, loops.ErrNoDecomposer
+	}
+
+	tmpl, err := prompts.Load(filepath.Join(d.dir, parserRole.DecomposePrompt))
+	if err != nil {
+		return nil, loops.ErrNoDecomposer
+	}
+
+	mem, _ := memory.ReadAll(d.memPath)
+
+	// Use LastFeedback as both tester and critic feedback — they are not separately
+	// tracked in FixResult but the most recent failure context is sufficient.
+	feedback := ""
+	if fx != nil {
+		feedback = fx.LastFeedback
+	}
+
+	prompt := prompts.Interpolate(tmpl, map[string]string{
+		"MEMORY":                   mem,
+		"TASK_ID":                  t.ID,
+		"TASK_TITLE":               t.Title,
+		"TASK_DESCRIPTION":         t.Description,
+		"PREVIOUS_ATTEMPT_SUMMARY": feedback,
+		"FILES_CHANGED_SO_FAR":     "",
+		"TESTER_FEEDBACK":          feedback,
+		"CRITIC_FEEDBACK":          feedback,
+	})
+
+	// Invoke the parser role agents but write to a separate result file so that
+	// any in-flight parser.json is not overwritten.
+	decomposeResultPath := filepath.Join(d.dir, ".orquestalite", "results", "parser-decompose.json")
+	decomposeRole := parserRole
+	decomposeRole.ResultPath = ".orquestalite/results/parser-decompose.json"
+
+	if err := d.callRole(ctx, "parser", prompt, decomposeRole); err != nil {
+		return nil, fmt.Errorf("decompose callRole: %w", err)
+	}
+
+	pr, err := results.ParseParser(decomposeResultPath)
+	if err != nil {
+		return nil, fmt.Errorf("decompose parse result: %w", err)
+	}
+
+	if len(pr.Tasks) == 0 || len(pr.Tasks) > 5 {
+		d.log.Log(eventlog.Event{Type: "decompose_invalid_count", Fields: map[string]any{
+			"task_id": t.ID,
+			"count":   len(pr.Tasks),
+		}})
+		return nil, loops.ErrNoDecomposer
+	}
+
+	subtasks := make([]tasks.Task, 0, len(pr.Tasks))
+	for _, pt := range pr.Tasks {
+		subtasks = append(subtasks, tasks.Task{
+			Title:       pt.Title,
+			Description: pt.Description,
+			Priority:    pt.Priority,
+		})
+	}
+	return subtasks, nil
+}
+
 // sha256OfFailures hashes a slice of test failures for repeated-failure detection.
 func sha256OfFailures(fs []results.TestFailure) string {
 	raw, _ := json.Marshal(fs)

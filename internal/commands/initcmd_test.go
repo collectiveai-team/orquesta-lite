@@ -133,6 +133,19 @@ func TestInit_TeamJSONHasCodexPrimary(t *testing.T) {
 	}
 }
 
+// TestInit_MaterialisesDecomposePrompt verifies that Init writes the
+// parser-decompose.md prompt to <workspace>/prompts/.
+func TestInit_MaterialisesDecomposePrompt(t *testing.T) {
+	dir := t.TempDir()
+	if err := Init(dir); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "prompts", "parser-decompose.md")
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("prompts/parser-decompose.md not materialised: %v", err)
+	}
+}
+
 // TestInit_WarnsWhenCodexMissing would verify that Init prints a warning when
 // the codex binary is not in PATH. However, exec.LookPath cannot be stubbed
 // without dependency injection, and we cannot guarantee that the test runner

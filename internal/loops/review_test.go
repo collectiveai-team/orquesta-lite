@@ -25,6 +25,9 @@ func (s *stubReviewDeps) Rollback(ctx context.Context) error { return s.taskDeps
 func (s *stubReviewDeps) SaveTasks(ctx context.Context, tl *tasks.TaskList) error {
 	return s.taskDeps.SaveTasks(ctx, tl)
 }
+func (s *stubReviewDeps) Decompose(ctx context.Context, t *tasks.Task, fx *FixResult, files []string) ([]tasks.Task, error) {
+	return s.taskDeps.Decompose(ctx, t, fx, files)
+}
 func (s *stubReviewDeps) RunReviewer(ctx context.Context, cycle int) (results.ReviewerResult, error) {
 	s.cycles = append(s.cycles, cycle)
 	return s.reviewer(cycle), nil

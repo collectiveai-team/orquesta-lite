@@ -125,3 +125,32 @@ func TestLoad_EscalationLadderUnknownAgentFails(t *testing.T) {
 		t.Fatalf("expected error mentioning unknown agent 'ghost_agent', got: %v", err)
 	}
 }
+
+func TestConfig_DecomposePromptRoundTrips(t *testing.T) {
+	p := writeTeamJSON(t, `{
+		"agents": {
+			"a1": {"cmd": ["claude", "-p", "{{PROMPT}}"]}
+		},
+		"roles": {
+			"parser": {
+				"agents": ["a1"],
+				"prompt": "prompts/parser.md",
+				"result_path": ".orquestalite/results/parser.json",
+				"timeout_seconds": 300,
+				"decompose_prompt": "prompts/parser-decompose.md"
+			}
+		},
+		"limits": {"max_review_cycles": 3, "max_fix_iterations": 5},
+		"rate_limit_backoff": {"initial_seconds": 30, "factor": 2, "max_seconds": 1800, "default_pattern": "rate_?limit|429"},
+		"full_test_command": "go test ./..."
+	}`)
+
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := cfg.Roles["parser"].DecomposePrompt
+	if got != "prompts/parser-decompose.md" {
+		t.Errorf("DecomposePrompt = %q, want %q", got, "prompts/parser-decompose.md")
+	}
+}

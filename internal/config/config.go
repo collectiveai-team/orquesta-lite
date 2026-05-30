@@ -18,6 +18,7 @@ type Role struct {
 	ResultPath       string   `json:"result_path"`
 	TimeoutSeconds   int      `json:"timeout_seconds"`
 	EscalationLadder []string `json:"escalation_ladder,omitempty"`
+	DecomposePrompt  string   `json:"decompose_prompt,omitempty"`
 }
 
 type Limits struct {

@@ -10,12 +10,31 @@ import (
 
 var ErrFullSuiteFailed = errors.New("full test suite failed")
 
+// ErrNoDecomposer is returned by Decompose implementations that do not support
+// decomposition (e.g. decompose_prompt not configured). The task loop falls
+// through to the normal failed path when it sees this error.
+var ErrNoDecomposer = errors.New("no decomposer configured")
+
 type TaskDeps interface {
 	RunFix(ctx context.Context, taskID string) (*FixResult, error)
 	FullSuite(ctx context.Context) error
 	Commit(ctx context.Context, msg string) (string, error)
 	Rollback(ctx context.Context) error
 	SaveTasks(ctx context.Context, tl *tasks.TaskList) error
+	// Decompose attempts to break task t into 2-5 subtasks when the fix loop
+	// exhausted all retries. Return ErrNoDecomposer if decomposition is not
+	// configured for this project; the task loop will fall through to failed.
+	Decompose(ctx context.Context, t *tasks.Task, fx *FixResult, filesChangedSoFar []string) ([]tasks.Task, error)
+}
+
+// findTaskIdx returns the index of the task with the given ID, or -1 if not found.
+func findTaskIdx(tl *tasks.TaskList, id string) int {
+	for i := range tl.Tasks {
+		if tl.Tasks[i].ID == id {
+			return i
+		}
+	}
+	return -1
 }
 
 func RunTaskLoop(ctx context.Context, tl *tasks.TaskList, d TaskDeps) error {
@@ -24,15 +43,51 @@ func RunTaskLoop(ctx context.Context, tl *tasks.TaskList, d TaskDeps) error {
 		if t == nil {
 			return nil
 		}
+		taskID := t.ID
 		t.Status = tasks.StatusInProgress
 		t.Attempts++
 		_ = d.SaveTasks(ctx, tl)
 
-		fx, err := d.RunFix(ctx, t.ID)
+		fx, err := d.RunFix(ctx, taskID)
 		if err != nil {
 			return err
 		}
 		if fx.Status == FixFailed {
+			if fx.Reason == "agent_repeated_failure" {
+				// Re-acquire t by index before calling Decompose (t may be stale if
+				// the caller passed the original pointer after a prior append).
+				idx := findTaskIdx(tl, taskID)
+				if idx >= 0 {
+					t = &tl.Tasks[idx]
+				}
+				subtasks, decompErr := d.Decompose(ctx, t, fx, nil)
+				if decompErr == nil && len(subtasks) > 0 {
+					added := tl.Append(subtasks, t.CreatedInReviewCycle)
+					ids := make([]string, len(added))
+					for i, sub := range added {
+						ids[i] = sub.ID
+					}
+					// Re-acquire pointer after Append (slice may have been reallocated).
+					idx2 := findTaskIdx(tl, taskID)
+					if idx2 >= 0 {
+						tl.Tasks[idx2].Status = tasks.StatusDecomposed
+						tl.Tasks[idx2].DecomposedIntoIDs = ids
+					}
+					_ = d.Rollback(ctx)
+					_ = d.SaveTasks(ctx, tl)
+					continue
+				}
+				// ErrNoDecomposer or empty result: fall through to failed.
+				if decompErr != nil && !errors.Is(decompErr, ErrNoDecomposer) {
+					// Unexpected decomposition error — fall through to failed path silently.
+					_ = decompErr
+				}
+			}
+			// Re-acquire in case Decompose triggered any slice growth.
+			idx := findTaskIdx(tl, taskID)
+			if idx >= 0 {
+				t = &tl.Tasks[idx]
+			}
 			t.Status = tasks.StatusFailed
 			t.LastFeedback = strPtr(fx.LastFeedback)
 			r := tasks.FailureReason(fx.Reason)

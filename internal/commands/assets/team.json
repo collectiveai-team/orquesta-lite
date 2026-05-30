@@ -13,7 +13,7 @@
     }
   },
   "roles": {
-    "parser":   { "agents": ["claude_opus"],                          "prompt": "prompts/parser.md",   "result_path": ".orquestalite/results/parser.json",   "timeout_seconds": 300 },
+    "parser":   { "agents": ["claude_opus"],                          "prompt": "prompts/parser.md",   "result_path": ".orquestalite/results/parser.json",   "timeout_seconds": 300, "decompose_prompt": "prompts/parser-decompose.md" },
     "coder":    { "agents": ["codex_gpt5_5", "claude_sonnet"],        "prompt": "prompts/coder.md",    "result_path": ".orquestalite/results/coder.json",    "timeout_seconds": 900 },
     "tester":   { "agents": ["claude_sonnet", "codex_gpt5_5"],        "prompt": "prompts/tester.md",   "result_path": ".orquestalite/results/tester.json",   "timeout_seconds": 600 },
     "critic":   { "agents": ["claude_opus", "codex_gpt5_5"],          "prompt": "prompts/critic.md",   "result_path": ".orquestalite/results/critic.json",   "timeout_seconds": 300 },
