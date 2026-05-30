@@ -2,6 +2,8 @@ package loops
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/lionelchamorro/orquestalite/internal/preflight"
@@ -9,18 +11,19 @@ import (
 )
 
 type stubTaskDeps struct {
-	fix               func(taskID string) *FixResult
-	fullSuite         func() error
-	commit            func(msg string) (string, error)
-	rollback          func() error
-	saveTasks         func(*tasks.TaskList) error
-	decompose         func(t *tasks.Task, fx *FixResult) ([]tasks.Task, error)
-	handoff           func(t *tasks.Task) (string, error)
-	preflightEnabled  bool
-	preflightVerdict  preflight.Verdict
-	commits           []string
-	rollbacks         int
-	fixCalled         int
+	fix                    func(taskID string) *FixResult
+	fullSuite              func() error
+	commit                 func(msg string) (string, error)
+	rollback               func() error
+	saveTasks              func(*tasks.TaskList) error
+	decompose              func(t *tasks.Task, fx *FixResult) ([]tasks.Task, error)
+	handoff                func(t *tasks.Task) (string, error)
+	preflightEnabled       bool
+	preflightVerdict       preflight.Verdict
+	commits                []string
+	rollbacks              int
+	fixCalled              int
+	lastDecomposeFiles     []string // captures filesChangedSoFar passed to Decompose
 }
 
 func (s *stubTaskDeps) PreflightEnabled() bool { return s.preflightEnabled }
@@ -45,7 +48,8 @@ func (s *stubTaskDeps) Rollback(ctx context.Context) error {
 func (s *stubTaskDeps) SaveTasks(ctx context.Context, tl *tasks.TaskList) error {
 	return s.saveTasks(tl)
 }
-func (s *stubTaskDeps) Decompose(ctx context.Context, t *tasks.Task, fx *FixResult, _ []string) ([]tasks.Task, error) {
+func (s *stubTaskDeps) Decompose(ctx context.Context, t *tasks.Task, fx *FixResult, filesChangedSoFar []string) ([]tasks.Task, error) {
+	s.lastDecomposeFiles = filesChangedSoFar
 	if s.decompose != nil {
 		return s.decompose(t, fx)
 	}
@@ -350,5 +354,81 @@ func TestRunTaskLoop_PreflightDisabledRunsAsBefore(t *testing.T) {
 	}
 	if d.fixCalled != 1 {
 		t.Errorf("RunFix called %d times, want 1", d.fixCalled)
+	}
+}
+
+// TestRunTaskLoop_DecomposeErrorRecordedInHandoff verifies Fix 1: when Decompose
+// returns an unexpected error (not ErrNoDecomposer), the error message is captured
+// in FailureDetails.LastStderrTail so the handoff document records what failed.
+func TestRunTaskLoop_DecomposeErrorRecordedInHandoff(t *testing.T) {
+	tl := &tasks.TaskList{Tasks: []tasks.Task{
+		{ID: "T001", Title: "failing task", Status: tasks.StatusPending, Priority: 1},
+	}}
+	d := &stubTaskDeps{
+		fix: func(string) *FixResult {
+			return &FixResult{Status: FixFailed, Reason: "agent_repeated_failure", LastFeedback: "stuck"}
+		},
+		fullSuite: func() error { return nil },
+		commit:    func(string) (string, error) { return "", nil },
+		rollback:  func() error { return nil },
+		saveTasks: func(*tasks.TaskList) error { return nil },
+		decompose: func(*tasks.Task, *FixResult) ([]tasks.Task, error) {
+			return nil, errors.New("agent timeout")
+		},
+	}
+
+	if err := RunTaskLoop(context.Background(), tl, d); err != nil {
+		t.Fatal(err)
+	}
+
+	task := tl.Tasks[0]
+	if task.Status != tasks.StatusNeedsHuman {
+		t.Errorf("status = %s, want needs_human", task.Status)
+	}
+	if task.FailureDetails == nil {
+		t.Fatal("FailureDetails is nil, want populated")
+	}
+	tail := task.FailureDetails.LastStderrTail
+	if !strings.Contains(tail, "decompose failed") {
+		t.Errorf("LastStderrTail = %q, want it to contain \"decompose failed\"", tail)
+	}
+	if !strings.Contains(tail, "agent timeout") {
+		t.Errorf("LastStderrTail = %q, want it to contain \"agent timeout\"", tail)
+	}
+}
+
+// TestRunTaskLoop_FilesChangedSoFarPassedToDecompose verifies Fix 2: the
+// filesChangedSoFar slice from FixResult is passed through to Decompose.
+func TestRunTaskLoop_FilesChangedSoFarPassedToDecompose(t *testing.T) {
+	wantFiles := []string{"foo.go", "bar.go"}
+	tl := &tasks.TaskList{Tasks: []tasks.Task{
+		{ID: "T001", Title: "task", Status: tasks.StatusPending, Priority: 1},
+	}}
+	d := &stubTaskDeps{
+		fix: func(string) *FixResult {
+			return &FixResult{
+				Status:            FixFailed,
+				Reason:            "agent_repeated_failure",
+				FilesChangedSoFar: wantFiles,
+			}
+		},
+		fullSuite: func() error { return nil },
+		commit:    func(string) (string, error) { return "", nil },
+		rollback:  func() error { return nil },
+		saveTasks: func(*tasks.TaskList) error { return nil },
+		// decompose returns ErrNoDecomposer so the task falls through to handoff
+	}
+
+	if err := RunTaskLoop(context.Background(), tl, d); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(d.lastDecomposeFiles) != len(wantFiles) {
+		t.Fatalf("Decompose received %d files, want %d", len(d.lastDecomposeFiles), len(wantFiles))
+	}
+	for i, f := range wantFiles {
+		if d.lastDecomposeFiles[i] != f {
+			t.Errorf("Decompose files[%d] = %q, want %q", i, d.lastDecomposeFiles[i], f)
+		}
 	}
 }

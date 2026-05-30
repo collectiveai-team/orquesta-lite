@@ -81,7 +81,8 @@ func RunTaskLoop(ctx context.Context, tl *tasks.TaskList, d TaskDeps) error {
 				if idx >= 0 {
 					t = &tl.Tasks[idx]
 				}
-				subtasks, decompErr := d.Decompose(ctx, t, fx, nil)
+				var decomposeFailureNote string
+				subtasks, decompErr := d.Decompose(ctx, t, fx, fx.FilesChangedSoFar)
 				if decompErr == nil && len(subtasks) > 0 {
 					added := tl.Append(subtasks, t.CreatedInReviewCycle)
 					ids := make([]string, len(added))
@@ -99,9 +100,10 @@ func RunTaskLoop(ctx context.Context, tl *tasks.TaskList, d TaskDeps) error {
 					continue
 				}
 				// ErrNoDecomposer or empty result: attempt handoff then continue.
+				// Unexpected decompose errors are captured so the handoff document
+				// records what went wrong.
 				if decompErr != nil && !errors.Is(decompErr, ErrNoDecomposer) {
-					// Unexpected decomposition error — fall through to handoff silently.
-					_ = decompErr
+					decomposeFailureNote = "decompose failed: " + decompErr.Error()
 				}
 				// Re-acquire pointer after Decompose (slice may have grown).
 				idx2 := findTaskIdx(tl, taskID)
@@ -109,8 +111,9 @@ func RunTaskLoop(ctx context.Context, tl *tasks.TaskList, d TaskDeps) error {
 					t = &tl.Tasks[idx2]
 				}
 				fd := &tasks.FailureDetails{
-					Reason:      tasks.ReasonAgentRepeatedFail,
-					TaskSuspect: true,
+					Reason:         tasks.ReasonAgentRepeatedFail,
+					TaskSuspect:    true,
+					LastStderrTail: decomposeFailureNote,
 				}
 				t.FailureDetails = fd
 				handoffPath, _ := d.Handoff(ctx, t)

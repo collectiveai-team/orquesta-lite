@@ -247,10 +247,15 @@ func (d *liveDeps) callRole(ctx context.Context, roleName, prompt string, role c
 		lastResult = r
 		triedAgents = append(triedAgents, agentName)
 
-		// Build cmd_line with {{PROMPT}} replaced by <elided> so prompts aren't logged.
+		// Build cmd_line with {{PROMPT}} replaced by <elided> and all other
+		// TemplateVars substituted so the logged cmd reflects the actual invocation.
 		cmdLine := make([]string, len(ag.Cmd))
 		for i, tok := range ag.Cmd {
-			cmdLine[i] = strings.ReplaceAll(tok, "{{PROMPT}}", "<elided>")
+			s := strings.ReplaceAll(tok, "{{PROMPT}}", "<elided>")
+			for k, v := range spec.TemplateVars {
+				s = strings.ReplaceAll(s, "{{"+k+"}}", v)
+			}
+			cmdLine[i] = s
 		}
 
 		// Determine fallback disposition.
@@ -354,7 +359,7 @@ func (d *liveDeps) Preflight(_ context.Context, t *tasks.Task) preflight.Verdict
 // Decompose invokes the parser in decomposition mode to break a failed task into subtasks.
 // Returns ErrNoDecomposer if the parser role has no decompose_prompt configured.
 // Returns (nil, ErrNoDecomposer) if the result contains 0 or >5 tasks.
-func (d *liveDeps) Decompose(ctx context.Context, t *tasks.Task, fx *loops.FixResult, _ []string) ([]tasks.Task, error) {
+func (d *liveDeps) Decompose(ctx context.Context, t *tasks.Task, fx *loops.FixResult, files []string) ([]tasks.Task, error) {
 	parserRole := d.cfg.Roles["parser"]
 	if parserRole.DecomposePrompt == "" {
 		return nil, loops.ErrNoDecomposer
@@ -380,7 +385,7 @@ func (d *liveDeps) Decompose(ctx context.Context, t *tasks.Task, fx *loops.FixRe
 		"TASK_TITLE":               t.Title,
 		"TASK_DESCRIPTION":         t.Description,
 		"PREVIOUS_ATTEMPT_SUMMARY": feedback,
-		"FILES_CHANGED_SO_FAR":     "",
+		"FILES_CHANGED_SO_FAR":     strings.Join(files, "\n"),
 		"TESTER_FEEDBACK":          feedback,
 		"CRITIC_FEEDBACK":          feedback,
 	})

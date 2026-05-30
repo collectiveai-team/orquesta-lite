@@ -697,6 +697,37 @@ exit 0
 	if !strings.Contains(stdoutTail, "role_arg=testrole") {
 		t.Errorf("stdout_tail missing resolved ROLE; want %q in: %q", "role_arg=testrole", stdoutTail)
 	}
+
+	// Fix 3: cmd_line in the agent_run event must have {{RESULT_PATH}} and {{ROLE}}
+	// replaced with their resolved values — not the raw placeholder strings.
+	raw2, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log (fix3 check): %v", err)
+	}
+	var cmdLineField string
+	sc2 := bufio.NewScanner(strings.NewReader(string(raw2)))
+	for sc2.Scan() {
+		var rec map[string]any
+		if json.Unmarshal(sc2.Bytes(), &rec) != nil {
+			continue
+		}
+		if rec["event"] == "agent_run" {
+			cmdLineField, _ = rec["cmd_line"].(string)
+			break
+		}
+	}
+	if strings.Contains(cmdLineField, "{{RESULT_PATH}}") {
+		t.Errorf("cmd_line must not contain raw {{RESULT_PATH}} placeholder: %q", cmdLineField)
+	}
+	if strings.Contains(cmdLineField, "{{ROLE}}") {
+		t.Errorf("cmd_line must not contain raw {{ROLE}} placeholder: %q", cmdLineField)
+	}
+	if !strings.Contains(cmdLineField, wantResultPath) {
+		t.Errorf("cmd_line must contain resolved RESULT_PATH %q; got: %q", wantResultPath, cmdLineField)
+	}
+	if !strings.Contains(cmdLineField, "testrole") {
+		t.Errorf("cmd_line must contain resolved ROLE \"testrole\"; got: %q", cmdLineField)
+	}
 }
 
 // TestRunFix_EscalationLadderPlumbedFromConfig verifies that the escalation_ladder

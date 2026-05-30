@@ -203,6 +203,52 @@ func TestRunFix_StuckTriggersEscalation(t *testing.T) {
 	}
 }
 
+// TestRunFix_FilesChangedSoFarPopulatedInResult verifies Fix 2: FixResult carries
+// the union of all files reported by coder attempts across the fix loop.
+func TestRunFix_FilesChangedSoFarPopulatedInResult(t *testing.T) {
+	r := &stubRoles{
+		coder: func(attempt int, fb CoderFeedback) CoderOutcome {
+			switch attempt {
+			case 1:
+				return CoderOutcome{Status: "completed", FilesChanged: []string{"a.go", "b.go"}}
+			case 2:
+				return CoderOutcome{Status: "completed", FilesChanged: []string{"b.go", "c.go"}}
+			default:
+				return CoderOutcome{Status: "completed"}
+			}
+		},
+		tester: func(attempt int) TesterOutcome {
+			// Always fail with the same hash to trigger agent_repeated_failure quickly.
+			return TesterOutcome{Status: "fail", FailuresHash: "stuck", Feedback: "broken"}
+		},
+		critic: func(int) CriticOutcome { return CriticOutcome{Status: "approved"} },
+	}
+
+	out, err := RunFix(context.Background(), FixConfig{MaxIterations: 10}, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Reason != "agent_repeated_failure" {
+		t.Fatalf("expected agent_repeated_failure, got %q", out.Reason)
+	}
+
+	// Must contain a.go, b.go, c.go (deduplicated union across attempts).
+	want := map[string]bool{"a.go": true, "b.go": true, "c.go": true}
+	got := make(map[string]bool, len(out.FilesChangedSoFar))
+	for _, f := range out.FilesChangedSoFar {
+		got[f] = true
+	}
+	for f := range want {
+		if !got[f] {
+			t.Errorf("FilesChangedSoFar missing %q; got %v", f, out.FilesChangedSoFar)
+		}
+	}
+	// No duplicates.
+	if len(out.FilesChangedSoFar) != 3 {
+		t.Errorf("FilesChangedSoFar len = %d, want 3 (deduplicated); got %v", len(out.FilesChangedSoFar), out.FilesChangedSoFar)
+	}
+}
+
 // TestRunFix_EscalationExhaustedReturnsFailed verifies that when the escalation
 // ladder is exhausted (single entry) and stuck happens again after the escalated
 // attempt, RunFix returns FixFailed with Reason="agent_repeated_failure".

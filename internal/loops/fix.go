@@ -49,10 +49,11 @@ type FixConfig struct {
 }
 
 type FixResult struct {
-	Status       FixStatus
-	Reason       string // "max_iterations" | "agent_repeated_failure" | "" when Done
-	Iterations   int
-	LastFeedback string
+	Status            FixStatus
+	Reason            string // "max_iterations" | "agent_repeated_failure" | "" when Done
+	Iterations        int
+	LastFeedback      string
+	FilesChangedSoFar []string // union of all files touched across coder attempts
 }
 
 // appendUnique appends items from src to dst, skipping duplicates.
@@ -100,10 +101,11 @@ func RunFix(ctx context.Context, cfg FixConfig, r RoleRunner) (*FixResult, error
 			// max_iterations check takes priority when the iteration budget is exhausted.
 			if attempt >= cfg.MaxIterations {
 				return &FixResult{
-					Status:       FixFailed,
-					Reason:       "max_iterations",
-					Iterations:   cfg.MaxIterations,
-					LastFeedback: t.Feedback,
+					Status:            FixFailed,
+					Reason:            "max_iterations",
+					Iterations:        cfg.MaxIterations,
+					LastFeedback:      t.Feedback,
+					FilesChangedSoFar: filesChangedSoFar,
 				}, nil
 			}
 
@@ -129,10 +131,11 @@ func RunFix(ctx context.Context, cfg FixConfig, r RoleRunner) (*FixResult, error
 				}
 				// Ladder exhausted.
 				return &FixResult{
-					Status:       FixFailed,
-					Reason:       "agent_repeated_failure",
-					Iterations:   attempt,
-					LastFeedback: t.Feedback,
+					Status:            FixFailed,
+					Reason:            "agent_repeated_failure",
+					Iterations:        attempt,
+					LastFeedback:      t.Feedback,
+					FilesChangedSoFar: filesChangedSoFar,
 				}, nil
 			}
 
@@ -160,9 +163,10 @@ func RunFix(ctx context.Context, cfg FixConfig, r RoleRunner) (*FixResult, error
 	}
 
 	return &FixResult{
-		Status:       FixFailed,
-		Reason:       "max_iterations",
-		Iterations:   cfg.MaxIterations,
-		LastFeedback: fb.TesterFeedback + fb.CriticFeedback,
+		Status:            FixFailed,
+		Reason:            "max_iterations",
+		Iterations:        cfg.MaxIterations,
+		LastFeedback:      fb.TesterFeedback + fb.CriticFeedback,
+		FilesChangedSoFar: filesChangedSoFar,
 	}, nil
 }
