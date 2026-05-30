@@ -22,8 +22,9 @@ type Role struct {
 }
 
 type Limits struct {
-	MaxReviewCycles  int `json:"max_review_cycles"`
-	MaxFixIterations int `json:"max_fix_iterations"`
+	MaxReviewCycles  int  `json:"max_review_cycles"`
+	MaxFixIterations int  `json:"max_fix_iterations"`
+	PreflightEnabled bool `json:"preflight_enabled,omitempty"`
 }
 
 type RateLimitBackoff struct {

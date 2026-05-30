@@ -21,6 +21,7 @@ import (
 	"github.com/lionelchamorro/orquestalite/internal/handoff"
 	"github.com/lionelchamorro/orquestalite/internal/loops"
 	"github.com/lionelchamorro/orquestalite/internal/memory"
+	"github.com/lionelchamorro/orquestalite/internal/preflight"
 	"github.com/lionelchamorro/orquestalite/internal/prompts"
 	"github.com/lionelchamorro/orquestalite/internal/results"
 	"github.com/lionelchamorro/orquestalite/internal/runner"
@@ -338,6 +339,16 @@ func (d *liveDeps) Handoff(ctx context.Context, t *tasks.Task) (string, error) {
 		"path":    path,
 	}})
 	return path, nil
+}
+
+// PreflightEnabled reports whether the opt-in pre-flight validator is active.
+func (d *liveDeps) PreflightEnabled() bool {
+	return d.cfg.Limits.PreflightEnabled
+}
+
+// Preflight runs a lightweight validity check on the task.
+func (d *liveDeps) Preflight(_ context.Context, t *tasks.Task) preflight.Verdict {
+	return preflight.Check(d.dir, t)
 }
 
 // Decompose invokes the parser in decomposition mode to break a failed task into subtasks.

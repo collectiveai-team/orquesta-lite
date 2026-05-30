@@ -126,6 +126,58 @@ func TestLoad_EscalationLadderUnknownAgentFails(t *testing.T) {
 	}
 }
 
+func TestConfig_PreflightEnabledRoundTrips(t *testing.T) {
+	p := writeTeamJSON(t, `{
+		"agents": {
+			"a1": {"cmd": ["claude", "-p", "{{PROMPT}}"]}
+		},
+		"roles": {
+			"coder": {
+				"agents": ["a1"],
+				"prompt": "prompts/coder.md",
+				"result_path": ".orquestalite/results/coder.json",
+				"timeout_seconds": 900
+			}
+		},
+		"limits": {"max_review_cycles": 3, "max_fix_iterations": 5, "preflight_enabled": true},
+		"rate_limit_backoff": {"initial_seconds": 30, "factor": 2, "max_seconds": 1800, "default_pattern": "rate_?limit|429"},
+		"full_test_command": "go test ./..."
+	}`)
+
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfg.Limits.PreflightEnabled {
+		t.Errorf("PreflightEnabled = false, want true")
+	}
+
+	// Verify default (omitempty) — a config without the field should default to false.
+	p2 := writeTeamJSON(t, `{
+		"agents": {
+			"a1": {"cmd": ["claude", "-p", "{{PROMPT}}"]}
+		},
+		"roles": {
+			"coder": {
+				"agents": ["a1"],
+				"prompt": "prompts/coder.md",
+				"result_path": ".orquestalite/results/coder.json",
+				"timeout_seconds": 900
+			}
+		},
+		"limits": {"max_review_cycles": 3, "max_fix_iterations": 5},
+		"rate_limit_backoff": {"initial_seconds": 30, "factor": 2, "max_seconds": 1800, "default_pattern": "rate_?limit|429"},
+		"full_test_command": "go test ./..."
+	}`)
+	cfg2, err := Load(p2)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg2.Limits.PreflightEnabled {
+		t.Errorf("PreflightEnabled = true, want false (default)")
+	}
+}
+
 func TestConfig_DecomposePromptRoundTrips(t *testing.T) {
 	p := writeTeamJSON(t, `{
 		"agents": {

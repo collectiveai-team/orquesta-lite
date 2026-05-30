@@ -4,22 +4,32 @@ import (
 	"context"
 	"testing"
 
+	"github.com/lionelchamorro/orquestalite/internal/preflight"
 	"github.com/lionelchamorro/orquestalite/internal/tasks"
 )
 
 type stubTaskDeps struct {
-	fix       func(taskID string) *FixResult
-	fullSuite func() error
-	commit    func(msg string) (string, error)
-	rollback  func() error
-	saveTasks func(*tasks.TaskList) error
-	decompose func(t *tasks.Task, fx *FixResult) ([]tasks.Task, error)
-	handoff   func(t *tasks.Task) (string, error)
-	commits   []string
-	rollbacks int
+	fix               func(taskID string) *FixResult
+	fullSuite         func() error
+	commit            func(msg string) (string, error)
+	rollback          func() error
+	saveTasks         func(*tasks.TaskList) error
+	decompose         func(t *tasks.Task, fx *FixResult) ([]tasks.Task, error)
+	handoff           func(t *tasks.Task) (string, error)
+	preflightEnabled  bool
+	preflightVerdict  preflight.Verdict
+	commits           []string
+	rollbacks         int
+	fixCalled         int
+}
+
+func (s *stubTaskDeps) PreflightEnabled() bool { return s.preflightEnabled }
+func (s *stubTaskDeps) Preflight(_ context.Context, _ *tasks.Task) preflight.Verdict {
+	return s.preflightVerdict
 }
 
 func (s *stubTaskDeps) RunFix(ctx context.Context, taskID string) (*FixResult, error) {
+	s.fixCalled++
 	return s.fix(taskID), nil
 }
 func (s *stubTaskDeps) FullSuite(ctx context.Context) error { return s.fullSuite() }
@@ -275,5 +285,70 @@ func TestRunTaskLoop_HandoffWhenDecomposeUnavailable(t *testing.T) {
 	}
 	if task.FailureDetails.HandoffPath == "" {
 		t.Errorf("HandoffPath is empty, want a path")
+	}
+}
+
+// TestRunTaskLoop_PreflightSkipsTaskWhenInvalid verifies that when preflight is
+// enabled and returns OK=false, the task is marked needs_clarification, RunFix
+// is not called, and attempts stays at 0.
+func TestRunTaskLoop_PreflightSkipsTaskWhenInvalid(t *testing.T) {
+	tl := &tasks.TaskList{Tasks: []tasks.Task{
+		{ID: "T001", Title: "bad task", Status: tasks.StatusPending, Priority: 1},
+	}}
+	reason := "description too short (<50 chars after trim)"
+	d := &stubTaskDeps{
+		preflightEnabled: true,
+		preflightVerdict: preflight.Verdict{OK: false, Reason: reason},
+		fix:              func(string) *FixResult { return &FixResult{Status: FixDone} },
+		fullSuite:        func() error { return nil },
+		commit:           func(string) (string, error) { return "x", nil },
+		rollback:         func() error { return nil },
+		saveTasks:        func(*tasks.TaskList) error { return nil },
+	}
+
+	if err := RunTaskLoop(context.Background(), tl, d); err != nil {
+		t.Fatal(err)
+	}
+
+	task := tl.Tasks[0]
+	if task.Status != tasks.StatusNeedsClarification {
+		t.Errorf("status = %s, want needs_clarification", task.Status)
+	}
+	if task.LastFeedback == nil || *task.LastFeedback != reason {
+		t.Errorf("LastFeedback = %v, want %q", task.LastFeedback, reason)
+	}
+	if task.Attempts != 0 {
+		t.Errorf("Attempts = %d, want 0", task.Attempts)
+	}
+	if d.fixCalled != 0 {
+		t.Errorf("RunFix called %d times, want 0", d.fixCalled)
+	}
+}
+
+// TestRunTaskLoop_PreflightDisabledRunsAsBefore verifies that when preflight is
+// disabled, RunFix is called normally.
+func TestRunTaskLoop_PreflightDisabledRunsAsBefore(t *testing.T) {
+	tl := &tasks.TaskList{Tasks: []tasks.Task{
+		{ID: "T001", Title: "normal task", Status: tasks.StatusPending, Priority: 1},
+	}}
+	d := &stubTaskDeps{
+		preflightEnabled: false,
+		// preflightVerdict left as zero value (OK=false) to confirm it is never consulted
+		fix:       func(string) *FixResult { return &FixResult{Status: FixDone, Iterations: 1} },
+		fullSuite: func() error { return nil },
+		commit:    func(string) (string, error) { return "sha", nil },
+		rollback:  func() error { return nil },
+		saveTasks: func(*tasks.TaskList) error { return nil },
+	}
+
+	if err := RunTaskLoop(context.Background(), tl, d); err != nil {
+		t.Fatal(err)
+	}
+
+	if tl.Tasks[0].Status != tasks.StatusDone {
+		t.Errorf("status = %s, want done", tl.Tasks[0].Status)
+	}
+	if d.fixCalled != 1 {
+		t.Errorf("RunFix called %d times, want 1", d.fixCalled)
 	}
 }

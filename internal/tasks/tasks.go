@@ -12,12 +12,13 @@ import (
 type Status string
 
 const (
-	StatusPending    Status = "pending"
-	StatusInProgress Status = "in_progress"
-	StatusDone       Status = "done"
-	StatusFailed     Status = "failed"
-	StatusDecomposed Status = "decomposed"
-	StatusNeedsHuman Status = "needs_human"
+	StatusPending            Status = "pending"
+	StatusInProgress         Status = "in_progress"
+	StatusDone               Status = "done"
+	StatusFailed             Status = "failed"
+	StatusDecomposed         Status = "decomposed"
+	StatusNeedsHuman         Status = "needs_human"
+	StatusNeedsClarification Status = "needs_clarification"
 )
 
 type FailureReason string

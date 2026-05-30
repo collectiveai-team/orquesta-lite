@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/lionelchamorro/orquestalite/internal/preflight"
 	"github.com/lionelchamorro/orquestalite/internal/tasks"
 )
 
@@ -29,6 +30,11 @@ type TaskDeps interface {
 	// returns the path of the file written. It is called when both the escalation
 	// ladder and auto-decomposition have been exhausted.
 	Handoff(ctx context.Context, t *tasks.Task) (path string, err error)
+	// PreflightEnabled reports whether the opt-in pre-flight validator is active.
+	PreflightEnabled() bool
+	// Preflight runs a lightweight validity check on the task before any fix
+	// attempt. Only called when PreflightEnabled() returns true.
+	Preflight(ctx context.Context, t *tasks.Task) preflight.Verdict
 }
 
 // findTaskIdx returns the index of the task with the given ID, or -1 if not found.
@@ -48,6 +54,17 @@ func RunTaskLoop(ctx context.Context, tl *tasks.TaskList, d TaskDeps) error {
 			return nil
 		}
 		taskID := t.ID
+
+		// Opt-in pre-flight check: runs once before the first fix attempt.
+		if d.PreflightEnabled() {
+			if v := d.Preflight(ctx, t); !v.OK {
+				t.Status = tasks.StatusNeedsClarification
+				t.LastFeedback = &v.Reason
+				_ = d.SaveTasks(ctx, tl)
+				continue
+			}
+		}
+
 		t.Status = tasks.StatusInProgress
 		t.Attempts++
 		_ = d.SaveTasks(ctx, tl)

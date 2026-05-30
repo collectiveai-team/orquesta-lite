@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/lionelchamorro/orquestalite/internal/preflight"
 	"github.com/lionelchamorro/orquestalite/internal/results"
 	"github.com/lionelchamorro/orquestalite/internal/tasks"
 )
@@ -30,6 +31,10 @@ func (s *stubReviewDeps) Decompose(ctx context.Context, t *tasks.Task, fx *FixRe
 }
 func (s *stubReviewDeps) Handoff(ctx context.Context, t *tasks.Task) (string, error) {
 	return s.taskDeps.Handoff(ctx, t)
+}
+func (s *stubReviewDeps) PreflightEnabled() bool { return s.taskDeps.PreflightEnabled() }
+func (s *stubReviewDeps) Preflight(ctx context.Context, t *tasks.Task) preflight.Verdict {
+	return s.taskDeps.Preflight(ctx, t)
 }
 func (s *stubReviewDeps) RunReviewer(ctx context.Context, cycle int) (results.ReviewerResult, error) {
 	s.cycles = append(s.cycles, cycle)
