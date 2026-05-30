@@ -25,6 +25,10 @@ type TaskDeps interface {
 	// exhausted all retries. Return ErrNoDecomposer if decomposition is not
 	// configured for this project; the task loop will fall through to failed.
 	Decompose(ctx context.Context, t *tasks.Task, fx *FixResult, filesChangedSoFar []string) ([]tasks.Task, error)
+	// Handoff writes a human-readable markdown handoff file for the task and
+	// returns the path of the file written. It is called when both the escalation
+	// ladder and auto-decomposition have been exhausted.
+	Handoff(ctx context.Context, t *tasks.Task) (path string, err error)
 }
 
 // findTaskIdx returns the index of the task with the given ID, or -1 if not found.
@@ -77,11 +81,30 @@ func RunTaskLoop(ctx context.Context, tl *tasks.TaskList, d TaskDeps) error {
 					_ = d.SaveTasks(ctx, tl)
 					continue
 				}
-				// ErrNoDecomposer or empty result: fall through to failed.
+				// ErrNoDecomposer or empty result: attempt handoff then continue.
 				if decompErr != nil && !errors.Is(decompErr, ErrNoDecomposer) {
-					// Unexpected decomposition error — fall through to failed path silently.
+					// Unexpected decomposition error — fall through to handoff silently.
 					_ = decompErr
 				}
+				// Re-acquire pointer after Decompose (slice may have grown).
+				idx2 := findTaskIdx(tl, taskID)
+				if idx2 >= 0 {
+					t = &tl.Tasks[idx2]
+				}
+				fd := &tasks.FailureDetails{
+					Reason:      tasks.ReasonAgentRepeatedFail,
+					TaskSuspect: true,
+				}
+				t.FailureDetails = fd
+				handoffPath, _ := d.Handoff(ctx, t)
+				t.FailureDetails.HandoffPath = handoffPath
+				t.Status = tasks.StatusNeedsHuman
+				r := tasks.ReasonAgentRepeatedFail
+				t.FailureReason = &r
+				t.LastFeedback = strPtr(fx.LastFeedback)
+				_ = d.Rollback(ctx)
+				_ = d.SaveTasks(ctx, tl)
+				continue
 			}
 			// Re-acquire in case Decompose triggered any slice growth.
 			idx := findTaskIdx(tl, taskID)

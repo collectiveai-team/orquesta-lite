@@ -14,6 +14,7 @@ type stubTaskDeps struct {
 	rollback  func() error
 	saveTasks func(*tasks.TaskList) error
 	decompose func(t *tasks.Task, fx *FixResult) ([]tasks.Task, error)
+	handoff   func(t *tasks.Task) (string, error)
 	commits   []string
 	rollbacks int
 }
@@ -39,6 +40,12 @@ func (s *stubTaskDeps) Decompose(ctx context.Context, t *tasks.Task, fx *FixResu
 		return s.decompose(t, fx)
 	}
 	return nil, ErrNoDecomposer
+}
+func (s *stubTaskDeps) Handoff(ctx context.Context, t *tasks.Task) (string, error) {
+	if s.handoff != nil {
+		return s.handoff(t)
+	}
+	return "/tmp/handoff-" + t.ID + ".md", nil
 }
 
 func TestTaskLoop_HappyPath(t *testing.T) {
@@ -187,13 +194,14 @@ func TestRunTaskLoop_DecomposesOnRepeatedFailure(t *testing.T) {
 	}
 }
 
-// TestRunTaskLoop_DecomposeFailureFallsThroughToFailed verifies that when
-// Decompose returns ErrNoDecomposer, the original task is marked failed with
-// reason agent_repeated_failure.
-func TestRunTaskLoop_DecomposeFailureFallsThroughToFailed(t *testing.T) {
+// TestRunTaskLoop_DecomposeFailureFallsThroughToNeedsHuman verifies that when
+// Decompose returns ErrNoDecomposer, the original task is marked needs_human
+// (not failed) and a handoff is triggered.
+func TestRunTaskLoop_DecomposeFailureFallsThroughToNeedsHuman(t *testing.T) {
 	tl := &tasks.TaskList{Tasks: []tasks.Task{
 		{ID: "T001", Title: "hard task", Status: tasks.StatusPending, Priority: 1},
 	}}
+	handoffCalled := false
 	d := &stubTaskDeps{
 		fix: func(string) *FixResult {
 			return &FixResult{Status: FixFailed, Reason: "agent_repeated_failure", LastFeedback: "no luck"}
@@ -203,19 +211,69 @@ func TestRunTaskLoop_DecomposeFailureFallsThroughToFailed(t *testing.T) {
 		rollback:  func() error { return nil },
 		saveTasks: func(*tasks.TaskList) error { return nil },
 		// decompose is nil → returns ErrNoDecomposer
+		handoff: func(task *tasks.Task) (string, error) {
+			handoffCalled = true
+			return "/tmp/handoff-T001.md", nil
+		},
 	}
 
 	if err := RunTaskLoop(context.Background(), tl, d); err != nil {
 		t.Fatal(err)
 	}
 
-	if tl.Tasks[0].Status != tasks.StatusFailed {
-		t.Errorf("status = %s, want failed", tl.Tasks[0].Status)
+	if tl.Tasks[0].Status != tasks.StatusNeedsHuman {
+		t.Errorf("status = %s, want needs_human", tl.Tasks[0].Status)
 	}
 	if tl.Tasks[0].FailureReason == nil || *tl.Tasks[0].FailureReason != tasks.ReasonAgentRepeatedFail {
 		t.Errorf("failure_reason = %v, want agent_repeated_failure", tl.Tasks[0].FailureReason)
 	}
+	if tl.Tasks[0].FailureDetails == nil {
+		t.Fatal("FailureDetails is nil, want populated")
+	}
+	if !tl.Tasks[0].FailureDetails.TaskSuspect {
+		t.Errorf("TaskSuspect = false, want true")
+	}
+	if tl.Tasks[0].FailureDetails.HandoffPath != "/tmp/handoff-T001.md" {
+		t.Errorf("HandoffPath = %q, want /tmp/handoff-T001.md", tl.Tasks[0].FailureDetails.HandoffPath)
+	}
+	if !handoffCalled {
+		t.Errorf("Handoff was not called")
+	}
 	if len(tl.Tasks) != 1 {
 		t.Errorf("task count = %d, want 1 (no subtasks appended)", len(tl.Tasks))
+	}
+}
+
+// TestRunTaskLoop_HandoffWhenDecomposeUnavailable is a focused test verifying
+// that when Decompose returns ErrNoDecomposer (no handoff func override),
+// the task still ends up needs_human with FailureDetails populated.
+func TestRunTaskLoop_HandoffWhenDecomposeUnavailable(t *testing.T) {
+	tl := &tasks.TaskList{Tasks: []tasks.Task{
+		{ID: "T001", Title: "big task", Status: tasks.StatusPending, Priority: 1},
+	}}
+	d := &stubTaskDeps{
+		fix: func(string) *FixResult {
+			return &FixResult{Status: FixFailed, Reason: "agent_repeated_failure", LastFeedback: "still broken"}
+		},
+		fullSuite: func() error { return nil },
+		commit:    func(string) (string, error) { return "", nil },
+		rollback:  func() error { return nil },
+		saveTasks: func(*tasks.TaskList) error { return nil },
+		// decompose nil → ErrNoDecomposer; handoff nil → default stub path
+	}
+
+	if err := RunTaskLoop(context.Background(), tl, d); err != nil {
+		t.Fatal(err)
+	}
+
+	task := tl.Tasks[0]
+	if task.Status != tasks.StatusNeedsHuman {
+		t.Errorf("status = %s, want needs_human", task.Status)
+	}
+	if task.FailureDetails == nil {
+		t.Fatal("FailureDetails is nil")
+	}
+	if task.FailureDetails.HandoffPath == "" {
+		t.Errorf("HandoffPath is empty, want a path")
 	}
 }

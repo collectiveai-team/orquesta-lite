@@ -18,6 +18,7 @@ import (
 	"github.com/lionelchamorro/orquestalite/internal/eventlog"
 	"github.com/lionelchamorro/orquestalite/internal/fallback"
 	"github.com/lionelchamorro/orquestalite/internal/gitx"
+	"github.com/lionelchamorro/orquestalite/internal/handoff"
 	"github.com/lionelchamorro/orquestalite/internal/loops"
 	"github.com/lionelchamorro/orquestalite/internal/memory"
 	"github.com/lionelchamorro/orquestalite/internal/prompts"
@@ -324,6 +325,19 @@ func (d *liveDeps) callRole(ctx context.Context, roleName, prompt string, role c
 		return err
 	}
 	return nil
+}
+
+// Handoff writes a markdown handoff file for the task and logs a handoff_written event.
+func (d *liveDeps) Handoff(ctx context.Context, t *tasks.Task) (string, error) {
+	path, err := handoff.Write(d.dir, t)
+	if err != nil {
+		return "", err
+	}
+	d.log.Log(eventlog.Event{Type: "handoff_written", Fields: map[string]any{
+		"task_id": t.ID,
+		"path":    path,
+	}})
+	return path, nil
 }
 
 // Decompose invokes the parser in decomposition mode to break a failed task into subtasks.

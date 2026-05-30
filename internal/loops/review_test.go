@@ -28,6 +28,9 @@ func (s *stubReviewDeps) SaveTasks(ctx context.Context, tl *tasks.TaskList) erro
 func (s *stubReviewDeps) Decompose(ctx context.Context, t *tasks.Task, fx *FixResult, files []string) ([]tasks.Task, error) {
 	return s.taskDeps.Decompose(ctx, t, fx, files)
 }
+func (s *stubReviewDeps) Handoff(ctx context.Context, t *tasks.Task) (string, error) {
+	return s.taskDeps.Handoff(ctx, t)
+}
 func (s *stubReviewDeps) RunReviewer(ctx context.Context, cycle int) (results.ReviewerResult, error) {
 	s.cycles = append(s.cycles, cycle)
 	return s.reviewer(cycle), nil

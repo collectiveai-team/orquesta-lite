@@ -17,6 +17,7 @@ const (
 	StatusDone       Status = "done"
 	StatusFailed     Status = "failed"
 	StatusDecomposed Status = "decomposed"
+	StatusNeedsHuman Status = "needs_human"
 )
 
 type FailureReason string
@@ -31,17 +32,39 @@ const (
 	ReasonInvalidResultJSON  FailureReason = "invalid_result_json"
 )
 
+// AgentRun captures a single agent execution within a fix attempt.
+type AgentRun struct {
+	Agent    string `json:"agent"`
+	Duration int    `json:"duration_s"`
+	// Status is one of: "completed", "result_missing", "agent_crashed", "rate_limit", "all_agents_failed"
+	Status string `json:"status"`
+	Stderr string `json:"stderr_tail,omitempty"`
+}
+
+// FailureDetails holds richer context about why a task failed, including
+// hypothesis booleans to guide human triage.
+type FailureDetails struct {
+	Reason         FailureReason `json:"reason"`
+	AgentChain     []AgentRun    `json:"agent_chain,omitempty"`
+	ConfigSuspect  bool          `json:"config_suspect"`
+	ModelSuspect   bool          `json:"model_suspect"`
+	TaskSuspect    bool          `json:"task_suspect"`
+	LastStderrTail string        `json:"last_stderr_tail,omitempty"`
+	HandoffPath    string        `json:"handoff_path,omitempty"`
+}
+
 type Task struct {
-	ID                   string         `json:"id"`
-	Title                string         `json:"title"`
-	Description          string         `json:"description"`
-	Status               Status         `json:"status"`
-	Priority             int            `json:"priority"`
-	CreatedInReviewCycle int            `json:"created_in_review_cycle"`
-	Attempts             int            `json:"attempts"`
-	LastFeedback         *string        `json:"last_feedback"`
-	FailureReason        *FailureReason `json:"failure_reason,omitempty"`
-	DecomposedIntoIDs    []string       `json:"decomposed_into_ids,omitempty"`
+	ID                   string          `json:"id"`
+	Title                string          `json:"title"`
+	Description          string          `json:"description"`
+	Status               Status          `json:"status"`
+	Priority             int             `json:"priority"`
+	CreatedInReviewCycle int             `json:"created_in_review_cycle"`
+	Attempts             int             `json:"attempts"`
+	LastFeedback         *string         `json:"last_feedback"`
+	FailureReason        *FailureReason  `json:"failure_reason,omitempty"`
+	DecomposedIntoIDs    []string        `json:"decomposed_into_ids,omitempty"`
+	FailureDetails       *FailureDetails `json:"failure_details,omitempty"`
 }
 
 type TaskList struct {
