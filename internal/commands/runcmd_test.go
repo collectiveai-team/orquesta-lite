@@ -593,3 +593,114 @@ func TestCallRole_AllAgentsFailedError(t *testing.T) {
 		t.Errorf("error missing 'last error:' segment: %q", errMsg)
 	}
 }
+
+// TestCallRole_TimedOutReportsAgentCrashed verifies that when the first agent
+// times out (TimedOut=true, ResultExists=false), the fallback reason logged is
+// "agent_crashed" (not "result_missing"), and the chain advances to the second
+// agent which succeeds.
+func TestCallRole_TimedOutReportsAgentCrashed(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("posix shell script test, skipping on windows")
+	}
+
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "run.log")
+
+	logger, err := eventlog.Open(logPath, os.Stderr)
+	if err != nil {
+		t.Fatalf("open logger: %v", err)
+	}
+	defer logger.Close()
+
+	resultPath := filepath.Join(dir, "result.json")
+
+	// agent_b script: writes the result file and exits quickly.
+	scriptBPath := filepath.Join(dir, "agent_b.sh")
+	scriptB := fmt.Sprintf(`#!/bin/sh
+mkdir -p "$(dirname '%s')"
+printf '{}' > '%s'
+exit 0
+`, resultPath, resultPath)
+	if err := os.WriteFile(scriptBPath, []byte(scriptB), 0o755); err != nil {
+		t.Fatalf("write agent_b script: %v", err)
+	}
+
+	// agent_a uses exec directly (no shell wrapper) so that SIGKILL from
+	// exec.CommandContext reaches the sleeping process immediately, avoiding
+	// orphan grandchildren that keep pipes open.
+	role := config.Role{
+		Agents:         []string{"agent_a", "agent_b"},
+		Prompt:         "prompts/dummy.md",
+		ResultPath:     "result.json",
+		TimeoutSeconds: 1, // short timeout so agent_a is killed quickly
+	}
+	cfg := &config.Config{
+		Agents: map[string]config.Agent{
+			// sleep is invoked directly (no sh wrapper) so SIGKILL is sent
+			// straight to the sleep process; pipes close immediately.
+			"agent_a": {Cmd: []string{"sleep", "30"}},
+			"agent_b": {Cmd: []string{"sh", scriptBPath}},
+		},
+		Roles: map[string]config.Role{"testrole": role},
+		RateLimitBackoff: config.RateLimitBackoff{
+			InitialSeconds: 1,
+			Factor:         2,
+			MaxSeconds:     4,
+			DefaultPattern: "rate_?limit",
+		},
+	}
+
+	fc := fallback.NewCaller(fallback.Config{
+		InitialBackoff: 0,
+		Factor:         2,
+		MaxBackoff:     0,
+	})
+
+	deps := &liveDeps{
+		cfg:     cfg,
+		dir:     dir,
+		fc:      fc,
+		log:     logger,
+		memPath: filepath.Join(dir, "memory.md"),
+	}
+
+	callErr := deps.callRole(context.Background(), "testrole", "prompt", role)
+	_ = logger.Close()
+
+	// The fallback must advance to agent_b successfully.
+	if callErr != nil {
+		t.Fatalf("expected nil error after fallback to agent_b, got: %v", callErr)
+	}
+
+	// Parse the JSONL log and find the agent_run event for agent_a.
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+
+	var agentAEvent map[string]any
+	sc := bufio.NewScanner(strings.NewReader(string(raw)))
+	for sc.Scan() {
+		var rec map[string]any
+		if json.Unmarshal(sc.Bytes(), &rec) != nil {
+			continue
+		}
+		if rec["event"] == "agent_run" && rec["agent"] == "agent_a" {
+			agentAEvent = rec
+			break
+		}
+	}
+	if agentAEvent == nil {
+		t.Fatalf("no agent_run event for agent_a found in log:\n%s", raw)
+	}
+
+	// timed_out must be true.
+	if timedOut, _ := agentAEvent["timed_out"].(bool); !timedOut {
+		t.Errorf("agent_a agent_run event: timed_out = %v, want true", agentAEvent["timed_out"])
+	}
+
+	// fallback_reason must be "agent_crashed", NOT "result_missing".
+	if reason, _ := agentAEvent["fallback_reason"].(string); reason != "agent_crashed" {
+		t.Errorf("agent_a agent_run event: fallback_reason = %q, want \"agent_crashed\"", reason)
+	}
+}
