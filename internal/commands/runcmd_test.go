@@ -594,6 +594,111 @@ func TestCallRole_AllAgentsFailedError(t *testing.T) {
 	}
 }
 
+// TestCallRole_PassesTemplateVarsToRunner verifies that callRole sets the
+// canonical Phase-3 TemplateVars (RESULT_PATH, ROLE) on the runner.Spec.
+// It uses a real shell agent whose cmd contains {{RESULT_PATH}} and {{ROLE}}
+// tokens; the script echoes the resolved values so we can assert substitution.
+func TestCallRole_PassesTemplateVarsToRunner(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("posix shell script test, skipping on windows")
+	}
+
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "run.log")
+
+	logger, err := eventlog.Open(logPath, os.Stderr)
+	if err != nil {
+		t.Fatalf("open logger: %v", err)
+	}
+	defer logger.Close()
+
+	resultPath := filepath.Join(dir, "result.json")
+
+	// The agent script: echoes its two args (resolved from {{RESULT_PATH}} and
+	// {{ROLE}}), then writes the result file so callRole succeeds.
+	scriptPath := filepath.Join(dir, "capture.sh")
+	script := fmt.Sprintf(`#!/bin/sh
+echo "result_path_arg=$1"
+echo "role_arg=$2"
+printf '{}' > '%s'
+exit 0
+`, resultPath)
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	role := config.Role{
+		Agents:         []string{"capagent"},
+		Prompt:         "prompts/dummy.md",
+		ResultPath:     "result.json",
+		TimeoutSeconds: 5,
+	}
+	cfg := &config.Config{
+		Agents: map[string]config.Agent{
+			// The cmd uses {{RESULT_PATH}} and {{ROLE}} as positional args.
+			"capagent": {Cmd: []string{"sh", scriptPath, "{{RESULT_PATH}}", "{{ROLE}}"}},
+		},
+		Roles: map[string]config.Role{"testrole": role},
+		RateLimitBackoff: config.RateLimitBackoff{
+			InitialSeconds: 1,
+			Factor:         2,
+			MaxSeconds:     4,
+			DefaultPattern: "rate_?limit",
+		},
+	}
+
+	fc := fallback.NewCaller(fallback.Config{
+		InitialBackoff: 0,
+		Factor:         1,
+		MaxBackoff:     0,
+	})
+
+	deps := &liveDeps{
+		cfg:     cfg,
+		dir:     dir,
+		fc:      fc,
+		log:     logger,
+		memPath: filepath.Join(dir, "memory.md"),
+	}
+
+	callErr := deps.callRole(context.Background(), "testrole", "prompt", role)
+	_ = logger.Close()
+
+	if callErr != nil {
+		t.Fatalf("unexpected error from callRole: %v", callErr)
+	}
+
+	// Read the log to get stdout_tail which contains what the script echoed.
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+
+	var stdoutTail string
+	sc := bufio.NewScanner(strings.NewReader(string(raw)))
+	for sc.Scan() {
+		var rec map[string]any
+		if json.Unmarshal(sc.Bytes(), &rec) != nil {
+			continue
+		}
+		if rec["event"] == "agent_run" {
+			stdoutTail, _ = rec["stdout_tail"].(string)
+			break
+		}
+	}
+
+	// RESULT_PATH should be the resolved absolute path (dir + "result.json").
+	wantResultPath := filepath.Join(dir, "result.json")
+	if !strings.Contains(stdoutTail, "result_path_arg="+wantResultPath) {
+		t.Errorf("stdout_tail missing resolved RESULT_PATH; want %q in: %q", wantResultPath, stdoutTail)
+	}
+
+	// ROLE should be "testrole".
+	if !strings.Contains(stdoutTail, "role_arg=testrole") {
+		t.Errorf("stdout_tail missing resolved ROLE; want %q in: %q", "role_arg=testrole", stdoutTail)
+	}
+}
+
 // TestCallRole_TimedOutReportsAgentCrashed verifies that when the first agent
 // times out (TimedOut=true, ResultExists=false), the fallback reason logged is
 // "agent_crashed" (not "result_missing"), and the chain advances to the second

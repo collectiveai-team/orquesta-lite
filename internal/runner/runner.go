@@ -17,6 +17,9 @@ type Spec struct {
 	ResultPath       string
 	Timeout          time.Duration
 	RateLimitPattern string
+	// TemplateVars holds additional {{KEY}} substitutions applied after
+	// {{PROMPT}} is resolved. Keys are the bare names without braces.
+	TemplateVars map[string]string
 }
 
 // Result holds the captured output and derived state after RunAgent returns.
@@ -128,10 +131,18 @@ func RunAgent(ctx context.Context, s Spec) (*Result, error) {
 		return nil, errors.New("empty cmd")
 	}
 
-	// Replace {{PROMPT}} placeholder in every token.
+	// Replace {{PROMPT}} placeholder in every token first (existing contract).
 	args := make([]string, len(s.Cmd))
 	for i, tok := range s.Cmd {
 		args[i] = strings.ReplaceAll(tok, "{{PROMPT}}", s.Prompt)
+	}
+	// Then substitute any additional {{KEY}} vars from TemplateVars.
+	// Unknown keys are left as-is; no error is returned.
+	for key, val := range s.TemplateVars {
+		placeholder := "{{" + key + "}}"
+		for i, tok := range args {
+			args[i] = strings.ReplaceAll(tok, placeholder, val)
+		}
 	}
 
 	// Pre-clear stale result file so we can detect "did not write".

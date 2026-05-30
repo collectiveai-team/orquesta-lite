@@ -218,12 +218,18 @@ func (d *liveDeps) callRole(ctx context.Context, roleName, prompt string, role c
 		if pattern == "" {
 			pattern = d.cfg.RateLimitBackoff.DefaultPattern
 		}
+		// Canonical Phase-3 template vars: RESULT_PATH and ROLE.
+		// Additional vars can be added here as new codex flags are introduced.
 		spec := runner.Spec{
 			Cmd:              ag.Cmd,
 			Prompt:           prompt,
 			ResultPath:       filepath.Join(d.dir, role.ResultPath),
 			Timeout:          time.Duration(role.TimeoutSeconds) * time.Second,
 			RateLimitPattern: pattern,
+			TemplateVars: map[string]string{
+				"RESULT_PATH": filepath.Join(d.dir, role.ResultPath),
+				"ROLE":        roleName,
+			},
 		}
 		r, err := runner.RunAgent(ctx, spec)
 		if err != nil {

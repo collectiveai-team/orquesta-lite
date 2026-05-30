@@ -150,6 +150,75 @@ func TestResult_CodexHeader_ParsedWhenPresent(t *testing.T) {
 	}
 }
 
+func TestRunAgent_SubstitutesTemplateVars(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("posix-only test")
+	}
+	res, err := RunAgent(context.Background(), Spec{
+		Cmd:        []string{"/bin/sh", "-c", "echo '{{PROMPT}} {{RESULT_PATH}}'"},
+		Prompt:     "hi",
+		ResultPath: filepath.Join(t.TempDir(), "out.json"),
+		Timeout:    5 * time.Second,
+		TemplateVars: map[string]string{
+			"RESULT_PATH": "/tmp/out.json",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(res.Stdout, "hi") {
+		t.Errorf("stdout missing prompt substitution: %q", res.Stdout)
+	}
+	if !strings.Contains(res.Stdout, "/tmp/out.json") {
+		t.Errorf("stdout missing RESULT_PATH substitution: %q", res.Stdout)
+	}
+}
+
+func TestRunAgent_LeavesUnknownTemplateVarsAlone(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("posix-only test")
+	}
+	res, err := RunAgent(context.Background(), Spec{
+		Cmd:          []string{"/bin/sh", "-c", "echo '{{UNKNOWN}}'"},
+		Prompt:       "hi",
+		ResultPath:   filepath.Join(t.TempDir(), "out.json"),
+		Timeout:      5 * time.Second,
+		TemplateVars: map[string]string{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(res.Stdout, "{{UNKNOWN}}") {
+		t.Errorf("stdout should contain literal {{UNKNOWN}}, got: %q", res.Stdout)
+	}
+}
+
+func TestRunAgent_SubstitutionOrderPromptFirst(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("posix-only test")
+	}
+	// TemplateVars contains "PROMPT" key, but Spec.Prompt substitution runs first
+	// so the {{PROMPT}} token is consumed before TemplateVars can touch it.
+	res, err := RunAgent(context.Background(), Spec{
+		Cmd:     []string{"/bin/sh", "-c", "echo '{{PROMPT}}'"},
+		Prompt:  "real-prompt",
+		ResultPath: filepath.Join(t.TempDir(), "out.json"),
+		Timeout: 5 * time.Second,
+		TemplateVars: map[string]string{
+			"PROMPT": "should-not-appear",
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(res.Stdout, "real-prompt") {
+		t.Errorf("stdout missing Spec.Prompt value: %q", res.Stdout)
+	}
+	if strings.Contains(res.Stdout, "should-not-appear") {
+		t.Errorf("stdout must not contain TemplateVars PROMPT value: %q", res.Stdout)
+	}
+}
+
 func TestResult_CodexHeader_NilWhenAbsent(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("posix-only test")
