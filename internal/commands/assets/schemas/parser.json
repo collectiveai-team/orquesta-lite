@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ParserResult",
+  "type": "object",
+  "properties": {
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title":       { "type": "string" },
+          "description": { "type": "string" },
+          "priority":    { "type": "integer" }
+        },
+        "required": ["title", "description", "priority"]
+      }
+    },
+    "notes_for_memory": { "type": ["string", "null"] }
+  },
+  "required": ["tasks"]
+}

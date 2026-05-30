@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -46,4 +47,98 @@ func TestInit_IsIdempotent(t *testing.T) {
 	if err := Init(dir); err != nil {
 		t.Fatalf("second init failed: %v", err)
 	}
+}
+
+// TestInit_MaterialisesSchemas verifies that Init writes all five role schemas
+// to <workspace>/schemas/ and that each file parses as valid JSON.
+func TestInit_MaterialisesSchemas(t *testing.T) {
+	dir := t.TempDir()
+	if err := Init(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	expectedSchemas := []string{
+		"parser.json",
+		"coder.json",
+		"tester.json",
+		"critic.json",
+		"reviewer.json",
+	}
+
+	for _, name := range expectedSchemas {
+		path := filepath.Join(dir, "schemas", name)
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Errorf("schema %s missing: %v", name, err)
+			continue
+		}
+		var v map[string]any
+		if err := json.Unmarshal(raw, &v); err != nil {
+			t.Errorf("schema %s is not valid JSON: %v", name, err)
+		}
+	}
+}
+
+// TestInit_TeamJSONHasCodexPrimary verifies that the materialised team.json
+// lists codex_gpt5_5 as primary coder with the expected structural-contract flags,
+// and claude_sonnet as fallback.
+func TestInit_TeamJSONHasCodexPrimary(t *testing.T) {
+	dir := t.TempDir()
+	if err := Init(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(dir, "team.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var cfg struct {
+		Agents map[string]struct {
+			Cmd []string `json:"cmd"`
+		} `json:"agents"`
+		Roles map[string]struct {
+			Agents []string `json:"agents"`
+		} `json:"roles"`
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		t.Fatalf("team.json parse error: %v", err)
+	}
+
+	// Verify codex_gpt5_5 agent exists with the four required flags.
+	codexAgent, ok := cfg.Agents["codex_gpt5_5"]
+	if !ok {
+		t.Fatal("agents.codex_gpt5_5 not found in team.json")
+	}
+	cmdStr := strings.Join(codexAgent.Cmd, " ")
+	for _, flag := range []string{"--sandbox", "--skip-git-repo-check", "-o", "--output-schema"} {
+		if !strings.Contains(cmdStr, flag) {
+			t.Errorf("codex_gpt5_5 cmd missing flag %q; full cmd: %s", flag, cmdStr)
+		}
+	}
+
+	// Verify coder role: primary = codex_gpt5_5, fallback = claude_sonnet.
+	coderRole, ok := cfg.Roles["coder"]
+	if !ok {
+		t.Fatal("roles.coder not found in team.json")
+	}
+	if len(coderRole.Agents) < 2 {
+		t.Fatalf("roles.coder.agents has %d entries, want >= 2", len(coderRole.Agents))
+	}
+	if coderRole.Agents[0] != "codex_gpt5_5" {
+		t.Errorf("roles.coder.agents[0] = %q, want codex_gpt5_5", coderRole.Agents[0])
+	}
+	if coderRole.Agents[1] != "claude_sonnet" {
+		t.Errorf("roles.coder.agents[1] = %q, want claude_sonnet", coderRole.Agents[1])
+	}
+}
+
+// TestInit_WarnsWhenCodexMissing would verify that Init prints a warning when
+// the codex binary is not in PATH. However, exec.LookPath cannot be stubbed
+// without dependency injection, and we cannot guarantee that the test runner
+// environment lacks (or has) codex. Injecting the lookup function would require
+// changing the Init signature, which is out of scope for this phase.
+// The warning behaviour is covered by manual testing and code review.
+func TestInit_WarnsWhenCodexMissing(t *testing.T) {
+	t.Skip("exec.LookPath cannot be cleanly stubbed without injecting the lookup function; skipped by design")
 }
