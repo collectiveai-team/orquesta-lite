@@ -1,14 +1,20 @@
 package commands
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
+	"github.com/lionelchamorro/orquestalite/internal/config"
+	"github.com/lionelchamorro/orquestalite/internal/eventlog"
+	"github.com/lionelchamorro/orquestalite/internal/fallback"
 	"github.com/lionelchamorro/orquestalite/internal/tasks"
 )
 
@@ -276,5 +282,600 @@ func TestRun_EmptyTaskList(t *testing.T) {
 	})
 	if err != nil {
 		t.Errorf("Run with empty task list: %v", err)
+	}
+}
+
+// TestCallRole_AgentRunEventFields verifies that callRole logs the new fields
+// (stderr_tail, stdout_tail, exit_code, cmd_line) in the agent_run event and
+// that when the agent does not write a result file the error message includes
+// exit code and stderr tail.
+func TestCallRole_AgentRunEventFields(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("posix shell script test, skipping on windows")
+	}
+
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "run.log")
+
+	logger, err := eventlog.Open(logPath, os.Stderr)
+	if err != nil {
+		t.Fatalf("open logger: %v", err)
+	}
+	defer logger.Close()
+
+	// Agent that writes stderr, exits non-zero, and does NOT write the result file.
+	resultPath := filepath.Join(dir, "result.json")
+	agentScript := fmt.Sprintf(
+		`sh -c "echo 'something went wrong' 1>&2; exit 7"`,
+	)
+	_ = agentScript // used below via config
+
+	ag := config.Agent{
+		Cmd: []string{"sh", "-c", "echo 'something went wrong' 1>&2; exit 7"},
+	}
+	role := config.Role{
+		Agents:         []string{"testagent"},
+		Prompt:         "prompts/dummy.md",
+		ResultPath:     "result.json",
+		TimeoutSeconds: 5,
+	}
+	cfg := &config.Config{
+		Agents: map[string]config.Agent{"testagent": ag},
+		Roles:  map[string]config.Role{"testrole": role},
+		RateLimitBackoff: config.RateLimitBackoff{
+			InitialSeconds: 1,
+			Factor:         2,
+			MaxSeconds:     2,
+			DefaultPattern: "rate_?limit",
+		},
+	}
+
+	fc := fallback.NewCaller(fallback.Config{
+		InitialBackoff: 0,
+		Factor:         1,
+		MaxBackoff:     0,
+	})
+
+	deps := &liveDeps{
+		cfg:     cfg,
+		dir:     dir,
+		fc:      fc,
+		log:     logger,
+		memPath: filepath.Join(dir, "memory.md"),
+	}
+
+	callErr := deps.callRole(context.Background(), "testrole", "the prompt text", role)
+
+	// Close logger so the file is fully flushed.
+	_ = logger.Close()
+
+	// Error message must include exit code and stderr tail.
+	if callErr == nil {
+		t.Fatal("expected error from callRole when result file absent")
+	}
+	errMsg := callErr.Error()
+	if !strings.Contains(errMsg, "exit=7") {
+		t.Errorf("error missing exit code: %q", errMsg)
+	}
+	if !strings.Contains(errMsg, "something went wrong") {
+		t.Errorf("error missing stderr content: %q", errMsg)
+	}
+
+	// Parse the JSONL log and find the agent_run event.
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+
+	var agentRunEvent map[string]any
+	sc := bufio.NewScanner(strings.NewReader(string(raw)))
+	for sc.Scan() {
+		var rec map[string]any
+		if json.Unmarshal(sc.Bytes(), &rec) != nil {
+			continue
+		}
+		if rec["event"] == "agent_run" {
+			agentRunEvent = rec
+			break
+		}
+	}
+	if agentRunEvent == nil {
+		t.Fatalf("no agent_run event found in log:\n%s", raw)
+	}
+
+	// Verify required new fields are present.
+	for _, field := range []string{"stderr_tail", "stdout_tail", "exit_code", "cmd_line"} {
+		if _, ok := agentRunEvent[field]; !ok {
+			t.Errorf("agent_run event missing field %q; event: %v", field, agentRunEvent)
+		}
+	}
+
+	// exit_code must be 7.
+	if got := agentRunEvent["exit_code"]; fmt.Sprintf("%v", got) != "7" {
+		t.Errorf("exit_code = %v, want 7", got)
+	}
+
+	// cmd_line must not contain the prompt text but must contain <elided>.
+	cmdLine, _ := agentRunEvent["cmd_line"].(string)
+	if strings.Contains(cmdLine, "the prompt text") {
+		t.Errorf("cmd_line must not contain raw prompt: %q", cmdLine)
+	}
+
+	// stderr_tail must contain the agent's stderr output.
+	stderrTail, _ := agentRunEvent["stderr_tail"].(string)
+	if !strings.Contains(stderrTail, "something went wrong") {
+		t.Errorf("stderr_tail missing agent stderr: %q", stderrTail)
+	}
+
+	// resultPath is used to ensure the result file path is correct.
+	_ = resultPath
+}
+
+// TestCallRole_FallsBackOnResultMissing verifies that when the first agent in a
+// two-agent chain does not write a result file, callRole falls back to the second
+// agent (which does write the file) and returns nil.
+// It also asserts that two agent_run events appear in the log, in order.
+func TestCallRole_FallsBackOnResultMissing(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("posix shell script test, skipping on windows")
+	}
+
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "run.log")
+
+	logger, err := eventlog.Open(logPath, os.Stderr)
+	if err != nil {
+		t.Fatalf("open logger: %v", err)
+	}
+	defer logger.Close()
+
+	resultPath := filepath.Join(dir, "result.json")
+	// Script that accepts --agent <name> and writes result only for "agent_b".
+	scriptPath := filepath.Join(dir, "agent.sh")
+	script := fmt.Sprintf(`#!/bin/sh
+agent=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --agent) agent="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ "$agent" = "agent_b" ]; then
+  mkdir -p "$(dirname '%s')"
+  printf '{}' > '%s'
+fi
+exit 0
+`, resultPath, resultPath)
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	role := config.Role{
+		Agents:         []string{"agent_a", "agent_b"},
+		Prompt:         "prompts/dummy.md",
+		ResultPath:     "result.json",
+		TimeoutSeconds: 5,
+	}
+	cfg := &config.Config{
+		Agents: map[string]config.Agent{
+			"agent_a": {Cmd: []string{"sh", scriptPath, "--agent", "agent_a"}},
+			"agent_b": {Cmd: []string{"sh", scriptPath, "--agent", "agent_b"}},
+		},
+		Roles: map[string]config.Role{"testrole": role},
+		RateLimitBackoff: config.RateLimitBackoff{
+			InitialSeconds: 1,
+			Factor:         2,
+			MaxSeconds:     4,
+			DefaultPattern: "rate_?limit",
+		},
+	}
+
+	fc := fallback.NewCaller(fallback.Config{
+		InitialBackoff: 0,
+		Factor:         2,
+		MaxBackoff:     0,
+	})
+
+	deps := &liveDeps{
+		cfg:     cfg,
+		dir:     dir,
+		fc:      fc,
+		log:     logger,
+		memPath: filepath.Join(dir, "memory.md"),
+	}
+
+	callErr := deps.callRole(context.Background(), "testrole", "prompt", role)
+	_ = logger.Close()
+
+	if callErr != nil {
+		t.Fatalf("expected nil error after fallback, got: %v", callErr)
+	}
+
+	// Parse log and check two agent_run events in order.
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+
+	var agentNames []string
+	sc := bufio.NewScanner(strings.NewReader(string(raw)))
+	for sc.Scan() {
+		var rec map[string]any
+		if json.Unmarshal(sc.Bytes(), &rec) != nil {
+			continue
+		}
+		if rec["event"] == "agent_run" {
+			if name, ok := rec["agent"].(string); ok {
+				agentNames = append(agentNames, name)
+			}
+		}
+	}
+
+	if len(agentNames) != 2 {
+		t.Fatalf("expected 2 agent_run events, got %d: %v", len(agentNames), agentNames)
+	}
+	if agentNames[0] != "agent_a" || agentNames[1] != "agent_b" {
+		t.Errorf("agent_run order = %v, want [agent_a, agent_b]", agentNames)
+	}
+}
+
+// TestCallRole_AllAgentsFailedError verifies that when every agent in the chain
+// fails to write a result file, callRole returns an error matching the format:
+// all agents failed for role %q: tried [...]; last error: ...
+func TestCallRole_AllAgentsFailedError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("posix shell script test, skipping on windows")
+	}
+
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "run.log")
+
+	logger, err := eventlog.Open(logPath, os.Stderr)
+	if err != nil {
+		t.Fatalf("open logger: %v", err)
+	}
+	defer logger.Close()
+
+	// Agent that never writes a result file.
+	scriptPath := filepath.Join(dir, "no_result.sh")
+	if err := os.WriteFile(scriptPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	role := config.Role{
+		Agents:         []string{"agent_a", "agent_b"},
+		Prompt:         "prompts/dummy.md",
+		ResultPath:     "result.json",
+		TimeoutSeconds: 5,
+	}
+	cfg := &config.Config{
+		Agents: map[string]config.Agent{
+			"agent_a": {Cmd: []string{"sh", scriptPath}},
+			"agent_b": {Cmd: []string{"sh", scriptPath}},
+		},
+		Roles: map[string]config.Role{"testrole": role},
+		RateLimitBackoff: config.RateLimitBackoff{
+			InitialSeconds: 1,
+			Factor:         2,
+			MaxSeconds:     4,
+			DefaultPattern: "rate_?limit",
+		},
+	}
+
+	fc := fallback.NewCaller(fallback.Config{
+		InitialBackoff: 0,
+		Factor:         2,
+		MaxBackoff:     0,
+	})
+
+	deps := &liveDeps{
+		cfg:     cfg,
+		dir:     dir,
+		fc:      fc,
+		log:     logger,
+		memPath: filepath.Join(dir, "memory.md"),
+	}
+
+	callErr := deps.callRole(context.Background(), "testrole", "prompt", role)
+	_ = logger.Close()
+
+	if callErr == nil {
+		t.Fatal("expected error when all agents fail, got nil")
+	}
+	errMsg := callErr.Error()
+	if !strings.Contains(errMsg, `all agents failed for role "testrole"`) {
+		t.Errorf("error missing expected prefix: %q", errMsg)
+	}
+	if !strings.Contains(errMsg, "agent_a") || !strings.Contains(errMsg, "agent_b") {
+		t.Errorf("error missing agent names: %q", errMsg)
+	}
+	if !strings.Contains(errMsg, "last error:") {
+		t.Errorf("error missing 'last error:' segment: %q", errMsg)
+	}
+}
+
+// TestCallRole_PassesTemplateVarsToRunner verifies that callRole sets the
+// canonical Phase-3 TemplateVars (RESULT_PATH, ROLE) on the runner.Spec.
+// It uses a real shell agent whose cmd contains {{RESULT_PATH}} and {{ROLE}}
+// tokens; the script echoes the resolved values so we can assert substitution.
+func TestCallRole_PassesTemplateVarsToRunner(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("posix shell script test, skipping on windows")
+	}
+
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "run.log")
+
+	logger, err := eventlog.Open(logPath, os.Stderr)
+	if err != nil {
+		t.Fatalf("open logger: %v", err)
+	}
+	defer logger.Close()
+
+	resultPath := filepath.Join(dir, "result.json")
+
+	// The agent script: echoes its two args (resolved from {{RESULT_PATH}} and
+	// {{ROLE}}), then writes the result file so callRole succeeds.
+	scriptPath := filepath.Join(dir, "capture.sh")
+	script := fmt.Sprintf(`#!/bin/sh
+echo "result_path_arg=$1"
+echo "role_arg=$2"
+printf '{}' > '%s'
+exit 0
+`, resultPath)
+	if err := os.WriteFile(scriptPath, []byte(script), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+
+	role := config.Role{
+		Agents:         []string{"capagent"},
+		Prompt:         "prompts/dummy.md",
+		ResultPath:     "result.json",
+		TimeoutSeconds: 5,
+	}
+	cfg := &config.Config{
+		Agents: map[string]config.Agent{
+			// The cmd uses {{RESULT_PATH}} and {{ROLE}} as positional args.
+			"capagent": {Cmd: []string{"sh", scriptPath, "{{RESULT_PATH}}", "{{ROLE}}"}},
+		},
+		Roles: map[string]config.Role{"testrole": role},
+		RateLimitBackoff: config.RateLimitBackoff{
+			InitialSeconds: 1,
+			Factor:         2,
+			MaxSeconds:     4,
+			DefaultPattern: "rate_?limit",
+		},
+	}
+
+	fc := fallback.NewCaller(fallback.Config{
+		InitialBackoff: 0,
+		Factor:         1,
+		MaxBackoff:     0,
+	})
+
+	deps := &liveDeps{
+		cfg:     cfg,
+		dir:     dir,
+		fc:      fc,
+		log:     logger,
+		memPath: filepath.Join(dir, "memory.md"),
+	}
+
+	callErr := deps.callRole(context.Background(), "testrole", "prompt", role)
+	_ = logger.Close()
+
+	if callErr != nil {
+		t.Fatalf("unexpected error from callRole: %v", callErr)
+	}
+
+	// Read the log to get stdout_tail which contains what the script echoed.
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+
+	var stdoutTail string
+	sc := bufio.NewScanner(strings.NewReader(string(raw)))
+	for sc.Scan() {
+		var rec map[string]any
+		if json.Unmarshal(sc.Bytes(), &rec) != nil {
+			continue
+		}
+		if rec["event"] == "agent_run" {
+			stdoutTail, _ = rec["stdout_tail"].(string)
+			break
+		}
+	}
+
+	// RESULT_PATH should be the resolved absolute path (dir + "result.json").
+	wantResultPath := filepath.Join(dir, "result.json")
+	if !strings.Contains(stdoutTail, "result_path_arg="+wantResultPath) {
+		t.Errorf("stdout_tail missing resolved RESULT_PATH; want %q in: %q", wantResultPath, stdoutTail)
+	}
+
+	// ROLE should be "testrole".
+	if !strings.Contains(stdoutTail, "role_arg=testrole") {
+		t.Errorf("stdout_tail missing resolved ROLE; want %q in: %q", "role_arg=testrole", stdoutTail)
+	}
+
+	// Fix 3: cmd_line in the agent_run event must have {{RESULT_PATH}} and {{ROLE}}
+	// replaced with their resolved values — not the raw placeholder strings.
+	raw2, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log (fix3 check): %v", err)
+	}
+	var cmdLineField string
+	sc2 := bufio.NewScanner(strings.NewReader(string(raw2)))
+	for sc2.Scan() {
+		var rec map[string]any
+		if json.Unmarshal(sc2.Bytes(), &rec) != nil {
+			continue
+		}
+		if rec["event"] == "agent_run" {
+			cmdLineField, _ = rec["cmd_line"].(string)
+			break
+		}
+	}
+	if strings.Contains(cmdLineField, "{{RESULT_PATH}}") {
+		t.Errorf("cmd_line must not contain raw {{RESULT_PATH}} placeholder: %q", cmdLineField)
+	}
+	if strings.Contains(cmdLineField, "{{ROLE}}") {
+		t.Errorf("cmd_line must not contain raw {{ROLE}} placeholder: %q", cmdLineField)
+	}
+	if !strings.Contains(cmdLineField, wantResultPath) {
+		t.Errorf("cmd_line must contain resolved RESULT_PATH %q; got: %q", wantResultPath, cmdLineField)
+	}
+	if !strings.Contains(cmdLineField, "testrole") {
+		t.Errorf("cmd_line must contain resolved ROLE \"testrole\"; got: %q", cmdLineField)
+	}
+}
+
+// TestRunFix_EscalationLadderPlumbedFromConfig verifies that the escalation_ladder
+// field in team.json is correctly read and plumbed into FixConfig.EscalationLadder
+// by liveDeps.RunFix.
+func TestRunFix_EscalationLadderPlumbedFromConfig(t *testing.T) {
+	cfg := &config.Config{
+		Agents: map[string]config.Agent{
+			"fake_coder":  {Cmd: []string{"sh", "-c", "exit 0"}},
+			"fake_escalation": {Cmd: []string{"sh", "-c", "exit 0"}},
+		},
+		Roles: map[string]config.Role{
+			"coder": {
+				Agents:           []string{"fake_coder"},
+				EscalationLadder: []string{"fake_escalation"},
+				Prompt:           "prompts/coder.md",
+				ResultPath:       ".orquestalite/results/coder.json",
+				TimeoutSeconds:   5,
+			},
+		},
+		Limits: config.Limits{MaxReviewCycles: 1, MaxFixIterations: 5},
+		RateLimitBackoff: config.RateLimitBackoff{
+			InitialSeconds: 1, Factor: 2, MaxSeconds: 4, DefaultPattern: "rate_?limit",
+		},
+		FullTestCommand: "true",
+	}
+
+	d := &liveDeps{
+		cfg:       cfg,
+		tl:        &tasks.TaskList{Tasks: []tasks.Task{{ID: "T1", Title: "t", Description: "d"}}},
+		memPath:   t.TempDir() + "/memory.md",
+		tasksPath: t.TempDir() + "/tasks.json",
+	}
+
+	// Verify that the escalation_ladder from the coder role is accessible.
+	coderRole := d.cfg.Roles["coder"]
+	if len(coderRole.EscalationLadder) != 1 || coderRole.EscalationLadder[0] != "fake_escalation" {
+		t.Errorf("EscalationLadder not plumbed correctly: %v", coderRole.EscalationLadder)
+	}
+}
+
+// TestCallRole_TimedOutReportsAgentCrashed verifies that when the first agent
+// times out (TimedOut=true, ResultExists=false), the fallback reason logged is
+// "agent_crashed" (not "result_missing"), and the chain advances to the second
+// agent which succeeds.
+func TestCallRole_TimedOutReportsAgentCrashed(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("posix shell script test, skipping on windows")
+	}
+
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "run.log")
+
+	logger, err := eventlog.Open(logPath, os.Stderr)
+	if err != nil {
+		t.Fatalf("open logger: %v", err)
+	}
+	defer logger.Close()
+
+	resultPath := filepath.Join(dir, "result.json")
+
+	// agent_b script: writes the result file and exits quickly.
+	scriptBPath := filepath.Join(dir, "agent_b.sh")
+	scriptB := fmt.Sprintf(`#!/bin/sh
+mkdir -p "$(dirname '%s')"
+printf '{}' > '%s'
+exit 0
+`, resultPath, resultPath)
+	if err := os.WriteFile(scriptBPath, []byte(scriptB), 0o755); err != nil {
+		t.Fatalf("write agent_b script: %v", err)
+	}
+
+	// agent_a uses exec directly (no shell wrapper) so that SIGKILL from
+	// exec.CommandContext reaches the sleeping process immediately, avoiding
+	// orphan grandchildren that keep pipes open.
+	role := config.Role{
+		Agents:         []string{"agent_a", "agent_b"},
+		Prompt:         "prompts/dummy.md",
+		ResultPath:     "result.json",
+		TimeoutSeconds: 1, // short timeout so agent_a is killed quickly
+	}
+	cfg := &config.Config{
+		Agents: map[string]config.Agent{
+			// sleep is invoked directly (no sh wrapper) so SIGKILL is sent
+			// straight to the sleep process; pipes close immediately.
+			"agent_a": {Cmd: []string{"sleep", "30"}},
+			"agent_b": {Cmd: []string{"sh", scriptBPath}},
+		},
+		Roles: map[string]config.Role{"testrole": role},
+		RateLimitBackoff: config.RateLimitBackoff{
+			InitialSeconds: 1,
+			Factor:         2,
+			MaxSeconds:     4,
+			DefaultPattern: "rate_?limit",
+		},
+	}
+
+	fc := fallback.NewCaller(fallback.Config{
+		InitialBackoff: 0,
+		Factor:         2,
+		MaxBackoff:     0,
+	})
+
+	deps := &liveDeps{
+		cfg:     cfg,
+		dir:     dir,
+		fc:      fc,
+		log:     logger,
+		memPath: filepath.Join(dir, "memory.md"),
+	}
+
+	callErr := deps.callRole(context.Background(), "testrole", "prompt", role)
+	_ = logger.Close()
+
+	// The fallback must advance to agent_b successfully.
+	if callErr != nil {
+		t.Fatalf("expected nil error after fallback to agent_b, got: %v", callErr)
+	}
+
+	// Parse the JSONL log and find the agent_run event for agent_a.
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+
+	var agentAEvent map[string]any
+	sc := bufio.NewScanner(strings.NewReader(string(raw)))
+	for sc.Scan() {
+		var rec map[string]any
+		if json.Unmarshal(sc.Bytes(), &rec) != nil {
+			continue
+		}
+		if rec["event"] == "agent_run" && rec["agent"] == "agent_a" {
+			agentAEvent = rec
+			break
+		}
+	}
+	if agentAEvent == nil {
+		t.Fatalf("no agent_run event for agent_a found in log:\n%s", raw)
+	}
+
+	// timed_out must be true.
+	if timedOut, _ := agentAEvent["timed_out"].(bool); !timedOut {
+		t.Errorf("agent_a agent_run event: timed_out = %v, want true", agentAEvent["timed_out"])
+	}
+
+	// fallback_reason must be "agent_crashed", NOT "result_missing".
+	if reason, _ := agentAEvent["fallback_reason"].(string); reason != "agent_crashed" {
+		t.Errorf("agent_a agent_run event: fallback_reason = %q, want \"agent_crashed\"", reason)
 	}
 }

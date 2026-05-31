@@ -5,23 +5,32 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/lionelchamorro/orquestalite/internal/providers"
 )
 
 type Agent struct {
-	Cmd              []string `json:"cmd"`
-	RateLimitPattern string   `json:"rate_limit_pattern,omitempty"`
+	Cmd                        []string `json:"cmd,omitempty"`
+	Provider                   string   `json:"provider,omitempty"`
+	Model                      string   `json:"model,omitempty"`
+	Effort                     string   `json:"effort,omitempty"`
+	DangerouslySkipPermissions bool     `json:"dangerously_skip_permissions,omitempty"`
+	RateLimitPattern           string   `json:"rate_limit_pattern,omitempty"`
 }
 
 type Role struct {
-	Agents         []string `json:"agents"`
-	Prompt         string   `json:"prompt"`
-	ResultPath     string   `json:"result_path"`
-	TimeoutSeconds int      `json:"timeout_seconds"`
+	Agents           []string `json:"agents"`
+	Prompt           string   `json:"prompt"`
+	ResultPath       string   `json:"result_path"`
+	TimeoutSeconds   int      `json:"timeout_seconds"`
+	EscalationLadder []string `json:"escalation_ladder,omitempty"`
+	DecomposePrompt  string   `json:"decompose_prompt,omitempty"`
 }
 
 type Limits struct {
-	MaxReviewCycles  int `json:"max_review_cycles"`
-	MaxFixIterations int `json:"max_fix_iterations"`
+	MaxReviewCycles  int  `json:"max_review_cycles"`
+	MaxFixIterations int  `json:"max_fix_iterations"`
+	PreflightEnabled bool `json:"preflight_enabled,omitempty"`
 }
 
 type RateLimitBackoff struct {
@@ -69,6 +78,11 @@ func (c *Config) Validate() error {
 				return fmt.Errorf("role %q references unknown agent %q", rname, a)
 			}
 		}
+		for _, a := range r.EscalationLadder {
+			if _, ok := c.Agents[a]; !ok {
+				return fmt.Errorf("role %q escalation_ladder references unknown agent %q", rname, a)
+			}
+		}
 		if r.Prompt == "" || r.ResultPath == "" {
 			return fmt.Errorf("role %q must declare prompt and result_path", rname)
 		}
@@ -76,10 +90,21 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("role %q timeout_seconds must be > 0", rname)
 		}
 	}
-	// Second pass: validate agent cmd contents.
+	// Second pass: validate agent invocation shape.
 	for name, a := range c.Agents {
-		if len(a.Cmd) == 0 {
-			return fmt.Errorf("agent %q has empty cmd", name)
+		hasCmd := len(a.Cmd) > 0
+		hasProvider := a.Provider != ""
+		if hasCmd && hasProvider {
+			return fmt.Errorf("agent %q cannot specify both cmd and provider", name)
+		}
+		if !hasCmd && !hasProvider {
+			return fmt.Errorf("agent %q must declare cmd or provider", name)
+		}
+		if hasProvider {
+			if !providers.IsKnown(a.Provider) {
+				return fmt.Errorf("agent %q has unknown provider %q", name, a.Provider)
+			}
+			continue
 		}
 		hasMarker := false
 		for _, tok := range a.Cmd {

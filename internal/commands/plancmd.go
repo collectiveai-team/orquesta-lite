@@ -51,7 +51,17 @@ func PlanWithLiveCaller(ctx context.Context, projectDir, planPath string, append
 		tasksPath: tasksPath,
 	}
 
-	return Plan(ctx, projectDir, planPath, appendMode, deps)
+	if err := Plan(ctx, projectDir, planPath, appendMode, deps); err != nil {
+		return err
+	}
+	if tl, err := tasks.Load(tasksPath); err == nil {
+		logger.Log(eventlog.Event{Type: "plan_written", Fields: map[string]any{
+			"tasks_count": len(tl.Tasks),
+			"path":        tasksPath,
+			"append":      appendMode,
+		}})
+	}
+	return nil
 }
 
 // ParserCaller is the interface for invoking the parser role.

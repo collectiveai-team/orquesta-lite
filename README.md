@@ -141,7 +141,7 @@ will always report itself as outdated).
 
 `team.json` defines:
 
-- an agent pool with CLI commands, models, and optional rate-limit patterns
+- an agent pool with provider configs or legacy CLI commands, models, and optional rate-limit patterns
 - role bindings for `parser`, `coder`, `tester`, `critic`, and `reviewer`
 - prompt paths and expected result paths
 - loop limits and rate-limit backoff settings

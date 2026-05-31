@@ -60,13 +60,35 @@ func printStatus(projectDir string, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(w, "%-6s  %-8s  %-3s  %-6s  %-20s  %s\n", "ID", "STATUS", "PRI", "ATT", "REASON", "TITLE")
+	fmt.Fprintf(w, "%-6s  %-14s  %-3s  %-6s  %-20s  %s\n", "ID", "STATUS", "PRI", "ATT", "REASON", "TITLE")
 	for _, t := range tl.Tasks {
 		reason := ""
 		if t.FailureReason != nil {
 			reason = string(*t.FailureReason)
 		}
-		fmt.Fprintf(w, "%-6s  %-8s  %-3d  %-6d  %-20s  %s\n", t.ID, t.Status, t.Priority, t.Attempts, reason, t.Title)
+		fmt.Fprintf(w, "%-6s  %-14s  %-3d  %-6d  %-20s  %s\n", t.ID, t.Status, t.Priority, t.Attempts, reason, t.Title)
+	}
+
+	// Surface tasks awaiting human intervention.
+	var humanTasks []tasks.Task
+	for _, t := range tl.Tasks {
+		if t.Status == tasks.StatusNeedsHuman {
+			humanTasks = append(humanTasks, t)
+		}
+	}
+	if len(humanTasks) > 0 {
+		fmt.Fprintf(w, "\nTasks awaiting human:\n")
+		for _, t := range humanTasks {
+			handoffPath := ""
+			if t.FailureDetails != nil && t.FailureDetails.HandoffPath != "" {
+				handoffPath = t.FailureDetails.HandoffPath
+			}
+			if handoffPath != "" {
+				fmt.Fprintf(w, "  %s  %s  (handoff: %s)\n", t.ID, t.Title, handoffPath)
+			} else {
+				fmt.Fprintf(w, "  %s  %s\n", t.ID, t.Title)
+			}
+		}
 	}
 	return nil
 }

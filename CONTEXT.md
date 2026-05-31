@@ -70,22 +70,29 @@ plan.
 
 ## team.json
 
-Two-layer structure: a global **agent pool** declares CLI invocations, and a
-**roles** map binds each role to an ordered list of agents (primary first,
-fallbacks after) plus role-specific fields (prompt, result path, timeout).
+Two-layer structure: a global **agent pool** declares provider-based agents or
+legacy CLI invocations, and a **roles** map binds each role to an ordered list
+of agents (primary first, fallbacks after) plus role-specific fields (prompt,
+result path, timeout).
 
 ```json
 {
   "agents": {
     "claude_sonnet": {
-      "cmd": ["claude", "-p", "{{PROMPT}}", "--model", "claude-sonnet-4-6"],
+      "provider": "claude",
+      "model": "claude-sonnet-4-6",
+      "dangerously_skip_permissions": true,
       "rate_limit_pattern": "rate_?limit|429|quota|exceeded.*tokens"
     },
     "claude_opus": {
-      "cmd": ["claude", "-p", "{{PROMPT}}", "--model", "claude-opus-4-7"]
+      "provider": "claude",
+      "model": "claude-opus-4-7",
+      "dangerously_skip_permissions": true
     },
     "codex_gpt5": {
-      "cmd": ["codex", "exec", "{{PROMPT}}", "--model", "gpt-5"]
+      "provider": "codex",
+      "model": "gpt-5",
+      "effort": "medium"
     }
   },
   "roles": {

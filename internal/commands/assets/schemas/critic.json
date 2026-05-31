@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CriticResult",
+  "type": "object",
+  "properties": {
+    "status": { "type": "string", "enum": ["approved", "rejected"] },
+    "concerns": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "severity":   { "type": "string", "enum": ["blocker", "nit"] },
+          "where":      { "type": "string" },
+          "issue":      { "type": "string" },
+          "suggestion": { "type": "string" }
+        },
+        "required": ["severity", "where", "issue", "suggestion"]
+      }
+    },
+    "notes_for_memory": { "type": ["string", "null"] }
+  },
+  "required": ["status", "concerns"]
+}
