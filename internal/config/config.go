@@ -5,11 +5,17 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/lionelchamorro/orquestalite/internal/providers"
 )
 
 type Agent struct {
-	Cmd              []string `json:"cmd"`
-	RateLimitPattern string   `json:"rate_limit_pattern,omitempty"`
+	Cmd                        []string `json:"cmd,omitempty"`
+	Provider                   string   `json:"provider,omitempty"`
+	Model                      string   `json:"model,omitempty"`
+	Effort                     string   `json:"effort,omitempty"`
+	DangerouslySkipPermissions bool     `json:"dangerously_skip_permissions,omitempty"`
+	RateLimitPattern           string   `json:"rate_limit_pattern,omitempty"`
 }
 
 type Role struct {
@@ -84,10 +90,21 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("role %q timeout_seconds must be > 0", rname)
 		}
 	}
-	// Second pass: validate agent cmd contents.
+	// Second pass: validate agent invocation shape.
 	for name, a := range c.Agents {
-		if len(a.Cmd) == 0 {
-			return fmt.Errorf("agent %q has empty cmd", name)
+		hasCmd := len(a.Cmd) > 0
+		hasProvider := a.Provider != ""
+		if hasCmd && hasProvider {
+			return fmt.Errorf("agent %q cannot specify both cmd and provider", name)
+		}
+		if !hasCmd && !hasProvider {
+			return fmt.Errorf("agent %q must declare cmd or provider", name)
+		}
+		if hasProvider {
+			if !providers.IsKnown(a.Provider) {
+				return fmt.Errorf("agent %q has unknown provider %q", name, a.Provider)
+			}
+			continue
 		}
 		hasMarker := false
 		for _, tok := range a.Cmd {

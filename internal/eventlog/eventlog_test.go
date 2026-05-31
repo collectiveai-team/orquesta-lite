@@ -38,6 +38,30 @@ func TestLog_WritesJSONLAndPretty(t *testing.T) {
 	}
 }
 
+func TestLog_PrettyOutputSanitisesLongMultilineFields(t *testing.T) {
+	dir := t.TempDir()
+	pretty := &bytes.Buffer{}
+	l, err := Open(filepath.Join(dir, "run.log"), pretty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+
+	long := "first line\n" + strings.Repeat("x", 400)
+	l.Log(Event{Type: "agent_run", Fields: map[string]any{"stdout_tail": long}})
+
+	out := pretty.String()
+	if strings.Count(out, "\n") != 1 {
+		t.Fatalf("pretty output should only contain the trailing log newline, got %q", out)
+	}
+	if !strings.Contains(out, `\n`) {
+		t.Fatalf("pretty output should include escaped newline marker, got %q", out)
+	}
+	if len(out) > 380 {
+		t.Fatalf("pretty output too long: len=%d out=%q", len(out), out)
+	}
+}
+
 func TestRotateAtThreshold(t *testing.T) {
 	dir := t.TempDir()
 	pretty := &bytes.Buffer{}

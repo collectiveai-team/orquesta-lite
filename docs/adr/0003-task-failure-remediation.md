@@ -60,17 +60,19 @@ when a task is not resolving on its own:
 Two transverse changes support the cascade:
 
 - **Phase 1 (visibility):** the `agent_run` event now carries
-  `stderr_tail` (2 KB), `stdout_tail` (2 KB), `exit_code`, `cmd_line` (with
-  `{{PROMPT}}` elided), and a parsed `codex_header` when present. The
+  `stderr_tail` (2 KB), `stdout_tail` (2 KB), `exit_code`, provider/model
+  metadata, session/final-text summaries when streamed by a provider, `cmd_line`
+  for legacy commands (with `{{PROMPT}}` elided), and a parsed `codex_header`
+  when present. The
   "did not write" error includes the stderr tail and exit code directly. This
   is the single change with the highest leverage — it would have ended the
   May 2026 debugging session in one iteration.
-- **Phase 3 (structural contract):** codex is invoked with
-  `-o {{RESULT_PATH}} --output-schema schemas/{{ROLE}}.json --sandbox
-  workspace-write --skip-git-repo-check` so the contract write is a CLI
-  guarantee, not a prompt-following requirement. Schemas are embedded in the
-  binary via `go:embed` and materialised by `orq-lite init` alongside
-  `team.json` and `prompts/`.
+- **Phase 3 (structural contract):** schemas are embedded in the binary via
+  `go:embed` and materialised by `orq-lite init` alongside `team.json` and
+  `prompts/`. Legacy Codex `cmd` agents can enforce the contract with
+  `-o {{RESULT_PATH}} --output-schema schemas/{{ROLE}}.json`; provider agents
+  keep the result JSON file as the role contract and use streamed JSONL for
+  observability.
 
 **Phase 5 (preflight)** is an OFF-by-default validator. It is not part of the
 cascade — it catches obviously-malformed tasks before the first fix loop
@@ -128,8 +130,8 @@ For `needs_human` tasks, `Task.FailureDetails` carries:
 
 - **More config surface.** Three new optional fields on roles
   (`escalation_ladder`, `decompose_prompt`), one new optional flag on limits
-  (`preflight_enabled`), plus the new `--output-schema`/`-o` flags in the codex
-  template. The `init` template covers the sensible defaults so most users
+  (`preflight_enabled`), and provider fields such as `provider`, `model`, and
+  `effort`. The `init` template covers the sensible defaults so most users
   never see this surface.
 - **More state transitions.** Three new statuses; tooling that walks
   `tasks.json` (the future `status --watch`) must handle them.
@@ -185,5 +187,5 @@ be N tasks).
 - ADR-0001 (CLI subprocess orchestration) — establishes that we cede output
   control to CLIs; this ADR is the response to one consequence of that.
 - ADR-0002 (JSON result contracts at known paths) — the contract is what
-  step 3 of the cascade re-tries; the `--output-schema` flag in Phase 3 makes
-  codex's compliance with that ADR structural rather than prompt-dependent.
+  step 3 of the cascade re-tries; provider streams improve diagnostics while
+  the result file remains the source of truth.

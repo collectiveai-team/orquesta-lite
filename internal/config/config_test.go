@@ -71,6 +71,51 @@ func TestLoad_PromptInCmdMustContainMarker(t *testing.T) {
 	}
 }
 
+func TestLoad_ProviderAgentDoesNotRequirePromptMarker(t *testing.T) {
+	p := writeTeamJSON(t, `{
+		"agents": {"a1": {"provider": "codex", "model": "gpt-5", "effort": "medium"}},
+		"roles": {"coder": {"agents": ["a1"], "prompt": "p.md", "result_path": "r.json", "timeout_seconds": 1}},
+		"limits": {"max_review_cycles": 1, "max_fix_iterations": 1},
+		"rate_limit_backoff": {"initial_seconds": 1, "factor": 2, "max_seconds": 2, "default_pattern": "x"},
+		"full_test_command": "true"
+	}`)
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := cfg.Agents["a1"].Provider; got != "codex" {
+		t.Fatalf("Provider = %q, want codex", got)
+	}
+}
+
+func TestLoad_AgentCannotSetCmdAndProvider(t *testing.T) {
+	p := writeTeamJSON(t, `{
+		"agents": {"a1": {"cmd": ["claude", "-p", "{{PROMPT}}"], "provider": "claude"}},
+		"roles": {"coder": {"agents": ["a1"], "prompt": "p.md", "result_path": "r.json", "timeout_seconds": 1}},
+		"limits": {"max_review_cycles": 1, "max_fix_iterations": 1},
+		"rate_limit_backoff": {"initial_seconds": 1, "factor": 2, "max_seconds": 2, "default_pattern": "x"},
+		"full_test_command": "true"
+	}`)
+	_, err := Load(p)
+	if err == nil || !strings.Contains(err.Error(), "both cmd and provider") {
+		t.Fatalf("expected cmd/provider conflict error, got: %v", err)
+	}
+}
+
+func TestLoad_UnknownProviderFails(t *testing.T) {
+	p := writeTeamJSON(t, `{
+		"agents": {"a1": {"provider": "ghost"}},
+		"roles": {"coder": {"agents": ["a1"], "prompt": "p.md", "result_path": "r.json", "timeout_seconds": 1}},
+		"limits": {"max_review_cycles": 1, "max_fix_iterations": 1},
+		"rate_limit_backoff": {"initial_seconds": 1, "factor": 2, "max_seconds": 2, "default_pattern": "x"},
+		"full_test_command": "true"
+	}`)
+	_, err := Load(p)
+	if err == nil || !strings.Contains(err.Error(), "unknown provider") {
+		t.Fatalf("expected unknown provider error, got: %v", err)
+	}
+}
+
 func TestLoad_EscalationLadderRoundTrip(t *testing.T) {
 	p := writeTeamJSON(t, `{
 		"agents": {

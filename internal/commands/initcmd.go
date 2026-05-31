@@ -21,9 +21,9 @@ func Init(dir string) error {
 		return err
 	}
 
-	// Warn if codex CLI is not installed; the default team.json uses codex_gpt5_5 as primary coder.
+	// Warn if codex CLI is not installed; the default team.json uses codex_gpt5 as primary coder.
 	if _, err := exec.LookPath("codex"); err != nil {
-		fmt.Fprintln(os.Stdout, "warning: codex CLI not found in PATH; the default team.json sets codex_gpt5_5 as primary coder. Install codex (https://github.com/openai/codex) or edit team.json to use a different agent.")
+		fmt.Fprintln(os.Stdout, "warning: codex CLI not found in PATH; the default team.json sets codex_gpt5 as primary coder. Install codex (https://github.com/openai/codex) or edit team.json to use a different agent.")
 	}
 
 	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0o755); err != nil {

@@ -200,10 +200,10 @@ func TestRunAgent_SubstitutionOrderPromptFirst(t *testing.T) {
 	// TemplateVars contains "PROMPT" key, but Spec.Prompt substitution runs first
 	// so the {{PROMPT}} token is consumed before TemplateVars can touch it.
 	res, err := RunAgent(context.Background(), Spec{
-		Cmd:     []string{"/bin/sh", "-c", "echo '{{PROMPT}}'"},
-		Prompt:  "real-prompt",
+		Cmd:        []string{"/bin/sh", "-c", "echo '{{PROMPT}}'"},
+		Prompt:     "real-prompt",
 		ResultPath: filepath.Join(t.TempDir(), "out.json"),
-		Timeout: 5 * time.Second,
+		Timeout:    5 * time.Second,
 		TemplateVars: map[string]string{
 			"PROMPT": "should-not-appear",
 		},
@@ -216,6 +216,201 @@ func TestRunAgent_SubstitutionOrderPromptFirst(t *testing.T) {
 	}
 	if strings.Contains(res.Stdout, "should-not-appear") {
 		t.Errorf("stdout must not contain TemplateVars PROMPT value: %q", res.Stdout)
+	}
+}
+
+func TestRunAgent_ProviderReceivesPromptOnStdinAndParsesJSONL(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("posix-only test")
+	}
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.Mkdir(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	resultPath := filepath.Join(dir, "out.json")
+	script := `#!/bin/sh
+cat > /dev/null
+printf '%s\n' '{"type":"thread.started","thread_id":"thread-123"}'
+printf '%s\n' '{"type":"item.started","item":{"type":"command_execution","command":"go test ./..."}}'
+printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"final answer"}}'
+printf '%s' '{"status":"ok"}' > "` + resultPath + `"
+`
+	codexPath := filepath.Join(binDir, "codex")
+	if err := os.WriteFile(codexPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	res, err := RunAgent(context.Background(), Spec{
+		Provider:   "codex",
+		Prompt:     "hello via stdin",
+		ResultPath: resultPath,
+		Timeout:    5 * time.Second,
+		Model:      "gpt-test",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if res.SessionID != "thread-123" {
+		t.Fatalf("SessionID = %q, want thread-123", res.SessionID)
+	}
+	if res.FinalText != "final answer" {
+		t.Fatalf("FinalText = %q, want final answer", res.FinalText)
+	}
+	if len(res.Events) != 4 {
+		t.Fatalf("len(Events) = %d, want 4: %#v", len(res.Events), res.Events)
+	}
+	if !res.ResultExists {
+		t.Fatalf("ResultExists = false, want true")
+	}
+	if !strings.Contains(res.Stdout, `"thread.started"`) {
+		t.Fatalf("stdout did not capture raw JSONL: %q", res.Stdout)
+	}
+}
+
+func TestRunAgent_ProviderPassesPromptThroughStdin(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("posix-only test")
+	}
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.Mkdir(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stdinPath := filepath.Join(dir, "stdin.txt")
+	resultPath := filepath.Join(dir, "out.json")
+	script := `#!/bin/sh
+cat > "` + stdinPath + `"
+printf '%s\n' '{"type":"thread.started","thread_id":"thread-123"}'
+printf '%s' '{"status":"ok"}' > "` + resultPath + `"
+`
+	codexPath := filepath.Join(binDir, "codex")
+	if err := os.WriteFile(codexPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	res, err := RunAgent(context.Background(), Spec{
+		Provider:   "codex",
+		Prompt:     "hello via stdin",
+		ResultPath: resultPath,
+		Timeout:    5 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(stdinPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != "hello via stdin" {
+		t.Fatalf("stdin = %q, want prompt", raw)
+	}
+	if !res.ResultExists {
+		t.Fatalf("ResultExists = false, want true")
+	}
+}
+
+func TestRunAgent_ProviderStdoutJSONLDoesNotFalsePositiveRateLimit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("posix-only test")
+	}
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.Mkdir(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	resultPath := filepath.Join(dir, "out.json")
+	script := `#!/bin/sh
+cat > /dev/null
+printf '%s\n' '{"type":"thread.started","thread_id":"thread-429-ok"}'
+printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"wrote result successfully"}}'
+printf '%s' '{"status":"ok"}' > "` + resultPath + `"
+`
+	codexPath := filepath.Join(binDir, "codex")
+	if err := os.WriteFile(codexPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	res, err := RunAgent(context.Background(), Spec{
+		Provider:         "codex",
+		Prompt:           "hello",
+		ResultPath:       resultPath,
+		Timeout:          5 * time.Second,
+		RateLimitPattern: "rate_?limit|429|quota",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.RateLimited {
+		t.Fatalf("RateLimited = true for successful provider JSONL stdout: %q", res.Stdout)
+	}
+	if !res.ResultExists {
+		t.Fatalf("ResultExists = false, want true")
+	}
+}
+
+func TestRunAgent_ProviderErrorEventDetectsRateLimit(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("posix-only test")
+	}
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	if err := os.Mkdir(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script := `#!/bin/sh
+cat > /dev/null
+printf '%s\n' '{"type":"error","message":"429 rate limit exceeded"}'
+`
+	codexPath := filepath.Join(binDir, "codex")
+	if err := os.WriteFile(codexPath, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	res, err := RunAgent(context.Background(), Spec{
+		Provider:         "codex",
+		Prompt:           "hello",
+		ResultPath:       filepath.Join(dir, "missing.json"),
+		Timeout:          5 * time.Second,
+		RateLimitPattern: "rate_?limit|429|quota",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.RateLimited {
+		t.Fatalf("RateLimited = false, want true for provider error event")
+	}
+}
+
+func TestRunAgent_RemovesStaleResultBeforeInvocation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("posix-only test")
+	}
+	dir := t.TempDir()
+	resultPath := filepath.Join(dir, "out.json")
+	if err := os.WriteFile(resultPath, []byte("stale"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := RunAgent(context.Background(), Spec{
+		Cmd:        []string{"sh", "-c", `if test -e "$1"; then exit 3; fi`, "{{PROMPT}}", resultPath},
+		Prompt:     "x",
+		ResultPath: resultPath,
+		Timeout:    5 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ExitCode != 0 {
+		t.Fatalf("ExitCode = %d, stale result was not removed", res.ExitCode)
+	}
+	if res.ResultExists {
+		t.Fatalf("ResultExists = true, want false")
 	}
 }
 

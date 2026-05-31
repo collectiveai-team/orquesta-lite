@@ -79,10 +79,10 @@ func TestInit_MaterialisesSchemas(t *testing.T) {
 	}
 }
 
-// TestInit_TeamJSONHasCodexPrimary verifies that the materialised team.json
-// lists codex_gpt5_5 as primary coder with the expected structural-contract flags,
-// and claude_sonnet as fallback.
-func TestInit_TeamJSONHasCodexPrimary(t *testing.T) {
+// TestInit_TeamJSONHasCodexProviderPrimary verifies that the materialised
+// team.json lists codex_gpt5 as primary coder via the provider config, and
+// claude_sonnet as fallback.
+func TestInit_TeamJSONHasCodexProviderPrimary(t *testing.T) {
 	dir := t.TempDir()
 	if err := Init(dir); err != nil {
 		t.Fatal(err)
@@ -95,7 +95,9 @@ func TestInit_TeamJSONHasCodexPrimary(t *testing.T) {
 
 	var cfg struct {
 		Agents map[string]struct {
-			Cmd []string `json:"cmd"`
+			Provider string `json:"provider"`
+			Model    string `json:"model"`
+			Effort   string `json:"effort"`
 		} `json:"agents"`
 		Roles map[string]struct {
 			Agents []string `json:"agents"`
@@ -105,19 +107,22 @@ func TestInit_TeamJSONHasCodexPrimary(t *testing.T) {
 		t.Fatalf("team.json parse error: %v", err)
 	}
 
-	// Verify codex_gpt5_5 agent exists with the four required flags.
-	codexAgent, ok := cfg.Agents["codex_gpt5_5"]
+	// Verify codex_gpt5 agent exists with provider launch metadata.
+	codexAgent, ok := cfg.Agents["codex_gpt5"]
 	if !ok {
-		t.Fatal("agents.codex_gpt5_5 not found in team.json")
+		t.Fatal("agents.codex_gpt5 not found in team.json")
 	}
-	cmdStr := strings.Join(codexAgent.Cmd, " ")
-	for _, flag := range []string{"--sandbox", "--skip-git-repo-check", "-o", "--output-schema"} {
-		if !strings.Contains(cmdStr, flag) {
-			t.Errorf("codex_gpt5_5 cmd missing flag %q; full cmd: %s", flag, cmdStr)
-		}
+	if codexAgent.Provider != "codex" {
+		t.Errorf("codex_gpt5.provider = %q, want codex", codexAgent.Provider)
+	}
+	if codexAgent.Model != "gpt-5" {
+		t.Errorf("codex_gpt5.model = %q, want gpt-5", codexAgent.Model)
+	}
+	if codexAgent.Effort != "medium" {
+		t.Errorf("codex_gpt5.effort = %q, want medium", codexAgent.Effort)
 	}
 
-	// Verify coder role: primary = codex_gpt5_5, fallback = claude_sonnet.
+	// Verify coder role: primary = codex_gpt5, fallback = claude_sonnet.
 	coderRole, ok := cfg.Roles["coder"]
 	if !ok {
 		t.Fatal("roles.coder not found in team.json")
@@ -125,8 +130,8 @@ func TestInit_TeamJSONHasCodexPrimary(t *testing.T) {
 	if len(coderRole.Agents) < 2 {
 		t.Fatalf("roles.coder.agents has %d entries, want >= 2", len(coderRole.Agents))
 	}
-	if coderRole.Agents[0] != "codex_gpt5_5" {
-		t.Errorf("roles.coder.agents[0] = %q, want codex_gpt5_5", coderRole.Agents[0])
+	if coderRole.Agents[0] != "codex_gpt5" {
+		t.Errorf("roles.coder.agents[0] = %q, want codex_gpt5", coderRole.Agents[0])
 	}
 	if coderRole.Agents[1] != "claude_sonnet" {
 		t.Errorf("roles.coder.agents[1] = %q, want claude_sonnet", coderRole.Agents[1])

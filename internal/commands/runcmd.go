@@ -23,6 +23,7 @@ import (
 	"github.com/lionelchamorro/orquestalite/internal/memory"
 	"github.com/lionelchamorro/orquestalite/internal/preflight"
 	"github.com/lionelchamorro/orquestalite/internal/prompts"
+	"github.com/lionelchamorro/orquestalite/internal/providers"
 	"github.com/lionelchamorro/orquestalite/internal/results"
 	"github.com/lionelchamorro/orquestalite/internal/runner"
 	"github.com/lionelchamorro/orquestalite/internal/tasks"
@@ -230,11 +231,15 @@ func (d *liveDeps) callRole(ctx context.Context, roleName, prompt string, role c
 		// Canonical Phase-3 template vars: RESULT_PATH and ROLE.
 		// Additional vars can be added here as new codex flags are introduced.
 		spec := runner.Spec{
-			Cmd:              ag.Cmd,
-			Prompt:           prompt,
-			ResultPath:       filepath.Join(d.dir, role.ResultPath),
-			Timeout:          time.Duration(role.TimeoutSeconds) * time.Second,
-			RateLimitPattern: pattern,
+			Cmd:                        ag.Cmd,
+			Provider:                   ag.Provider,
+			Model:                      ag.Model,
+			Effort:                     ag.Effort,
+			DangerouslySkipPermissions: ag.DangerouslySkipPermissions,
+			Prompt:                     prompt,
+			ResultPath:                 filepath.Join(d.dir, role.ResultPath),
+			Timeout:                    time.Duration(role.TimeoutSeconds) * time.Second,
+			RateLimitPattern:           pattern,
 			TemplateVars: map[string]string{
 				"RESULT_PATH": filepath.Join(d.dir, role.ResultPath),
 				"ROLE":        roleName,
@@ -249,13 +254,17 @@ func (d *liveDeps) callRole(ctx context.Context, roleName, prompt string, role c
 
 		// Build cmd_line with {{PROMPT}} replaced by <elided> and all other
 		// TemplateVars substituted so the logged cmd reflects the actual invocation.
-		cmdLine := make([]string, len(ag.Cmd))
-		for i, tok := range ag.Cmd {
-			s := strings.ReplaceAll(tok, "{{PROMPT}}", "<elided>")
-			for k, v := range spec.TemplateVars {
-				s = strings.ReplaceAll(s, "{{"+k+"}}", v)
+		cmdLine := ""
+		if len(ag.Cmd) > 0 {
+			parts := make([]string, len(ag.Cmd))
+			for i, tok := range ag.Cmd {
+				s := strings.ReplaceAll(tok, "{{PROMPT}}", "<elided>")
+				for k, v := range spec.TemplateVars {
+					s = strings.ReplaceAll(s, "{{"+k+"}}", v)
+				}
+				parts[i] = s
 			}
-			cmdLine[i] = s
+			cmdLine = strings.Join(parts, " ")
 		}
 
 		// Determine fallback disposition.
@@ -282,22 +291,29 @@ func (d *liveDeps) callRole(ctx context.Context, roleName, prompt string, role c
 
 		// Record last non-success error for reporting.
 		if shouldFallback {
-			lastErr = fmt.Errorf("agent %q (role %q) did not write %s: exit=%d; stderr tail: %s",
-				agentName, roleName, role.ResultPath, r.ExitCode, r.StderrTail(2048))
+			lastErr = fmt.Errorf("agent %q (role %q) did not write %s: exit=%d; detail: %s",
+				agentName, roleName, role.ResultPath, r.ExitCode, errorDetail(r))
 		}
 
 		fields := map[string]any{
-			"role":            roleName,
-			"agent":           agentName,
-			"duration_s":      int(r.Duration.Seconds()),
-			"timed_out":       r.TimedOut,
-			"rate_limited":    r.RateLimited,
-			"result_exists":   r.ResultExists,
-			"exit_code":       r.ExitCode,
-			"stderr_tail":     r.StderrTail(2048),
-			"stdout_tail":     r.StdoutTail(2048),
-			"cmd_line":        strings.Join(cmdLine, " "),
-			"fallback_reason": fallbackReason,
+			"role":             roleName,
+			"agent":            agentName,
+			"provider":         ag.Provider,
+			"model":            ag.Model,
+			"duration_s":       int(r.Duration.Seconds()),
+			"timed_out":        r.TimedOut,
+			"rate_limited":     r.RateLimited,
+			"result_exists":    r.ResultExists,
+			"exit_code":        r.ExitCode,
+			"session_id":       r.SessionID,
+			"final_text_tail":  runner.TailString(r.FinalText, 1000),
+			"tool_calls_count": toolCallsCount(r),
+			"stderr_tail":      r.StderrTail(2048),
+			"stdout_tail":      r.StdoutTail(2048),
+			"fallback_reason":  fallbackReason,
+		}
+		if cmdLine != "" {
+			fields["cmd_line"] = cmdLine
 		}
 		if r.CodexHeader != nil {
 			fields["codex_header"] = r.CodexHeader
@@ -319,7 +335,7 @@ func (d *liveDeps) callRole(ctx context.Context, roleName, prompt string, role c
 		if lastErr != nil {
 			lastErrStr = lastErr.Error()
 		} else if lastResult != nil {
-			lastErrStr = fmt.Sprintf("exit=%d; stderr tail: %s", lastResult.ExitCode, lastResult.StderrTail(2048))
+			lastErrStr = fmt.Sprintf("exit=%d; detail: %s", lastResult.ExitCode, errorDetail(lastResult))
 		}
 		return fmt.Errorf("all agents failed for role %q: tried [%s]; last error: %s",
 			roleName, tried, lastErrStr)
@@ -331,6 +347,42 @@ func (d *liveDeps) callRole(ctx context.Context, roleName, prompt string, role c
 		return err
 	}
 	return nil
+}
+
+func errorDetail(res *runner.Result) string {
+	if strings.TrimSpace(res.Stderr) != "" {
+		return res.StderrTail(2048)
+	}
+	if strings.TrimSpace(res.FinalText) != "" {
+		return runner.TailString(res.FinalText, 2048)
+	}
+	return lastNonEmptyLines(res.Stdout, 20)
+}
+
+func lastNonEmptyLines(s string, n int) string {
+	lines := strings.Split(s, "\n")
+	kept := make([]string, 0, n)
+	for i := len(lines) - 1; i >= 0 && len(kept) < n; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	for i, j := 0, len(kept)-1; i < j; i, j = i+1, j-1 {
+		kept[i], kept[j] = kept[j], kept[i]
+	}
+	return strings.Join(kept, "\n")
+}
+
+func toolCallsCount(res *runner.Result) int {
+	count := 0
+	for _, ev := range res.Events {
+		if ev.Type == providers.EventToolCall {
+			count++
+		}
+	}
+	return count
 }
 
 // Handoff writes a markdown handoff file for the task and logs a handoff_written event.

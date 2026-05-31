@@ -7,8 +7,10 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 const DefaultRotateBytes = 50 * 1024 * 1024
@@ -98,7 +100,7 @@ func summariseFields(fs map[string]any) string {
 			parts = append(parts, k+"=...")
 			continue
 		}
-		parts = append(parts, fmt.Sprintf("%s=%v", k, v))
+		parts = append(parts, fmt.Sprintf("%s=%s", k, summariseValue(v)))
 	}
 	out := ""
 	for i, p := range parts {
@@ -108,4 +110,22 @@ func summariseFields(fs map[string]any) string {
 		out += p
 	}
 	return out
+}
+
+func summariseValue(v any) string {
+	s := fmt.Sprint(v)
+	s = strings.ReplaceAll(s, "\n", `\n`)
+	s = strings.ReplaceAll(s, "\r", `\r`)
+	return truncateUTF8(s, 300)
+}
+
+func truncateUTF8(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	raw := s[:limit]
+	for !utf8.ValidString(raw) && len(raw) > 0 {
+		raw = raw[:len(raw)-1]
+	}
+	return raw + "..."
 }

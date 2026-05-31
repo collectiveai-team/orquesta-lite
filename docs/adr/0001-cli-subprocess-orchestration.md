@@ -27,8 +27,11 @@ We orchestrate via **CLI subprocesses (option A)**. Every agent is invoked
 as a process; orquestalite itself does not implement tool-use, file editing,
 or command execution.
 
-The role-to-agent binding is declared in `team.json` as an explicit `cmd`
-template, e.g. `["claude", "-p", "{{PROMPT}}", "--model", "claude-sonnet-4-6"]`.
+The role-to-agent binding is declared in `team.json`. Preferred agents use a
+first-class provider config, e.g. `{"provider":"claude","model":"claude-sonnet-4-6"}`,
+which builds a stable non-interactive CLI command and passes the prompt on
+stdin. Legacy agents may still use an explicit `cmd` template, e.g.
+`["custom-agent", "{{PROMPT}}"]`.
 
 ## Consequences
 
@@ -38,8 +41,8 @@ template, e.g. `["claude", "-p", "{{PROMPT}}", "--model", "claude-sonnet-4-6"]`.
   build prompt → exec subprocess → read result.json → decide next step.
 - We inherit, for free, the entire tool-use surface of mature CLIs (file
   editing, git integration, MCP servers, sandboxing, telemetry).
-- Multi-provider support is a config concern, not a code concern. Adding a
-  new CLI means adding an entry to `team.json`, not editing orquestalite source.
+- Claude and Codex CLI quirks live behind small providers, while unsupported
+  CLIs can still be wired through raw `cmd` entries.
 - Per-task model swaps (sonnet for coder, opus for critic) are trivial.
 
 **Negative:**
@@ -49,8 +52,9 @@ template, e.g. `["claude", "-p", "{{PROMPT}}", "--model", "claude-sonnet-4-6"]`.
   is what motivated ADR-0002).
 - We cannot pass structured tool-use messages between roles; each role's
   output to the next must be reduced to text in a prompt.
-- We are at the mercy of CLI flag stability. If `claude -p` changes its
-  flag scheme, every `team.json` in the wild breaks.
+- We are still at the mercy of CLI flag stability, but provider updates can
+  repair the default Claude/Codex command shapes without editing every
+  `team.json` in the wild.
 - We cannot reuse a single API client / connection across calls; each
   subprocess pays its own startup cost.
 
