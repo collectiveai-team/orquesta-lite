@@ -60,13 +60,23 @@ func printStatus(projectDir string, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(w, "%-6s  %-14s  %-3s  %-6s  %-20s  %s\n", "ID", "STATUS", "PRI", "ATT", "REASON", "TITLE")
+	fmt.Fprintf(w, "%-6s  %-14s  %-16s  %-5s  %-14s  %-3s  %-6s  %-20s  %s\n",
+		"ID", "WORK", "VERIFY", "CYCLE", "AGENT", "PRI", "ATT", "REASON", "TITLE")
 	for _, t := range tl.Tasks {
 		reason := ""
 		if t.FailureReason != nil {
 			reason = string(*t.FailureReason)
 		}
-		fmt.Fprintf(w, "%-6s  %-14s  %-3d  %-6d  %-20s  %s\n", t.ID, t.Status, t.Priority, t.Attempts, reason, t.Title)
+		verify := string(t.VerifyState)
+		if verify == "" {
+			verify = "-"
+		}
+		agent := t.LastAgent
+		if agent == "" {
+			agent = "-"
+		}
+		fmt.Fprintf(w, "%-6s  %-14s  %-16s  %-5d  %-14s  %-3d  %-6d  %-20s  %s\n",
+			t.ID, t.Status, verify, t.CreatedInReviewCycle, agent, t.Priority, t.Attempts, reason, t.Title)
 	}
 
 	// Surface tasks awaiting human intervention.

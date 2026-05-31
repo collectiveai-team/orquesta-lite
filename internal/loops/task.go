@@ -16,6 +16,12 @@ var ErrFullSuiteFailed = errors.New("full test suite failed")
 // through to the normal failed path when it sees this error.
 var ErrNoDecomposer = errors.New("no decomposer configured")
 
+// ErrCommitSkipped is returned by Commit implementations when the working
+// directory is not a git work tree (no .git directory). The task loop treats
+// this as a successful task completion with VerifyState=commit_skipped, rather
+// than as a hard failure: the work shipped, only the bookkeeping was absent.
+var ErrCommitSkipped = errors.New("commit skipped: not a git repository")
+
 type TaskDeps interface {
 	RunFix(ctx context.Context, taskID string) (*FixResult, error)
 	FullSuite(ctx context.Context) error
@@ -144,18 +150,30 @@ func RunTaskLoop(ctx context.Context, tl *tasks.TaskList, d TaskDeps) error {
 			t.Status = tasks.StatusFailed
 			r := tasks.ReasonFullSuiteFailed
 			t.FailureReason = &r
+			t.VerifyState = tasks.VerifyTestsFail
 			t.LastFeedback = strPtr(err.Error())
 			_ = d.Rollback(ctx)
 			_ = d.SaveTasks(ctx, tl)
 			continue
 		}
+		t.VerifyState = tasks.VerifyTestsPass
 
 		msg := fmt.Sprintf("feat(%s): %s", t.ID, t.Title)
-		if _, err := d.Commit(ctx, msg); err != nil {
+		_, commitErr := d.Commit(ctx, msg)
+		switch {
+		case commitErr == nil:
+			t.VerifyState = tasks.VerifyCommitOK
+		case errors.Is(commitErr, ErrCommitSkipped):
+			// Work shipped, but the directory is not a git repo: do not mark
+			// the task failed. status will show WORK=done VERIFY=commit_skipped
+			// so the operator knows to `git init` (or accept the no-repo flow).
+			t.VerifyState = tasks.VerifyCommitSkipped
+		default:
 			t.Status = tasks.StatusFailed
 			r := tasks.ReasonCommitRejected
 			t.FailureReason = &r
-			t.LastFeedback = strPtr(err.Error())
+			t.VerifyState = tasks.VerifyCommitRejected
+			t.LastFeedback = strPtr(commitErr.Error())
 			_ = d.Rollback(ctx)
 			_ = d.SaveTasks(ctx, tl)
 			continue
