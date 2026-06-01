@@ -54,6 +54,23 @@ type FailureDetails struct {
 	HandoffPath    string        `json:"handoff_path,omitempty"`
 }
 
+// VerifyState reports the verification outcome of a task independently of its
+// work status. A task can be "done" (work completed) while VerifyState is
+// "commit_skipped" (e.g. no git repo) or "tests_failed". Splitting these makes
+// `orq-lite status` honest: shipped-but-flagged is no longer rendered as a
+// hard failure.
+type VerifyState string
+
+const (
+	VerifyUnknown        VerifyState = ""
+	VerifyTestsPass      VerifyState = "tests_pass"
+	VerifyTestsFail      VerifyState = "tests_fail"
+	VerifyTestsSkipped   VerifyState = "tests_skipped"
+	VerifyCommitOK       VerifyState = "commit_ok"
+	VerifyCommitSkipped  VerifyState = "commit_skipped"
+	VerifyCommitRejected VerifyState = "commit_rejected"
+)
+
 type Task struct {
 	ID                   string          `json:"id"`
 	Title                string          `json:"title"`
@@ -66,6 +83,13 @@ type Task struct {
 	FailureReason        *FailureReason  `json:"failure_reason,omitempty"`
 	DecomposedIntoIDs    []string        `json:"decomposed_into_ids,omitempty"`
 	FailureDetails       *FailureDetails `json:"failure_details,omitempty"`
+	// VerifyState captures the verification outcome (tests + commit) separately
+	// from work status. Empty for tasks that never reached the verify phase.
+	VerifyState VerifyState `json:"verify_state,omitempty"`
+	// LastAgent records which agent produced the most recent accepted result
+	// (or attempted the most recent failed call) for this task. Useful for
+	// debugging which model worked or didn't.
+	LastAgent string `json:"last_agent,omitempty"`
 }
 
 type TaskList struct {

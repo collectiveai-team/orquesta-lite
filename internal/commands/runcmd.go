@@ -10,10 +10,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/lionelchamorro/orquestalite/internal/agenthealth"
 	"github.com/lionelchamorro/orquestalite/internal/config"
 	"github.com/lionelchamorro/orquestalite/internal/eventlog"
 	"github.com/lionelchamorro/orquestalite/internal/fallback"
@@ -29,10 +31,20 @@ import (
 	"github.com/lionelchamorro/orquestalite/internal/tasks"
 )
 
+// agentHealthThreshold is the default number of consecutive non-rate-limit
+// failures after which an agent is auto-skipped for the rest of the run.
+// Set to 2 because a single failure may be a transient network blip, but two
+// in a row almost always means a stale model, wrong auth, or missing CLI.
+const agentHealthThreshold = 2
+
 // RunOptions holds the parameters for the run command.
 type RunOptions struct {
 	ProjectDir string
 	TeamPath   string
+	// LogFormat controls the stdout pretty format. One of eventlog.FormatVerbose
+	// (default; one line per event with all fields) or eventlog.FormatHuman
+	// (compact, one summary per agent transition). The JSONL file is unaffected.
+	LogFormat eventlog.Format
 }
 
 // Run loads the config and tasks, wires up all components, and drives the
@@ -50,7 +62,7 @@ func Run(ctx context.Context, opts RunOptions) error {
 	}
 
 	logPath := filepath.Join(opts.ProjectDir, ".orquestalite", "run.log")
-	logger, err := eventlog.Open(logPath, os.Stdout)
+	logger, err := eventlog.OpenWithFormat(logPath, os.Stdout, opts.LogFormat)
 	if err != nil {
 		return err
 	}
@@ -64,6 +76,9 @@ func Run(ctx context.Context, opts RunOptions) error {
 		MaxBackoff:     time.Duration(cfg.RateLimitBackoff.MaxSeconds) * time.Second,
 	})
 
+	tracker := agenthealth.New(agentHealthThreshold)
+	runStaticAgentPreflight(cfg, tracker, logger)
+
 	deps := &liveDeps{
 		cfg:          cfg,
 		dir:          opts.ProjectDir,
@@ -73,9 +88,59 @@ func Run(ctx context.Context, opts RunOptions) error {
 		memPath:      memPath,
 		tasksPath:    tasksPath,
 		currentCycle: 0,
+		health:       tracker,
 	}
 
 	return loops.RunReviewLoop(ctx, tl, loops.ReviewConfig{MaxCycles: cfg.Limits.MaxReviewCycles}, deps)
+}
+
+// runStaticAgentPreflight verifies that each agent referenced by any role
+// either declares a provider that orq-lite knows about (claude, codex) and
+// whose CLI is on PATH, OR a cmd whose first token is on PATH. Agents that
+// fail the check are marked skipped in the tracker so the fallback caller
+// can move past them without burning a real invocation. Never blocks the run
+// — the goal is to surface obvious misconfiguration cheaply.
+func runStaticAgentPreflight(cfg *config.Config, tracker *agenthealth.Tracker, log *eventlog.Logger) {
+	used := map[string]bool{}
+	for _, role := range cfg.Roles {
+		for _, name := range role.Agents {
+			used[name] = true
+		}
+		for _, name := range role.EscalationLadder {
+			used[name] = true
+		}
+	}
+	names := make([]string, 0, len(used))
+	for n := range used {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		ag, ok := cfg.Agents[name]
+		if !ok {
+			continue
+		}
+		var binary string
+		switch {
+		case ag.Provider == "claude":
+			binary = "claude"
+		case ag.Provider == "codex":
+			binary = "codex"
+		case len(ag.Cmd) > 0:
+			binary = ag.Cmd[0]
+		default:
+			continue
+		}
+		if _, err := exec.LookPath(binary); err != nil {
+			tracker.Skip(name, agenthealth.ReasonUnreachable)
+			log.Log(eventlog.Event{Type: "preflight_skipped_agent", Fields: map[string]any{
+				"agent":  name,
+				"binary": binary,
+				"reason": "binary_not_in_path",
+			}})
+		}
+	}
 }
 
 // liveDeps implements loops.ReviewDeps using real subprocess agents.
@@ -89,6 +154,7 @@ type liveDeps struct {
 	tasksPath    string
 	currentCycle int
 	currentTask  *tasks.Task
+	health       *agenthealth.Tracker
 }
 
 // RunFix sets up the current task and runs the fix loop.
@@ -128,8 +194,23 @@ func (d *liveDeps) FullSuite(ctx context.Context) error {
 	return nil
 }
 
-// Commit stages all changes and commits them with the given message.
+// Commit stages all changes and commits them with the given message. If the
+// working directory is not a git work tree, Commit returns ErrCommitSkipped
+// so the task loop can mark the task done-with-verify=commit_skipped instead
+// of treating it as a hard failure (see findings: test #1 marked 8/10 tasks
+// failed solely because `orq-lite init` did not run `git init`).
 func (d *liveDeps) Commit(ctx context.Context, msg string) (string, error) {
+	if !gitx.IsRepo(d.dir) {
+		taskID := ""
+		if d.currentTask != nil {
+			taskID = d.currentTask.ID
+		}
+		d.log.Log(eventlog.Event{Type: "task_done_no_commit", Fields: map[string]any{
+			"task_id": taskID,
+			"reason":  "not_a_git_repo",
+		}})
+		return "", loops.ErrCommitSkipped
+	}
 	sha, err := gitx.CommitAll(d.dir, msg)
 	if err != nil {
 		return "", err
@@ -222,7 +303,19 @@ func (d *liveDeps) callRole(ctx context.Context, roleName, prompt string, role c
 	// triedAgents tracks agent names in attempt order for error reporting.
 	var triedAgents []string
 
-	_, _, err := d.fc.Call(ctx, role.Agents, func(ctx context.Context, agentName string) (fallback.Outcome, error) {
+	// Skip agents that previous calls (or the static preflight) marked unhealthy.
+	chain := role.Agents
+	if d.health != nil {
+		chain = d.health.Filter(role.Agents)
+		if len(chain) == 0 {
+			// All declared agents are skipped: surface the skipped set in the
+			// error so the operator can fix team.json without grepping logs.
+			skipped := d.health.SkippedAgents()
+			return fmt.Errorf("all agents for role %q are marked skipped: %v", roleName, skipped)
+		}
+	}
+
+	_, _, err := d.fc.Call(ctx, chain, func(ctx context.Context, agentName string) (fallback.Outcome, error) {
 		ag := d.cfg.Agents[agentName]
 		pattern := ag.RateLimitPattern
 		if pattern == "" {
@@ -293,6 +386,33 @@ func (d *liveDeps) callRole(ctx context.Context, roleName, prompt string, role c
 		if shouldFallback {
 			lastErr = fmt.Errorf("agent %q (role %q) did not write %s: exit=%d; detail: %s",
 				agentName, roleName, role.ResultPath, r.ExitCode, errorDetail(r))
+		}
+
+		// Update agent health. Rate-limit failures already have a backoff path
+		// in the fallback caller, so they are excluded from the failure count
+		// — being slow is not the same as being broken.
+		if d.health != nil {
+			switch {
+			case !shouldFallback:
+				d.health.MarkSuccess(agentName)
+			case fallbackReason != "rate_limit":
+				if d.health.MarkFailure(agentName, agenthealth.ReasonResultMissing) {
+					d.log.Log(eventlog.Event{Type: "agent_marked_skipped", Fields: map[string]any{
+						"agent":                agentName,
+						"role":                 roleName,
+						"reason":               "consecutive_failures",
+						"threshold":            agentHealthThreshold,
+						"last_fallback_reason": fallbackReason,
+					}})
+				}
+			}
+		}
+
+		// Record the agent that actually produced the coder result on the current
+		// task. This shows up in `orq-lite status` so the operator can see which
+		// model worked without grepping run.log.
+		if !shouldFallback && roleName == "coder" && d.currentTask != nil {
+			d.currentTask.LastAgent = agentName
 		}
 
 		fields := map[string]any{

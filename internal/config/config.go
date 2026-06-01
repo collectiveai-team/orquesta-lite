@@ -123,8 +123,7 @@ func (c *Config) Validate() error {
 	if c.RateLimitBackoff.InitialSeconds <= 0 || c.RateLimitBackoff.Factor < 2 || c.RateLimitBackoff.MaxSeconds < c.RateLimitBackoff.InitialSeconds {
 		return fmt.Errorf("invalid rate_limit_backoff")
 	}
-	if c.FullTestCommand == "" {
-		return fmt.Errorf("full_test_command must be set")
-	}
+	// full_test_command may be empty: it is a verification hook, not a
+	// correctness requirement. runcmd treats empty as a no-op.
 	return nil
 }

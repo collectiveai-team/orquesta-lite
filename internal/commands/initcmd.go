@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bytes"
 	"embed"
 	"fmt"
 	"io/fs"
@@ -13,15 +14,40 @@ import (
 //go:embed assets/team.json assets/prompts/*.md assets/schemas/*.json
 var defaultAssets embed.FS
 
+// InitOptions tunes scaffolding behaviour.
+type InitOptions struct {
+	// Lang overrides language autodetection. One of "python", "node", "go",
+	// "auto", or "" (treated as auto).
+	Lang string
+}
+
+// Init scaffolds a project directory with default assets, using language
+// autodetection for the .gitignore and full_test_command.
 func Init(dir string) error {
+	return InitWithOptions(dir, InitOptions{})
+}
+
+// InitWithOptions scaffolds a project with the given options.
+func InitWithOptions(dir string, opts InitOptions) error {
 	if err := os.MkdirAll(filepath.Join(dir, ".orquestalite", "results"), 0o755); err != nil {
 		return err
 	}
-	if err := writeIfMissing(filepath.Join(dir, "team.json"), mustReadAsset("assets/team.json")); err != nil {
+
+	if err := ensureGitRepo(dir); err != nil {
 		return err
 	}
 
-	// Warn if codex CLI is not installed; the default team.json uses codex_gpt5 as primary coder.
+	lang := opts.Lang
+	if lang == "" || lang == "auto" {
+		lang = detectLanguage(dir)
+	}
+
+	team := mustReadAsset("assets/team.json")
+	team = applyTestCommand(team, lang)
+	if err := writeIfMissing(filepath.Join(dir, "team.json"), team); err != nil {
+		return err
+	}
+
 	if _, err := exec.LookPath("codex"); err != nil {
 		fmt.Fprintln(os.Stdout, "warning: codex CLI not found in PATH; the default team.json sets codex_gpt5 as primary coder. Install codex (https://github.com/openai/codex) or edit team.json to use a different agent.")
 	}
@@ -58,7 +84,126 @@ func Init(dir string) error {
 		}
 	}
 
-	return ensureGitignoreEntry(filepath.Join(dir, ".gitignore"), ".orquestalite/")
+	return writeGitignore(filepath.Join(dir, ".gitignore"), lang)
+}
+
+// ensureGitRepo runs `git init` and creates an empty initial commit when the
+// directory is not already inside a git work tree. Per-task commits issued by
+// the orchestrator need a parent commit, otherwise `git commit` rejects them.
+//
+// If git is not installed, ensureGitRepo returns nil silently: an init without
+// a repo is still useful (the user can `git init` later) and run will surface
+// the issue itself.
+func ensureGitRepo(dir string) error {
+	if _, err := exec.LookPath("git"); err != nil {
+		return nil
+	}
+	c := exec.Command("git", "rev-parse", "--is-inside-work-tree")
+	c.Dir = dir
+	if err := c.Run(); err == nil {
+		return nil
+	}
+	if out, err := runGit(dir, "init", "-q"); err != nil {
+		return fmt.Errorf("git init: %w\n%s", err, out)
+	}
+	if out, err := runGit(dir, "commit", "--allow-empty", "-q", "-m", "initial scaffold"); err != nil {
+		return fmt.Errorf("initial commit: %w\n%s", err, out)
+	}
+	return nil
+}
+
+func runGit(dir string, args ...string) (string, error) {
+	c := exec.Command("git", args...)
+	c.Dir = dir
+	out, err := c.CombinedOutput()
+	return string(out), err
+}
+
+// detectLanguage returns "python", "node", "go", or "" by inspecting the dir
+// for the canonical project file of each ecosystem.
+func detectLanguage(dir string) string {
+	check := func(name string) bool {
+		_, err := os.Stat(filepath.Join(dir, name))
+		return err == nil
+	}
+	switch {
+	case check("pyproject.toml"), check("requirements.txt"), check("Pipfile"):
+		return "python"
+	case check("package.json"):
+		return "node"
+	case check("go.mod"):
+		return "go"
+	}
+	// Fallback: scan top-level files for *.py — covers ad-hoc Python projects
+	// that haven't been packaged yet.
+	entries, err := os.ReadDir(dir)
+	if err == nil {
+		for _, e := range entries {
+			if !e.IsDir() && strings.HasSuffix(e.Name(), ".py") {
+				return "python"
+			}
+		}
+	}
+	return ""
+}
+
+// applyTestCommand substitutes the embedded default "go test ./..." in the
+// team.json template with a language-appropriate command. Uses a literal
+// string replace to preserve JSON layout/comments (encoding/json reorders keys).
+func applyTestCommand(team []byte, lang string) []byte {
+	defaultLine := []byte(`"full_test_command": "go test ./..."`)
+	var newCmd string
+	switch lang {
+	case "python":
+		newCmd = "uv run pytest -q"
+	case "node":
+		newCmd = "npm test --silent"
+	case "go":
+		return team
+	default:
+		// Ambiguous language: keep the Go default, but rely on config.Validate
+		// allowing the user to clear it later.
+		return team
+	}
+	replacement := []byte(fmt.Sprintf(`"full_test_command": %q`, newCmd))
+	return bytes.Replace(team, defaultLine, replacement, 1)
+}
+
+// writeGitignore ensures .gitignore covers .orquestalite/ plus any
+// language-appropriate build artefacts. Idempotent: re-running adds nothing.
+func writeGitignore(path, lang string) error {
+	entries := []string{".orquestalite/"}
+	switch lang {
+	case "python":
+		entries = append(entries,
+			"__pycache__/",
+			"*.pyc",
+			"*.pyo",
+			".pytest_cache/",
+			".venv/",
+			".mypy_cache/",
+			".ruff_cache/",
+		)
+	case "node":
+		entries = append(entries,
+			"node_modules/",
+			"dist/",
+			".next/",
+			".cache/",
+		)
+	case "go":
+		entries = append(entries,
+			"bin/",
+			"*.test",
+			"*.out",
+		)
+	}
+	for _, e := range entries {
+		if err := ensureGitignoreEntry(path, e); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func writeIfMissing(path string, content []byte) error {

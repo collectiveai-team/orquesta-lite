@@ -3,6 +3,7 @@ package commands
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -115,8 +116,8 @@ func TestInit_TeamJSONHasCodexProviderPrimary(t *testing.T) {
 	if codexAgent.Provider != "codex" {
 		t.Errorf("codex_gpt5.provider = %q, want codex", codexAgent.Provider)
 	}
-	if codexAgent.Model != "gpt-5" {
-		t.Errorf("codex_gpt5.model = %q, want gpt-5", codexAgent.Model)
+	if codexAgent.Model != "gpt-5.5" {
+		t.Errorf("codex_gpt5.model = %q, want gpt-5.5", codexAgent.Model)
 	}
 	if codexAgent.Effort != "medium" {
 		t.Errorf("codex_gpt5.effort = %q, want medium", codexAgent.Effort)
@@ -159,4 +160,104 @@ func TestInit_MaterialisesDecomposePrompt(t *testing.T) {
 // The warning behaviour is covered by manual testing and code review.
 func TestInit_WarnsWhenCodexMissing(t *testing.T) {
 	t.Skip("exec.LookPath cannot be cleanly stubbed without injecting the lookup function; skipped by design")
+}
+
+// TestInit_InitialisesGitRepo verifies that Init runs `git init` and creates
+// an empty initial commit when the target directory is not already inside a
+// git work tree. Per-task commits issued by run need a parent commit to
+// succeed.
+func TestInit_InitialisesGitRepo(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	dir := t.TempDir()
+	if err := Init(dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+		t.Fatalf(".git not created: %v", err)
+	}
+	// HEAD must resolve — empty initial commit exists.
+	c := exec.Command("git", "rev-parse", "HEAD")
+	c.Dir = dir
+	if out, err := c.CombinedOutput(); err != nil {
+		t.Fatalf("git rev-parse HEAD failed: %v\n%s", err, out)
+	}
+}
+
+// TestInit_IsNoopInsideExistingRepo verifies Init does not create a nested
+// repo or extra commit when the directory is already a git work tree.
+func TestInit_IsNoopInsideExistingRepo(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	dir := t.TempDir()
+	for _, args := range [][]string{
+		{"init", "-q"},
+		{"-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-q", "-m", "seed"},
+	} {
+		c := exec.Command("git", args...)
+		c.Dir = dir
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	c := exec.Command("git", "rev-list", "--count", "HEAD")
+	c.Dir = dir
+	before, _ := c.CombinedOutput()
+
+	if err := Init(dir); err != nil {
+		t.Fatal(err)
+	}
+
+	c = exec.Command("git", "rev-list", "--count", "HEAD")
+	c.Dir = dir
+	after, _ := c.CombinedOutput()
+	if string(before) != string(after) {
+		t.Errorf("Init added a commit inside an existing repo: before=%q after=%q", before, after)
+	}
+}
+
+// TestInit_WritesPythonGitignore verifies that Init detects a Python project
+// (via pyproject.toml) and writes Python-appropriate .gitignore entries plus
+// adjusts full_test_command to a pytest-driven default.
+func TestInit_WritesPythonGitignore(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "pyproject.toml"), []byte("[project]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Init(dir); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	for _, want := range []string{".orquestalite/", "__pycache__/", "*.pyc", ".pytest_cache/", ".venv/"} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf(".gitignore missing %q\nfull contents:\n%s", want, raw)
+		}
+	}
+	team, _ := os.ReadFile(filepath.Join(dir, "team.json"))
+	if !strings.Contains(string(team), `"full_test_command": "uv run pytest -q"`) {
+		t.Errorf("team.json full_test_command not adjusted for python:\n%s", team)
+	}
+}
+
+// TestInitWithOptions_LangOverride verifies that an explicit --lang argument
+// overrides autodetection even when the directory looks like a different
+// language.
+func TestInitWithOptions_LangOverride(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := InitWithOptions(dir, InitOptions{Lang: "node"}); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if !strings.Contains(string(raw), "node_modules/") {
+		t.Errorf("lang=node override did not apply node gitignore: %s", raw)
+	}
+	team, _ := os.ReadFile(filepath.Join(dir, "team.json"))
+	if !strings.Contains(string(team), `"full_test_command": "npm test --silent"`) {
+		t.Errorf("lang=node override did not adjust full_test_command:\n%s", team)
+	}
 }
