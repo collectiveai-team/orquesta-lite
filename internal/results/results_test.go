@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/lionelchamorro/orquestalite/internal/invoke"
 )
 
 func write(t *testing.T, body string) string {
@@ -58,5 +60,67 @@ func TestParseParser_ZeroTasksOK(t *testing.T) {
 	}
 	if len(r.Tasks) != 0 {
 		t.Errorf("tasks = %d", len(r.Tasks))
+	}
+}
+
+func TestArchive_WritesDistinctAttemptFilesWithoutTouchingCanonical(t *testing.T) {
+	dir := t.TempDir()
+	canonical := filepath.Join(dir, ".orquestalite", "results", "coder.json")
+	if err := os.MkdirAll(filepath.Dir(canonical), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(canonical, []byte(`{"status":"canonical"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Archive(dir, "coder", invoke.RunContext{TaskID: "T005", Cycle: 2, Attempt: 1}, []byte(`{"status":"attempt 1"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := Archive(dir, "coder", invoke.RunContext{TaskID: "T005", Cycle: 2, Attempt: 2}, []byte(`{"status":"attempt 2"}`)); err != nil {
+		t.Fatal(err)
+	}
+
+	assertFile(t, filepath.Join(dir, ".orquestalite", "results", "by-task", "T005", "coder.c2.a1.json"), `{"status":"attempt 1"}`)
+	assertFile(t, filepath.Join(dir, ".orquestalite", "results", "by-task", "T005", "coder.c2.a2.json"), `{"status":"attempt 2"}`)
+	assertFile(t, canonical, `{"status":"canonical"}`)
+}
+
+func TestArchive_UsesSyntheticTaskIDsForPlanAndReviewRoles(t *testing.T) {
+	dir := t.TempDir()
+
+	if err := Archive(dir, "parser", invoke.RunContext{TaskID: "ignored", Cycle: 1, Attempt: 1}, []byte(`{"tasks":[]}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := Archive(dir, "reviewer", invoke.RunContext{TaskID: "ignored", Cycle: 3, Attempt: 1}, []byte(`{"summary_of_cycle":"done"}`)); err != nil {
+		t.Fatal(err)
+	}
+
+	assertFile(t, filepath.Join(dir, ".orquestalite", "results", "by-task", "_plan", "parser.c1.a1.json"), `{"tasks":[]}`)
+	assertFile(t, filepath.Join(dir, ".orquestalite", "results", "by-task", "_review", "reviewer.c3.a1.json"), `{"summary_of_cycle":"done"}`)
+}
+
+func TestArchive_DoesNotOverwriteExistingArchive(t *testing.T) {
+	dir := t.TempDir()
+	rc := invoke.RunContext{TaskID: "T005", Cycle: 1, Attempt: 1}
+	archive := filepath.Join(dir, ".orquestalite", "results", "by-task", "T005", "tester.c1.a1.json")
+
+	if err := Archive(dir, "tester", rc, []byte(`{"status":"first"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := Archive(dir, "tester", rc, []byte(`{"status":"second"}`)); err == nil {
+		t.Fatal("expected error for existing archive")
+	}
+
+	assertFile(t, archive, `{"status":"first"}`)
+}
+
+func assertFile(t *testing.T, path, want string) {
+	t.Helper()
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != want {
+		t.Fatalf("%s = %q, want %q", path, got, want)
 	}
 }

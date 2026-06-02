@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+
+	"github.com/lionelchamorro/orquestalite/internal/invoke"
 )
 
 type ParserTask struct {
@@ -70,6 +73,43 @@ func read(path string, into any) error {
 	}
 	if err := json.Unmarshal(raw, into); err != nil {
 		return fmt.Errorf("parse %s: %w", path, err)
+	}
+	return nil
+}
+
+// Archive writes an immutable copy of a role's raw result for one run context.
+func Archive(dir, role string, rc invoke.RunContext, raw []byte) error {
+	taskID := rc.TaskID
+	switch role {
+	case "parser":
+		taskID = "_plan"
+	case "reviewer":
+		taskID = "_review"
+	}
+
+	path := filepath.Join(
+		dir,
+		".orquestalite",
+		"results",
+		"by-task",
+		taskID,
+		fmt.Sprintf("%s.c%d.a%d.json", role, rc.Cycle, rc.Attempt),
+	)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create archive dir: %w", err)
+	}
+
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return fmt.Errorf("create archive %s: %w", path, err)
+	}
+
+	if _, err := f.Write(raw); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("write archive %s: %w", path, err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close archive %s: %w", path, err)
 	}
 	return nil
 }
