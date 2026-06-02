@@ -262,6 +262,62 @@ func TestRunStaticAgentPreflightScopesToRequestedRoles(t *testing.T) {
 	}
 }
 
+func TestNewLiveDepsLoadsEmptyTasksAndCleanupClosesLog(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("posix shell script test, skipping on windows")
+	}
+
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".orquestalite", "results"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "prompts", "parser.md"), []byte("parse {{PLAN}}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cliPath := filepath.Join(dir, "fakecli.sh")
+	if err := os.WriteFile(cliPath, []byte(fakeCLI), 0o755); err != nil {
+		t.Fatalf("write fakecli.sh: %v", err)
+	}
+	writePlanPreflightTeamJSON(t, dir, cliPath)
+
+	deps, cleanup, err := newLiveDeps(liveDepsOptions{
+		ProjectDir: dir,
+		TeamPath:   filepath.Join(dir, "team.json"),
+		Roles:      []string{"parser"},
+	})
+	if err != nil {
+		t.Fatalf("newLiveDeps: %v", err)
+	}
+	if deps.tl == nil {
+		t.Fatal("task list is nil")
+	}
+	if len(deps.tl.Tasks) != 0 {
+		t.Fatalf("loaded %d tasks, want empty list", len(deps.tl.Tasks))
+	}
+
+	deps.log.Log(eventlog.Event{Type: "before_cleanup", Fields: map[string]any{}})
+	if err := cleanup(); err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+	deps.log.Log(eventlog.Event{Type: "after_cleanup", Fields: map[string]any{}})
+
+	raw, err := os.ReadFile(filepath.Join(dir, ".orquestalite", "run.log"))
+	if err != nil {
+		t.Fatalf("read run.log: %v", err)
+	}
+	log := string(raw)
+	if !strings.Contains(log, `"event":"before_cleanup"`) {
+		t.Fatalf("run.log missing event before cleanup:\n%s", log)
+	}
+	if strings.Contains(log, `"event":"after_cleanup"`) {
+		t.Fatalf("logger still wrote after cleanup:\n%s", log)
+	}
+}
+
 // TestRun_EndToEndWithFakeCLI drives a full review→task→fix cycle using a
 // fake CLI script that writes fixed result JSONs. It verifies that after Run
 // returns, T001 is marked done and a git commit was made.

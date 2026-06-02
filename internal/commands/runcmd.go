@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -49,22 +50,50 @@ type RunOptions struct {
 // Run loads the config and tasks, wires up all components, and drives the
 // review loop until it completes or the context is cancelled.
 func Run(ctx context.Context, opts RunOptions) error {
+	deps, cleanup, err := newLiveDeps(liveDepsOptions{
+		ProjectDir: opts.ProjectDir,
+		TeamPath:   opts.TeamPath,
+		LogFormat:  opts.LogFormat,
+		Roles:      staticRunPreflightRoles,
+	})
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	return loops.RunReviewLoop(ctx, deps.tl, loops.ReviewConfig{MaxCycles: deps.cfg.Limits.MaxReviewCycles}, deps)
+}
+
+type liveDepsOptions struct {
+	ProjectDir string
+	TeamPath   string
+	LogFormat  eventlog.Format
+	Roles      []string
+}
+
+func newLiveDeps(opts liveDepsOptions) (*liveDeps, func() error, error) {
 	cfg, err := config.Load(opts.TeamPath)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
-	tasksPath := filepath.Join(opts.ProjectDir, ".orquestalite", "tasks.json")
-	tl, err := tasks.Load(tasksPath)
+	specs, err := cfg.Resolve()
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 
+	tasksPath := filepath.Join(opts.ProjectDir, ".orquestalite", "tasks.json")
 	logPath := filepath.Join(opts.ProjectDir, ".orquestalite", "run.log")
 	logger, err := eventlog.OpenWithFormat(logPath, os.Stdout, opts.LogFormat)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
-	defer logger.Close()
+	cleanup := logger.Close
+	ok := false
+	defer func() {
+		if !ok {
+			_ = cleanup()
+		}
+	}()
 
 	memPath := filepath.Join(opts.ProjectDir, ".orquestalite", "memory.md")
 
@@ -75,9 +104,35 @@ func Run(ctx context.Context, opts RunOptions) error {
 	})
 
 	tracker := agenthealth.New(agentHealthThreshold)
-	runStaticAgentPreflight(cfg, tracker, logger, staticRunPreflightRoles)
+	runStaticAgentPreflight(cfg, tracker, logger, opts.Roles)
 
-	deps := &liveDeps{
+	var deps *liveDeps
+	inv := &invoke.RoleInvoker{
+		Specs:                   specs,
+		Dir:                     opts.ProjectDir,
+		Fallback:                fc,
+		Log:                     logger,
+		Health:                  tracker,
+		MemPath:                 memPath,
+		Runner:                  invoke.ExecRunner{},
+		DefaultRateLimitPattern: cfg.RateLimitBackoff.DefaultPattern,
+		AgentHealthThreshold:    agentHealthThreshold,
+		OnAgentSuccess: func(role, agent string) {
+			if role == "coder" && deps.currentTask != nil {
+				deps.currentTask.LastAgent = agent
+			}
+		},
+	}
+
+	tl, err := tasks.Load(tasksPath)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return nil, nil, err
+		}
+		tl = &tasks.TaskList{}
+	}
+
+	deps = &liveDeps{
 		cfg:          cfg,
 		dir:          opts.ProjectDir,
 		fc:           fc,
@@ -87,44 +142,11 @@ func Run(ctx context.Context, opts RunOptions) error {
 		tasksPath:    tasksPath,
 		currentCycle: 0,
 		health:       tracker,
-	}
-	deps.inv, err = newLiveRoleInvoker(cfg, opts.ProjectDir, memPath, fc, logger, tracker, func(role, agent string) {
-		if role == "coder" && deps.currentTask != nil {
-			deps.currentTask.LastAgent = agent
-		}
-	})
-	if err != nil {
-		return err
+		inv:          inv,
 	}
 
-	return loops.RunReviewLoop(ctx, tl, loops.ReviewConfig{MaxCycles: cfg.Limits.MaxReviewCycles}, deps)
-}
-
-func newLiveRoleInvoker(
-	cfg *config.Config,
-	dir string,
-	memPath string,
-	fc *fallback.Caller,
-	log *eventlog.Logger,
-	health *agenthealth.Tracker,
-	onAgentSuccess func(role, agent string),
-) (*invoke.RoleInvoker, error) {
-	specs, err := cfg.Resolve()
-	if err != nil {
-		return nil, err
-	}
-	return &invoke.RoleInvoker{
-		Specs:                   specs,
-		Dir:                     dir,
-		Fallback:                fc,
-		Log:                     log,
-		Health:                  health,
-		MemPath:                 memPath,
-		Runner:                  invoke.ExecRunner{},
-		DefaultRateLimitPattern: cfg.RateLimitBackoff.DefaultPattern,
-		AgentHealthThreshold:    agentHealthThreshold,
-		OnAgentSuccess:          onAgentSuccess,
-	}, nil
+	ok = true
+	return deps, cleanup, nil
 }
 
 // runStaticAgentPreflight verifies that each agent referenced by the chosen roles
