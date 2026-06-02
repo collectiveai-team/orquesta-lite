@@ -6,6 +6,12 @@
 /.orquestalite/
 
 # go
+bin/
 *.test
 *.out
 coverage.txt
+
+# OS/editor
+.DS_Store
+*.swp
+*.swo

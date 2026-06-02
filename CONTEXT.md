@@ -32,6 +32,15 @@ plan.
   repeatedly until both tester and critic approve, or `max_iterations` is hit.
 - **result contract** — the JSON shape an agent must write to a known path on
   exit. The orchestrator reads it to make control-flow decisions.
+- **result archive** — the retained, per-task history of every agent's result
+  contract. Distinct from the single latest result file the orchestrator reads
+  for control flow: the archive is written for every parseable attempt and
+  never overwritten, so the work of earlier tasks and fix-loop iterations is
+  not lost.
+- **review rubric** — the code-quality criteria the reviewer applies to a
+  cycle's changes (structural simplification, file-size smell, branching
+  complexity, layer discipline). Findings become new tasks; a structural
+  regression prevents the reviewer from stopping the run.
 
 ## Architecture decisions (locked)
 

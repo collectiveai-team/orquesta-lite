@@ -8,6 +8,10 @@ import (
 
 type Claude struct{}
 
+func init() {
+	registerProvider("claude", func() Provider { return Claude{} })
+}
+
 func (Claude) Name() string { return "claude" }
 
 func (Claude) Build(_ context.Context, prompt string, opts Options) (Launch, error) {

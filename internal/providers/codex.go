@@ -7,6 +7,10 @@ import (
 
 type Codex struct{}
 
+func init() {
+	registerProvider("codex", func() Provider { return Codex{} })
+}
+
 func (Codex) Name() string { return "codex" }
 
 func (Codex) Build(_ context.Context, prompt string, opts Options) (Launch, error) {
