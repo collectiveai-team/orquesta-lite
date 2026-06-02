@@ -2,6 +2,7 @@ package results
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -94,7 +95,7 @@ func Archive(dir, role, taskID string, cycle, attempt int, raw []byte) error {
 		taskID = "_review"
 	}
 
-	path := filepath.Join(
+	basePath := filepath.Join(
 		dir,
 		".orquestalite",
 		"results",
@@ -102,23 +103,34 @@ func Archive(dir, role, taskID string, cycle, attempt int, raw []byte) error {
 		taskID,
 		fmt.Sprintf("%s.c%d.a%d.json", role, cycle, attempt),
 	)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(basePath), 0o755); err != nil {
 		return fmt.Errorf("create archive dir: %w", err)
 	}
 
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-	if err != nil {
-		return fmt.Errorf("create archive %s: %w", path, err)
+	path := basePath
+	for rerun := 1; ; rerun++ {
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if err == nil {
+			if _, err := f.Write(raw); err != nil {
+				_ = f.Close()
+				return fmt.Errorf("write archive %s: %w", path, err)
+			}
+			if err := f.Close(); err != nil {
+				return fmt.Errorf("close archive %s: %w", path, err)
+			}
+			return nil
+		}
+		if !errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("create archive %s: %w", path, err)
+		}
+		path = rerunArchivePath(basePath, rerun+1)
 	}
+}
 
-	if _, err := f.Write(raw); err != nil {
-		_ = f.Close()
-		return fmt.Errorf("write archive %s: %w", path, err)
-	}
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("close archive %s: %w", path, err)
-	}
-	return nil
+func rerunArchivePath(basePath string, rerun int) string {
+	ext := filepath.Ext(basePath)
+	stem := basePath[:len(basePath)-len(ext)]
+	return fmt.Sprintf("%s.r%d%s", stem, rerun, ext)
 }
 
 func ParseParser(path string) (*ParserResult, error) {
