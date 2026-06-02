@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/lionelchamorro/orquestalite/internal/providers"
 )
+
+var orchestratedRoles = []string{"parser", "coder", "tester", "critic", "reviewer"}
 
 type Agent struct {
 	Cmd                        []string `json:"cmd,omitempty"`
@@ -18,6 +21,15 @@ type Agent struct {
 	RateLimitPattern           string   `json:"rate_limit_pattern,omitempty"`
 }
 
+type AgentSpec struct {
+	Provider    string
+	Model       string
+	Effort      string
+	SkipPerms   bool
+	RatePattern string
+	Cmd         []string
+}
+
 type Role struct {
 	Agents           []string `json:"agents"`
 	Prompt           string   `json:"prompt"`
@@ -25,6 +37,15 @@ type Role struct {
 	TimeoutSeconds   int      `json:"timeout_seconds"`
 	EscalationLadder []string `json:"escalation_ladder,omitempty"`
 	DecomposePrompt  string   `json:"decompose_prompt,omitempty"`
+}
+
+type RoleSpec struct {
+	Agents           []AgentSpec
+	PromptPath       string
+	ResultPath       string
+	Timeout          time.Duration
+	EscalationLadder []AgentSpec
+	DecomposePrompt  string
 }
 
 type Limits struct {
@@ -61,6 +82,39 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("validate %s: %w", path, err)
 	}
 	return &c, nil
+}
+
+func (c *Config) Resolve() (map[string]RoleSpec, error) {
+	if c == nil {
+		return nil, fmt.Errorf("config is nil")
+	}
+	if len(c.Agents) == 0 {
+		return nil, fmt.Errorf("no agents declared")
+	}
+
+	resolvedAgents := make(map[string]AgentSpec, len(c.Agents))
+	for name, agent := range c.Agents {
+		spec, err := resolveAgentSpec(name, agent)
+		if err != nil {
+			return nil, err
+		}
+		resolvedAgents[name] = spec
+	}
+
+	roles := make(map[string]RoleSpec, len(orchestratedRoles))
+	for _, roleName := range orchestratedRoles {
+		role, ok := c.Roles[roleName]
+		if !ok {
+			return nil, fmt.Errorf("missing orchestrated role %q", roleName)
+		}
+		spec, err := resolveRoleSpec(roleName, role, resolvedAgents)
+		if err != nil {
+			return nil, err
+		}
+		roles[roleName] = spec
+	}
+
+	return roles, nil
 }
 
 func (c *Config) Validate() error {
@@ -126,4 +180,66 @@ func (c *Config) Validate() error {
 	// full_test_command may be empty: it is a verification hook, not a
 	// correctness requirement. runcmd treats empty as a no-op.
 	return nil
+}
+
+func resolveAgentSpec(name string, agent Agent) (AgentSpec, error) {
+	if agent.Provider != "" && !providers.IsKnown(agent.Provider) {
+		return AgentSpec{}, fmt.Errorf("agent %q has unknown provider %q", name, agent.Provider)
+	}
+	if agent.Provider == "" && len(agent.Cmd) == 0 {
+		return AgentSpec{}, fmt.Errorf("agent %q must declare registered provider or cmd", name)
+	}
+	return AgentSpec{
+		Provider:    agent.Provider,
+		Model:       agent.Model,
+		Effort:      agent.Effort,
+		SkipPerms:   agent.DangerouslySkipPermissions,
+		RatePattern: agent.RateLimitPattern,
+		Cmd:         append([]string(nil), agent.Cmd...),
+	}, nil
+}
+
+func resolveRoleSpec(name string, role Role, agents map[string]AgentSpec) (RoleSpec, error) {
+	if role.Prompt == "" || role.ResultPath == "" {
+		return RoleSpec{}, fmt.Errorf("role %q must declare prompt and result_path", name)
+	}
+	if role.TimeoutSeconds <= 0 {
+		return RoleSpec{}, fmt.Errorf("role %q timeout_seconds must be > 0", name)
+	}
+	if len(role.Agents) == 0 {
+		return RoleSpec{}, fmt.Errorf("role %q has no agents", name)
+	}
+
+	agentSpecs, err := resolveAgentList(name, "agents", role.Agents, agents)
+	if err != nil {
+		return RoleSpec{}, err
+	}
+	escalationSpecs, err := resolveAgentList(name, "escalation_ladder", role.EscalationLadder, agents)
+	if err != nil {
+		return RoleSpec{}, err
+	}
+
+	return RoleSpec{
+		Agents:           agentSpecs,
+		PromptPath:       role.Prompt,
+		ResultPath:       role.ResultPath,
+		Timeout:          time.Duration(role.TimeoutSeconds) * time.Second,
+		EscalationLadder: escalationSpecs,
+		DecomposePrompt:  role.DecomposePrompt,
+	}, nil
+}
+
+func resolveAgentList(roleName, field string, names []string, agents map[string]AgentSpec) ([]AgentSpec, error) {
+	specs := make([]AgentSpec, 0, len(names))
+	for _, name := range names {
+		spec, ok := agents[name]
+		if !ok {
+			if field == "escalation_ladder" {
+				return nil, fmt.Errorf("role %q escalation_ladder references unknown agent %q", roleName, name)
+			}
+			return nil, fmt.Errorf("role %q references unknown agent %q", roleName, name)
+		}
+		specs = append(specs, spec)
+	}
+	return specs, nil
 }

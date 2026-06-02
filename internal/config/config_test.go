@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func writeTeamJSON(t *testing.T, body string) string {
@@ -249,5 +250,150 @@ func TestConfig_DecomposePromptRoundTrips(t *testing.T) {
 	got := cfg.Roles["parser"].DecomposePrompt
 	if got != "prompts/parser-decompose.md" {
 		t.Errorf("DecomposePrompt = %q, want %q", got, "prompts/parser-decompose.md")
+	}
+}
+
+func TestConfig_ResolveValidTeam(t *testing.T) {
+	p := writeTeamJSON(t, `{
+		"agents": {
+			"coder_agent": {"provider": "codex", "model": "gpt-5", "effort": "high", "rate_limit_pattern": "429"},
+			"parser_agent": {"cmd": ["parser", "{{PROMPT}}"], "dangerously_skip_permissions": true},
+			"tester_agent": {"provider": "claude", "model": "claude-sonnet-4-6"},
+			"critic_agent": {"provider": "claude", "model": "claude-opus-4-8"},
+			"reviewer_agent": {"cmd": ["reviewer", "{{PROMPT}}"]}
+		},
+		"roles": {
+			"parser": {"agents": ["parser_agent"], "prompt": "prompts/parser.md", "result_path": ".orquestalite/results/parser.json", "timeout_seconds": 300, "decompose_prompt": "prompts/parser-decompose.md"},
+			"coder": {"agents": ["coder_agent", "parser_agent"], "prompt": "prompts/coder.md", "result_path": ".orquestalite/results/coder.json", "timeout_seconds": 1200, "escalation_ladder": ["parser_agent"]},
+			"tester": {"agents": ["tester_agent"], "prompt": "prompts/tester.md", "result_path": ".orquestalite/results/tester.json", "timeout_seconds": 600},
+			"critic": {"agents": ["critic_agent"], "prompt": "prompts/critic.md", "result_path": ".orquestalite/results/critic.json", "timeout_seconds": 300},
+			"reviewer": {"agents": ["reviewer_agent"], "prompt": "prompts/reviewer.md", "result_path": ".orquestalite/results/reviewer.json", "timeout_seconds": 600}
+		},
+		"limits": {"max_review_cycles": 3, "max_fix_iterations": 5},
+		"rate_limit_backoff": {"initial_seconds": 30, "factor": 2, "max_seconds": 1800, "default_pattern": "rate_?limit|429"},
+		"full_test_command": "go test ./..."
+	}`)
+
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("unexpected load error: %v", err)
+	}
+	resolved, err := cfg.Resolve()
+	if err != nil {
+		t.Fatalf("unexpected resolve error: %v", err)
+	}
+
+	coder := resolved["coder"]
+	if coder.PromptPath != "prompts/coder.md" {
+		t.Errorf("coder.PromptPath = %q, want prompts/coder.md", coder.PromptPath)
+	}
+	if coder.Timeout != 1200*time.Second {
+		t.Errorf("coder.Timeout = %s, want 1200s", coder.Timeout)
+	}
+	if len(coder.Agents) != 2 || coder.Agents[0].Provider != "codex" || coder.Agents[1].Cmd[0] != "parser" {
+		t.Errorf("coder.Agents = %+v, want ordered resolved agent specs", coder.Agents)
+	}
+	if len(coder.EscalationLadder) != 1 || len(coder.EscalationLadder[0].Cmd) == 0 {
+		t.Errorf("coder.EscalationLadder = %+v, want resolved parser_agent", coder.EscalationLadder)
+	}
+	parser := resolved["parser"]
+	if parser.DecomposePrompt != "prompts/parser-decompose.md" {
+		t.Errorf("parser.DecomposePrompt = %q, want prompts/parser-decompose.md", parser.DecomposePrompt)
+	}
+	if !parser.Agents[0].SkipPerms {
+		t.Errorf("parser agent SkipPerms = false, want true")
+	}
+}
+
+func TestConfig_ResolveMissingOrchestratedRoleFails(t *testing.T) {
+	cfg := completeResolveConfig()
+	delete(cfg.Roles, "reviewer")
+
+	_, err := cfg.Resolve()
+	if err == nil || !strings.Contains(err.Error(), `missing orchestrated role "reviewer"`) {
+		t.Fatalf("expected missing reviewer role error, got: %v", err)
+	}
+}
+
+func TestConfig_ResolveEscalationLadderTypoFails(t *testing.T) {
+	cfg := completeResolveConfig()
+	coder := cfg.Roles["coder"]
+	coder.EscalationLadder = []string{"claude_oppus"}
+	cfg.Roles["coder"] = coder
+
+	_, err := cfg.Resolve()
+	if err == nil || !strings.Contains(err.Error(), "claude_oppus") {
+		t.Fatalf("expected escalation ladder typo error, got: %v", err)
+	}
+}
+
+func TestConfig_ResolveDoesNotStatDecomposePrompt(t *testing.T) {
+	cfg := completeResolveConfig()
+	parser := cfg.Roles["parser"]
+	parser.DecomposePrompt = filepath.Join(t.TempDir(), "does-not-exist.md")
+	cfg.Roles["parser"] = parser
+
+	resolved, err := cfg.Resolve()
+	if err != nil {
+		t.Fatalf("unexpected resolve error: %v", err)
+	}
+	if resolved["parser"].DecomposePrompt != parser.DecomposePrompt {
+		t.Errorf("DecomposePrompt = %q, want %q", resolved["parser"].DecomposePrompt, parser.DecomposePrompt)
+	}
+}
+
+func completeResolveConfig() *Config {
+	return &Config{
+		Agents: map[string]Agent{
+			"claude_opus": {
+				Provider:                   "claude",
+				Model:                      "claude-opus-4-8",
+				DangerouslySkipPermissions: true,
+				RateLimitPattern:           "429",
+			},
+			"claude_sonnet": {
+				Provider: "claude",
+				Model:    "claude-sonnet-4-6",
+			},
+			"codex_gpt5": {
+				Provider: "codex",
+				Model:    "gpt-5",
+				Effort:   "high",
+			},
+		},
+		Roles: map[string]Role{
+			"parser": {
+				Agents:          []string{"claude_opus"},
+				Prompt:          "prompts/parser.md",
+				ResultPath:      ".orquestalite/results/parser.json",
+				TimeoutSeconds:  300,
+				DecomposePrompt: "prompts/parser-decompose.md",
+			},
+			"coder": {
+				Agents:           []string{"codex_gpt5", "claude_sonnet"},
+				Prompt:           "prompts/coder.md",
+				ResultPath:       ".orquestalite/results/coder.json",
+				TimeoutSeconds:   1200,
+				EscalationLadder: []string{"claude_opus"},
+			},
+			"tester": {
+				Agents:         []string{"claude_sonnet"},
+				Prompt:         "prompts/tester.md",
+				ResultPath:     ".orquestalite/results/tester.json",
+				TimeoutSeconds: 600,
+			},
+			"critic": {
+				Agents:         []string{"claude_opus"},
+				Prompt:         "prompts/critic.md",
+				ResultPath:     ".orquestalite/results/critic.json",
+				TimeoutSeconds: 300,
+			},
+			"reviewer": {
+				Agents:         []string{"claude_opus"},
+				Prompt:         "prompts/reviewer.md",
+				ResultPath:     ".orquestalite/results/reviewer.json",
+				TimeoutSeconds: 600,
+			},
+		},
 	}
 }
