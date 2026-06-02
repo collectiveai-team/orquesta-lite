@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/lionelchamorro/orquestalite/internal/invoke"
 	"github.com/lionelchamorro/orquestalite/internal/preflight"
 	"github.com/lionelchamorro/orquestalite/internal/results"
 	"github.com/lionelchamorro/orquestalite/internal/tasks"
@@ -15,8 +16,8 @@ type stubReviewDeps struct {
 	cycles   []int
 }
 
-func (s *stubReviewDeps) RunFix(ctx context.Context, id string) (*FixResult, error) {
-	return s.taskDeps.RunFix(ctx, id)
+func (s *stubReviewDeps) RunFix(ctx context.Context, id string, rc invoke.RunContext) (*FixResult, error) {
+	return s.taskDeps.RunFix(ctx, id, rc)
 }
 func (s *stubReviewDeps) FullSuite(ctx context.Context) error { return s.taskDeps.FullSuite(ctx) }
 func (s *stubReviewDeps) Commit(ctx context.Context, m string) (string, error) {
@@ -26,8 +27,8 @@ func (s *stubReviewDeps) Rollback(ctx context.Context) error { return s.taskDeps
 func (s *stubReviewDeps) SaveTasks(ctx context.Context, tl *tasks.TaskList) error {
 	return s.taskDeps.SaveTasks(ctx, tl)
 }
-func (s *stubReviewDeps) Decompose(ctx context.Context, t *tasks.Task, fx *FixResult, files []string) ([]tasks.Task, error) {
-	return s.taskDeps.Decompose(ctx, t, fx, files)
+func (s *stubReviewDeps) Decompose(ctx context.Context, t *tasks.Task, fx *FixResult, files []string, rc invoke.RunContext) ([]tasks.Task, error) {
+	return s.taskDeps.Decompose(ctx, t, fx, files, rc)
 }
 func (s *stubReviewDeps) Handoff(ctx context.Context, t *tasks.Task) (string, error) {
 	return s.taskDeps.Handoff(ctx, t)
@@ -36,9 +37,9 @@ func (s *stubReviewDeps) PreflightEnabled() bool { return s.taskDeps.PreflightEn
 func (s *stubReviewDeps) Preflight(ctx context.Context, t *tasks.Task) preflight.Verdict {
 	return s.taskDeps.Preflight(ctx, t)
 }
-func (s *stubReviewDeps) RunReviewer(ctx context.Context, cycle int) (results.ReviewerResult, error) {
-	s.cycles = append(s.cycles, cycle)
-	return s.reviewer(cycle), nil
+func (s *stubReviewDeps) RunReviewer(ctx context.Context, rc invoke.RunContext) (results.ReviewerResult, error) {
+	s.cycles = append(s.cycles, rc.Cycle)
+	return s.reviewer(rc.Cycle), nil
 }
 
 func boolPtr(b bool) *bool { return &b }

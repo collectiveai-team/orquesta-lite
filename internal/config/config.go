@@ -22,6 +22,7 @@ type Agent struct {
 }
 
 type AgentSpec struct {
+	Name        string
 	Provider    string
 	Model       string
 	Effort      string
@@ -190,6 +191,7 @@ func resolveAgentSpec(name string, agent Agent) (AgentSpec, error) {
 		return AgentSpec{}, fmt.Errorf("agent %q must declare registered provider or cmd", name)
 	}
 	return AgentSpec{
+		Name:        name,
 		Provider:    agent.Provider,
 		Model:       agent.Model,
 		Effort:      agent.Effort,

@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-
-	"github.com/lionelchamorro/orquestalite/internal/invoke"
 )
 
 type ParserTask struct {
@@ -20,7 +18,7 @@ type ParserResult struct {
 	NotesForMemory *string      `json:"notes_for_memory"`
 }
 
-func (r *ParserResult) MemoryNote() *string { return r.NotesForMemory }
+func (r ParserResult) MemoryNote() *string { return r.NotesForMemory }
 
 type CoderResult struct {
 	Status         string   `json:"status"`
@@ -29,7 +27,7 @@ type CoderResult struct {
 	NotesForMemory *string  `json:"notes_for_memory"`
 }
 
-func (r *CoderResult) MemoryNote() *string { return r.NotesForMemory }
+func (r CoderResult) MemoryNote() *string { return r.NotesForMemory }
 
 type TestFailure struct {
 	Test    string `json:"test"`
@@ -44,7 +42,7 @@ type TesterResult struct {
 	NotesForMemory *string       `json:"notes_for_memory"`
 }
 
-func (r *TesterResult) MemoryNote() *string { return r.NotesForMemory }
+func (r TesterResult) MemoryNote() *string { return r.NotesForMemory }
 
 type Concern struct {
 	Severity   string `json:"severity"`
@@ -59,7 +57,7 @@ type CriticResult struct {
 	NotesForMemory *string   `json:"notes_for_memory"`
 }
 
-func (r *CriticResult) MemoryNote() *string { return r.NotesForMemory }
+func (r CriticResult) MemoryNote() *string { return r.NotesForMemory }
 
 type ReviewerNewTask struct {
 	Title       string `json:"title"`
@@ -74,7 +72,7 @@ type ReviewerResult struct {
 	NotesForMemory *string           `json:"notes_for_memory"`
 }
 
-func (r *ReviewerResult) MemoryNote() *string { return r.NotesForMemory }
+func (r ReviewerResult) MemoryNote() *string { return r.NotesForMemory }
 
 func read(path string, into any) error {
 	raw, err := os.ReadFile(path)
@@ -88,8 +86,7 @@ func read(path string, into any) error {
 }
 
 // Archive writes an immutable copy of a role's raw result for one run context.
-func Archive(dir, role string, rc invoke.RunContext, raw []byte) error {
-	taskID := rc.TaskID
+func Archive(dir, role, taskID string, cycle, attempt int, raw []byte) error {
 	switch role {
 	case "parser":
 		taskID = "_plan"
@@ -103,7 +100,7 @@ func Archive(dir, role string, rc invoke.RunContext, raw []byte) error {
 		"results",
 		"by-task",
 		taskID,
-		fmt.Sprintf("%s.c%d.a%d.json", role, rc.Cycle, rc.Attempt),
+		fmt.Sprintf("%s.c%d.a%d.json", role, cycle, attempt),
 	)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return fmt.Errorf("create archive dir: %w", err)

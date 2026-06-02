@@ -4,16 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-
-	"github.com/lionelchamorro/orquestalite/internal/invoke"
-)
-
-var (
-	_ invoke.MemoryNoting = (*ParserResult)(nil)
-	_ invoke.MemoryNoting = (*CoderResult)(nil)
-	_ invoke.MemoryNoting = (*TesterResult)(nil)
-	_ invoke.MemoryNoting = (*CriticResult)(nil)
-	_ invoke.MemoryNoting = (*ReviewerResult)(nil)
 )
 
 func write(t *testing.T, body string) string {
@@ -81,10 +71,10 @@ func TestArchive_WritesDistinctAttemptFilesWithoutTouchingCanonical(t *testing.T
 		t.Fatal(err)
 	}
 
-	if err := Archive(dir, "coder", invoke.RunContext{TaskID: "T005", Cycle: 2, Attempt: 1}, []byte(`{"status":"attempt 1"}`)); err != nil {
+	if err := Archive(dir, "coder", "T005", 2, 1, []byte(`{"status":"attempt 1"}`)); err != nil {
 		t.Fatal(err)
 	}
-	if err := Archive(dir, "coder", invoke.RunContext{TaskID: "T005", Cycle: 2, Attempt: 2}, []byte(`{"status":"attempt 2"}`)); err != nil {
+	if err := Archive(dir, "coder", "T005", 2, 2, []byte(`{"status":"attempt 2"}`)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -96,10 +86,10 @@ func TestArchive_WritesDistinctAttemptFilesWithoutTouchingCanonical(t *testing.T
 func TestArchive_UsesSyntheticTaskIDsForPlanAndReviewRoles(t *testing.T) {
 	dir := t.TempDir()
 
-	if err := Archive(dir, "parser", invoke.RunContext{TaskID: "ignored", Cycle: 1, Attempt: 1}, []byte(`{"tasks":[]}`)); err != nil {
+	if err := Archive(dir, "parser", "ignored", 1, 1, []byte(`{"tasks":[]}`)); err != nil {
 		t.Fatal(err)
 	}
-	if err := Archive(dir, "reviewer", invoke.RunContext{TaskID: "ignored", Cycle: 3, Attempt: 1}, []byte(`{"summary_of_cycle":"done"}`)); err != nil {
+	if err := Archive(dir, "reviewer", "ignored", 3, 1, []byte(`{"summary_of_cycle":"done"}`)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -109,13 +99,12 @@ func TestArchive_UsesSyntheticTaskIDsForPlanAndReviewRoles(t *testing.T) {
 
 func TestArchive_DoesNotOverwriteExistingArchive(t *testing.T) {
 	dir := t.TempDir()
-	rc := invoke.RunContext{TaskID: "T005", Cycle: 1, Attempt: 1}
 	archive := filepath.Join(dir, ".orquestalite", "results", "by-task", "T005", "tester.c1.a1.json")
 
-	if err := Archive(dir, "tester", rc, []byte(`{"status":"first"}`)); err != nil {
+	if err := Archive(dir, "tester", "T005", 1, 1, []byte(`{"status":"first"}`)); err != nil {
 		t.Fatal(err)
 	}
-	if err := Archive(dir, "tester", rc, []byte(`{"status":"second"}`)); err == nil {
+	if err := Archive(dir, "tester", "T005", 1, 1, []byte(`{"status":"second"}`)); err == nil {
 		t.Fatal("expected error for existing archive")
 	}
 

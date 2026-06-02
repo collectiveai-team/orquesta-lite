@@ -50,6 +50,10 @@ func PlanWithLiveCaller(ctx context.Context, projectDir, planPath string, append
 		memPath:   memPath,
 		tasksPath: tasksPath,
 	}
+	deps.inv, err = newLiveRoleInvoker(cfg, projectDir, memPath, fc, logger, nil, nil)
+	if err != nil {
+		return err
+	}
 
 	if err := Plan(ctx, projectDir, planPath, appendMode, deps); err != nil {
 		return err

@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -23,10 +22,7 @@ import (
 	"github.com/lionelchamorro/orquestalite/internal/handoff"
 	"github.com/lionelchamorro/orquestalite/internal/invoke"
 	"github.com/lionelchamorro/orquestalite/internal/loops"
-	"github.com/lionelchamorro/orquestalite/internal/memory"
 	"github.com/lionelchamorro/orquestalite/internal/preflight"
-	"github.com/lionelchamorro/orquestalite/internal/prompts"
-	"github.com/lionelchamorro/orquestalite/internal/providers"
 	"github.com/lionelchamorro/orquestalite/internal/results"
 	"github.com/lionelchamorro/orquestalite/internal/runner"
 	"github.com/lionelchamorro/orquestalite/internal/tasks"
@@ -55,7 +51,6 @@ func Run(ctx context.Context, opts RunOptions) error {
 	if err != nil {
 		return err
 	}
-
 	tasksPath := filepath.Join(opts.ProjectDir, ".orquestalite", "tasks.json")
 	tl, err := tasks.Load(tasksPath)
 	if err != nil {
@@ -91,8 +86,43 @@ func Run(ctx context.Context, opts RunOptions) error {
 		currentCycle: 0,
 		health:       tracker,
 	}
+	deps.inv, err = newLiveRoleInvoker(cfg, opts.ProjectDir, memPath, fc, logger, tracker, func(role, agent string) {
+		if role == "coder" && deps.currentTask != nil {
+			deps.currentTask.LastAgent = agent
+		}
+	})
+	if err != nil {
+		return err
+	}
 
 	return loops.RunReviewLoop(ctx, tl, loops.ReviewConfig{MaxCycles: cfg.Limits.MaxReviewCycles}, deps)
+}
+
+func newLiveRoleInvoker(
+	cfg *config.Config,
+	dir string,
+	memPath string,
+	fc *fallback.Caller,
+	log *eventlog.Logger,
+	health *agenthealth.Tracker,
+	onAgentSuccess func(role, agent string),
+) (*invoke.RoleInvoker, error) {
+	specs, err := cfg.Resolve()
+	if err != nil {
+		return nil, err
+	}
+	return &invoke.RoleInvoker{
+		Specs:                   specs,
+		Dir:                     dir,
+		Fallback:                fc,
+		Log:                     log,
+		Health:                  health,
+		MemPath:                 memPath,
+		Runner:                  invoke.ExecRunner{},
+		DefaultRateLimitPattern: cfg.RateLimitBackoff.DefaultPattern,
+		AgentHealthThreshold:    agentHealthThreshold,
+		OnAgentSuccess:          onAgentSuccess,
+	}, nil
 }
 
 // runStaticAgentPreflight verifies that each agent referenced by any role
@@ -156,10 +186,11 @@ type liveDeps struct {
 	currentCycle int
 	currentTask  *tasks.Task
 	health       *agenthealth.Tracker
+	inv          *invoke.RoleInvoker
 }
 
 // RunFix sets up the current task and runs the fix loop.
-func (d *liveDeps) RunFix(ctx context.Context, taskID string) (*loops.FixResult, error) {
+func (d *liveDeps) RunFix(ctx context.Context, taskID string, rc invoke.RunContext) (*loops.FixResult, error) {
 	for i, t := range d.tl.Tasks {
 		if t.ID == taskID {
 			d.currentTask = &d.tl.Tasks[i]
@@ -171,10 +202,11 @@ func (d *liveDeps) RunFix(ctx context.Context, taskID string) (*loops.FixResult,
 		escalationLadder = coderRole.EscalationLadder
 	}
 	rr := &liveRoleRunner{deps: d}
+	d.currentCycle = rc.Cycle
 	return loops.RunFix(ctx, loops.FixConfig{
 		MaxIterations:    d.cfg.Limits.MaxFixIterations,
 		EscalationLadder: escalationLadder,
-	}, rr)
+	}, rr, rc)
 }
 
 // FullSuite runs the full test command specified in team.json.
@@ -240,32 +272,12 @@ func (d *liveDeps) SaveTasks(ctx context.Context, tl *tasks.TaskList) error {
 // RunParser invokes the parser role with the given plan text and returns its result.
 // The parser prompt uses {{MEMORY}} and {{PLAN}} interpolation variables.
 func (d *liveDeps) RunParser(ctx context.Context, plan string) (*results.ParserResult, error) {
-	role := d.cfg.Roles["parser"]
-	tmpl, err := prompts.Load(filepath.Join(d.dir, role.Prompt))
-	if err != nil {
-		return nil, err
-	}
-	mem, _ := memory.ReadAll(d.memPath)
-
-	prompt := prompts.Interpolate(tmpl, map[string]string{
-		"MEMORY": mem,
-		"PLAN":   plan,
-	})
-	if err := d.callRole(ctx, "parser", prompt, role); err != nil {
-		return nil, err
-	}
-	return results.ParseParser(filepath.Join(d.dir, role.ResultPath))
+	return invoke.Role(ctx, d.inv, "parser", map[string]string{"PLAN": plan}, invoke.RunContext{TaskID: "_plan", Attempt: 1}, results.ParseParser)
 }
 
 // RunReviewer invokes the reviewer role and returns its parsed result.
-func (d *liveDeps) RunReviewer(ctx context.Context, cycle int) (results.ReviewerResult, error) {
-	d.currentCycle = cycle
-	role := d.cfg.Roles["reviewer"]
-	tmpl, err := prompts.Load(filepath.Join(d.dir, role.Prompt))
-	if err != nil {
-		return results.ReviewerResult{}, err
-	}
-	mem, _ := memory.ReadAll(d.memPath)
+func (d *liveDeps) RunReviewer(ctx context.Context, rc invoke.RunContext) (results.ReviewerResult, error) {
+	d.currentCycle = rc.Cycle
 	tasksRaw, _ := os.ReadFile(d.tasksPath)
 
 	gitLog := ""
@@ -273,217 +285,15 @@ func (d *liveDeps) RunReviewer(ctx context.Context, cycle int) (results.Reviewer
 		gitLog, _ = gitx.LogStat(d.dir, "HEAD~5")
 	}
 
-	prompt := prompts.Interpolate(tmpl, map[string]string{
-		"REVIEW_CYCLE": fmt.Sprintf("%d", cycle),
-		"MEMORY":       mem,
+	r, err := invoke.Role(ctx, d.inv, "reviewer", map[string]string{
+		"REVIEW_CYCLE": fmt.Sprintf("%d", rc.Cycle),
 		"TASKS_JSON":   string(tasksRaw),
 		"GIT_LOG":      gitLog,
-	})
-	if err := d.callRole(ctx, "reviewer", prompt, role); err != nil {
-		return results.ReviewerResult{}, err
-	}
-	r, err := results.ParseReviewer(filepath.Join(d.dir, role.ResultPath))
+	}, rc, results.ParseReviewer)
 	if err != nil {
 		return results.ReviewerResult{}, err
-	}
-	if r.NotesForMemory != nil {
-		_ = memory.Append(d.memPath, memory.Entry{
-			Cycle:  cycle,
-			TaskID: "-",
-			Role:   "reviewer",
-			Body:   *r.NotesForMemory,
-		})
 	}
 	return *r, nil
-}
-
-// callRole drives a single role invocation through the fallback chain.
-func (d *liveDeps) callRole(ctx context.Context, roleName, prompt string, role config.Role) error {
-	var lastResult *runner.Result
-	var lastErr error
-	// triedAgents tracks agent names in attempt order for error reporting.
-	var triedAgents []string
-
-	// Skip agents that previous calls (or the static preflight) marked unhealthy.
-	chain := role.Agents
-	if d.health != nil {
-		chain = d.health.Filter(role.Agents)
-		if len(chain) == 0 {
-			// All declared agents are skipped: surface the skipped set in the
-			// error so the operator can fix team.json without grepping logs.
-			skipped := d.health.SkippedAgents()
-			return fmt.Errorf("all agents for role %q are marked skipped: %v", roleName, skipped)
-		}
-	}
-
-	_, _, err := d.fc.Call(ctx, chain, func(ctx context.Context, agentName string) (fallback.Outcome, error) {
-		ag := d.cfg.Agents[agentName]
-		pattern := ag.RateLimitPattern
-		if pattern == "" {
-			pattern = d.cfg.RateLimitBackoff.DefaultPattern
-		}
-		// Canonical Phase-3 template vars: RESULT_PATH and ROLE.
-		// Additional vars can be added here as new codex flags are introduced.
-		spec := runner.Spec{
-			Cmd:                        ag.Cmd,
-			Provider:                   ag.Provider,
-			Model:                      ag.Model,
-			Effort:                     ag.Effort,
-			DangerouslySkipPermissions: ag.DangerouslySkipPermissions,
-			Prompt:                     prompt,
-			ResultPath:                 filepath.Join(d.dir, role.ResultPath),
-			Timeout:                    time.Duration(role.TimeoutSeconds) * time.Second,
-			RateLimitPattern:           pattern,
-			TemplateVars: map[string]string{
-				"RESULT_PATH": filepath.Join(d.dir, role.ResultPath),
-				"ROLE":        roleName,
-			},
-		}
-		r, err := runner.RunAgent(ctx, spec)
-		if err != nil {
-			return fallback.Outcome{}, err
-		}
-		lastResult = r
-		triedAgents = append(triedAgents, agentName)
-
-		// Build cmd_line with {{PROMPT}} replaced by <elided> and all other
-		// TemplateVars substituted so the logged cmd reflects the actual invocation.
-		cmdLine := ""
-		if len(ag.Cmd) > 0 {
-			parts := make([]string, len(ag.Cmd))
-			for i, tok := range ag.Cmd {
-				s := strings.ReplaceAll(tok, "{{PROMPT}}", "<elided>")
-				for k, v := range spec.TemplateVars {
-					s = strings.ReplaceAll(s, "{{"+k+"}}", v)
-				}
-				parts[i] = s
-			}
-			cmdLine = strings.Join(parts, " ")
-		}
-
-		shouldFallback, fallbackReason := invoke.Classify(r)
-
-		// Record last non-success error for reporting.
-		if shouldFallback {
-			lastErr = fmt.Errorf("agent %q (role %q) did not write %s: exit=%d; detail: %s",
-				agentName, roleName, role.ResultPath, r.ExitCode, errorDetail(r))
-		}
-
-		// Update agent health. Rate-limit failures already have a backoff path
-		// in the fallback caller, so they are excluded from the failure count
-		// — being slow is not the same as being broken.
-		if d.health != nil {
-			switch {
-			case !shouldFallback:
-				d.health.MarkSuccess(agentName)
-			case fallbackReason != "rate_limit":
-				if d.health.MarkFailure(agentName, agenthealth.ReasonResultMissing) {
-					d.log.Log(eventlog.Event{Type: "agent_marked_skipped", Fields: map[string]any{
-						"agent":                agentName,
-						"role":                 roleName,
-						"reason":               "consecutive_failures",
-						"threshold":            agentHealthThreshold,
-						"last_fallback_reason": fallbackReason,
-					}})
-				}
-			}
-		}
-
-		// Record the agent that actually produced the coder result on the current
-		// task. This shows up in `orq-lite status` so the operator can see which
-		// model worked without grepping run.log.
-		if !shouldFallback && roleName == "coder" && d.currentTask != nil {
-			d.currentTask.LastAgent = agentName
-		}
-
-		fields := map[string]any{
-			"role":             roleName,
-			"agent":            agentName,
-			"provider":         ag.Provider,
-			"model":            ag.Model,
-			"duration_s":       int(r.Duration.Seconds()),
-			"timed_out":        r.TimedOut,
-			"rate_limited":     r.RateLimited,
-			"result_exists":    r.ResultExists,
-			"exit_code":        r.ExitCode,
-			"session_id":       r.SessionID,
-			"final_text_tail":  runner.TailString(r.FinalText, 1000),
-			"tool_calls_count": toolCallsCount(r),
-			"stderr_tail":      r.StderrTail(2048),
-			"stdout_tail":      r.StdoutTail(2048),
-			"fallback_reason":  fallbackReason,
-		}
-		if cmdLine != "" {
-			fields["cmd_line"] = cmdLine
-		}
-		if r.CodexHeader != nil {
-			fields["codex_header"] = r.CodexHeader
-		}
-		d.log.Log(eventlog.Event{Type: "agent_run", Fields: fields})
-
-		return fallback.Outcome{
-			RateLimited:    r.RateLimited,
-			ResultExists:   r.ResultExists,
-			TimedOut:       r.TimedOut,
-			ShouldFallback: shouldFallback,
-			FallbackReason: fallbackReason,
-		}, nil
-	})
-
-	if errors.Is(err, fallback.ErrAllAgentsFailed) {
-		tried := strings.Join(triedAgents, ", ")
-		lastErrStr := ""
-		if lastErr != nil {
-			lastErrStr = lastErr.Error()
-		} else if lastResult != nil {
-			lastErrStr = fmt.Sprintf("exit=%d; detail: %s", lastResult.ExitCode, errorDetail(lastResult))
-		}
-		return fmt.Errorf("all agents failed for role %q: tried [%s]; last error: %s",
-			roleName, tried, lastErrStr)
-	}
-	if errors.Is(err, fallback.ErrRateLimitExhausted) {
-		return err
-	}
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-func errorDetail(res *runner.Result) string {
-	if strings.TrimSpace(res.Stderr) != "" {
-		return res.StderrTail(2048)
-	}
-	if strings.TrimSpace(res.FinalText) != "" {
-		return runner.TailString(res.FinalText, 2048)
-	}
-	return lastNonEmptyLines(res.Stdout, 20)
-}
-
-func lastNonEmptyLines(s string, n int) string {
-	lines := strings.Split(s, "\n")
-	kept := make([]string, 0, n)
-	for i := len(lines) - 1; i >= 0 && len(kept) < n; i-- {
-		line := strings.TrimSpace(lines[i])
-		if line == "" {
-			continue
-		}
-		kept = append(kept, line)
-	}
-	for i, j := 0, len(kept)-1; i < j; i, j = i+1, j-1 {
-		kept[i], kept[j] = kept[j], kept[i]
-	}
-	return strings.Join(kept, "\n")
-}
-
-func toolCallsCount(res *runner.Result) int {
-	count := 0
-	for _, ev := range res.Events {
-		if ev.Type == providers.EventToolCall {
-			count++
-		}
-	}
-	return count
 }
 
 // Handoff writes a markdown handoff file for the task and logs a handoff_written event.
@@ -509,21 +319,28 @@ func (d *liveDeps) Preflight(_ context.Context, t *tasks.Task) preflight.Verdict
 	return preflight.Check(d.dir, t)
 }
 
+func (d *liveDeps) currentTaskTitle() string {
+	if d.currentTask == nil {
+		return ""
+	}
+	return d.currentTask.Title
+}
+
+func (d *liveDeps) currentTaskDescription() string {
+	if d.currentTask == nil {
+		return ""
+	}
+	return d.currentTask.Description
+}
+
 // Decompose invokes the parser in decomposition mode to break a failed task into subtasks.
 // Returns ErrNoDecomposer if the parser role has no decompose_prompt configured.
 // Returns (nil, ErrNoDecomposer) if the result contains 0 or >5 tasks.
-func (d *liveDeps) Decompose(ctx context.Context, t *tasks.Task, fx *loops.FixResult, files []string) ([]tasks.Task, error) {
-	parserRole := d.cfg.Roles["parser"]
+func (d *liveDeps) Decompose(ctx context.Context, t *tasks.Task, fx *loops.FixResult, files []string, rc invoke.RunContext) ([]tasks.Task, error) {
+	parserRole := d.inv.Specs["parser"]
 	if parserRole.DecomposePrompt == "" {
 		return nil, loops.ErrNoDecomposer
 	}
-
-	tmpl, err := prompts.Load(filepath.Join(d.dir, parserRole.DecomposePrompt))
-	if err != nil {
-		return nil, loops.ErrNoDecomposer
-	}
-
-	mem, _ := memory.ReadAll(d.memPath)
 
 	// Use LastFeedback as both tester and critic feedback — they are not separately
 	// tracked in FixResult but the most recent failure context is sufficient.
@@ -532,8 +349,10 @@ func (d *liveDeps) Decompose(ctx context.Context, t *tasks.Task, fx *loops.FixRe
 		feedback = fx.LastFeedback
 	}
 
-	prompt := prompts.Interpolate(tmpl, map[string]string{
-		"MEMORY":                   mem,
+	pr, err := invoke.Role(ctx, d.inv, "parser", map[string]string{
+		invoke.VarArchiveRole:      "parser-decompose",
+		invoke.VarPromptPath:       parserRole.DecomposePrompt,
+		invoke.VarResultPath:       ".orquestalite/results/parser-decompose.json",
 		"TASK_ID":                  t.ID,
 		"TASK_TITLE":               t.Title,
 		"TASK_DESCRIPTION":         t.Description,
@@ -541,21 +360,9 @@ func (d *liveDeps) Decompose(ctx context.Context, t *tasks.Task, fx *loops.FixRe
 		"FILES_CHANGED_SO_FAR":     strings.Join(files, "\n"),
 		"TESTER_FEEDBACK":          feedback,
 		"CRITIC_FEEDBACK":          feedback,
-	})
-
-	// Invoke the parser role agents but write to a separate result file so that
-	// any in-flight parser.json is not overwritten.
-	decomposeResultPath := filepath.Join(d.dir, ".orquestalite", "results", "parser-decompose.json")
-	decomposeRole := parserRole
-	decomposeRole.ResultPath = ".orquestalite/results/parser-decompose.json"
-
-	if err := d.callRole(ctx, "parser", prompt, decomposeRole); err != nil {
-		return nil, fmt.Errorf("decompose callRole: %w", err)
-	}
-
-	pr, err := results.ParseParser(decomposeResultPath)
+	}, rc, results.ParseParser)
 	if err != nil {
-		return nil, fmt.Errorf("decompose parse result: %w", err)
+		return nil, fmt.Errorf("decompose parser role: %w", err)
 	}
 
 	if len(pr.Tasks) == 0 || len(pr.Tasks) > 5 {
@@ -591,62 +398,21 @@ type liveRoleRunner struct {
 }
 
 // RunCoder invokes the coder role for a single fix attempt.
-func (rr *liveRoleRunner) RunCoder(ctx context.Context, attempt int, fb loops.CoderFeedback) (loops.CoderOutcome, error) {
+func (rr *liveRoleRunner) RunCoder(ctx context.Context, rc invoke.RunContext, fb loops.CoderFeedback) (loops.CoderOutcome, error) {
 	d := rr.deps
-	role := d.cfg.Roles["coder"]
-
-	// When AgentOverride is set, route through a single-agent chain instead of
-	// the default chain so the escalated agent is used exclusively.
-	effectiveAgents := role.Agents
-	if fb.AgentOverride != "" {
-		effectiveAgents = []string{fb.AgentOverride}
-	}
-	effectiveRole := role
-	effectiveRole.Agents = effectiveAgents
-
-	tmpl, err := prompts.Load(filepath.Join(d.dir, role.Prompt))
-	if err != nil {
-		return loops.CoderOutcome{}, err
-	}
-	mem, _ := memory.ReadAll(d.memPath)
-
-	taskID := ""
-	taskTitle := ""
-	taskDesc := ""
-	if d.currentTask != nil {
-		taskID = d.currentTask.ID
-		taskTitle = d.currentTask.Title
-		taskDesc = d.currentTask.Description
-	}
-
-	prompt := prompts.Interpolate(tmpl, map[string]string{
-		"MEMORY":                   mem,
-		"TASK_ID":                  taskID,
-		"TASK_TITLE":               taskTitle,
-		"TASK_DESCRIPTION":         taskDesc,
-		"ATTEMPT_NUMBER":           strconv.Itoa(attempt),
+	r, err := invoke.Role(ctx, d.inv, "coder", map[string]string{
+		invoke.VarAgentOverride:    fb.AgentOverride,
+		"TASK_ID":                  rc.TaskID,
+		"TASK_TITLE":               d.currentTaskTitle(),
+		"TASK_DESCRIPTION":         d.currentTaskDescription(),
+		"ATTEMPT_NUMBER":           strconv.Itoa(rc.Attempt),
 		"TESTER_FEEDBACK":          fb.TesterFeedback,
 		"CRITIC_FEEDBACK":          fb.CriticFeedback,
 		"PREVIOUS_ATTEMPT_SUMMARY": fb.PreviousAttemptSummary,
 		"FILES_CHANGED_SO_FAR":     strings.Join(fb.FilesChangedSoFar, "\n"),
-	})
-
-	if err := d.callRole(ctx, "coder", prompt, effectiveRole); err != nil {
-		return loops.CoderOutcome{}, err
-	}
-
-	r, err := results.ParseCoder(filepath.Join(d.dir, role.ResultPath))
+	}, rc, results.ParseCoder)
 	if err != nil {
 		return loops.CoderOutcome{}, err
-	}
-
-	if r.NotesForMemory != nil {
-		_ = memory.Append(d.memPath, memory.Entry{
-			Cycle:  d.currentCycle,
-			TaskID: taskID,
-			Role:   "coder",
-			Body:   *r.NotesForMemory,
-		})
 	}
 
 	// Store files changed so tester and critic can reference them.
@@ -656,51 +422,17 @@ func (rr *liveRoleRunner) RunCoder(ctx context.Context, attempt int, fb loops.Co
 }
 
 // RunTester invokes the tester role after a coder attempt.
-func (rr *liveRoleRunner) RunTester(ctx context.Context, attempt int) (loops.TesterOutcome, error) {
+func (rr *liveRoleRunner) RunTester(ctx context.Context, rc invoke.RunContext) (loops.TesterOutcome, error) {
 	d := rr.deps
-	role := d.cfg.Roles["tester"]
-	tmpl, err := prompts.Load(filepath.Join(d.dir, role.Prompt))
+	r, err := invoke.Role(ctx, d.inv, "tester", map[string]string{
+		"TASK_ID":          rc.TaskID,
+		"TASK_TITLE":       d.currentTaskTitle(),
+		"TASK_DESCRIPTION": d.currentTaskDescription(),
+		"ATTEMPT_NUMBER":   strconv.Itoa(rc.Attempt),
+		"FILES_CHANGED":    strings.Join(rr.filesChanged, "\n"),
+	}, rc, results.ParseTester)
 	if err != nil {
 		return loops.TesterOutcome{}, err
-	}
-	mem, _ := memory.ReadAll(d.memPath)
-
-	taskTitle := ""
-	taskDesc := ""
-	taskID := ""
-	if d.currentTask != nil {
-		taskID = d.currentTask.ID
-		taskTitle = d.currentTask.Title
-		taskDesc = d.currentTask.Description
-	}
-
-	filesChanged := strings.Join(rr.filesChanged, "\n")
-
-	prompt := prompts.Interpolate(tmpl, map[string]string{
-		"MEMORY":           mem,
-		"TASK_ID":          taskID,
-		"TASK_TITLE":       taskTitle,
-		"TASK_DESCRIPTION": taskDesc,
-		"ATTEMPT_NUMBER":   strconv.Itoa(attempt),
-		"FILES_CHANGED":    filesChanged,
-	})
-
-	if err := d.callRole(ctx, "tester", prompt, role); err != nil {
-		return loops.TesterOutcome{}, err
-	}
-
-	r, err := results.ParseTester(filepath.Join(d.dir, role.ResultPath))
-	if err != nil {
-		return loops.TesterOutcome{}, err
-	}
-
-	if r.NotesForMemory != nil {
-		_ = memory.Append(d.memPath, memory.Entry{
-			Cycle:  d.currentCycle,
-			TaskID: taskID,
-			Role:   "tester",
-			Body:   *r.NotesForMemory,
-		})
 	}
 
 	var fb strings.Builder
@@ -716,51 +448,17 @@ func (rr *liveRoleRunner) RunTester(ctx context.Context, attempt int) (loops.Tes
 }
 
 // RunCritic invokes the critic role after the tester passes.
-func (rr *liveRoleRunner) RunCritic(ctx context.Context, attempt int) (loops.CriticOutcome, error) {
+func (rr *liveRoleRunner) RunCritic(ctx context.Context, rc invoke.RunContext) (loops.CriticOutcome, error) {
 	d := rr.deps
-	role := d.cfg.Roles["critic"]
-	tmpl, err := prompts.Load(filepath.Join(d.dir, role.Prompt))
+	r, err := invoke.Role(ctx, d.inv, "critic", map[string]string{
+		"TASK_ID":          rc.TaskID,
+		"TASK_TITLE":       d.currentTaskTitle(),
+		"TASK_DESCRIPTION": d.currentTaskDescription(),
+		"ATTEMPT_NUMBER":   strconv.Itoa(rc.Attempt),
+		"FILES_CHANGED":    strings.Join(rr.filesChanged, "\n"),
+	}, rc, results.ParseCritic)
 	if err != nil {
 		return loops.CriticOutcome{}, err
-	}
-	mem, _ := memory.ReadAll(d.memPath)
-
-	taskTitle := ""
-	taskDesc := ""
-	taskID := ""
-	if d.currentTask != nil {
-		taskID = d.currentTask.ID
-		taskTitle = d.currentTask.Title
-		taskDesc = d.currentTask.Description
-	}
-
-	filesChanged := strings.Join(rr.filesChanged, "\n")
-
-	prompt := prompts.Interpolate(tmpl, map[string]string{
-		"MEMORY":           mem,
-		"TASK_ID":          taskID,
-		"TASK_TITLE":       taskTitle,
-		"TASK_DESCRIPTION": taskDesc,
-		"ATTEMPT_NUMBER":   strconv.Itoa(attempt),
-		"FILES_CHANGED":    filesChanged,
-	})
-
-	if err := d.callRole(ctx, "critic", prompt, role); err != nil {
-		return loops.CriticOutcome{}, err
-	}
-
-	r, err := results.ParseCritic(filepath.Join(d.dir, role.ResultPath))
-	if err != nil {
-		return loops.CriticOutcome{}, err
-	}
-
-	if r.NotesForMemory != nil {
-		_ = memory.Append(d.memPath, memory.Entry{
-			Cycle:  d.currentCycle,
-			TaskID: taskID,
-			Role:   "critic",
-			Body:   *r.NotesForMemory,
-		})
 	}
 
 	var fb strings.Builder

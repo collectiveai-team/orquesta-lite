@@ -1,0 +1,349 @@
+package invoke
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/lionelchamorro/orquestalite/internal/agenthealth"
+	"github.com/lionelchamorro/orquestalite/internal/config"
+	"github.com/lionelchamorro/orquestalite/internal/eventlog"
+	"github.com/lionelchamorro/orquestalite/internal/fallback"
+	"github.com/lionelchamorro/orquestalite/internal/memory"
+	"github.com/lionelchamorro/orquestalite/internal/prompts"
+	"github.com/lionelchamorro/orquestalite/internal/providers"
+	"github.com/lionelchamorro/orquestalite/internal/results"
+	"github.com/lionelchamorro/orquestalite/internal/runner"
+)
+
+const (
+	VarAgentOverride = "__AGENT_OVERRIDE"
+	VarArchiveRole   = "__ARCHIVE_ROLE"
+	VarPromptPath    = "__PROMPT_PATH"
+	VarResultPath    = "__RESULT_PATH"
+)
+
+type AgentRunner interface {
+	Run(ctx context.Context, s runner.Spec) (*runner.Result, error)
+}
+
+type ExecRunner struct{}
+
+func (ExecRunner) Run(ctx context.Context, s runner.Spec) (*runner.Result, error) {
+	return runner.RunAgent(ctx, s)
+}
+
+type RoleInvoker struct {
+	Specs                   map[string]config.RoleSpec
+	Dir                     string
+	Fallback                *fallback.Caller
+	Log                     *eventlog.Logger
+	Health                  *agenthealth.Tracker
+	MemPath                 string
+	Runner                  AgentRunner
+	DefaultRateLimitPattern string
+	AgentHealthThreshold    int
+	OnAgentSuccess          func(role, agent string)
+}
+
+func Role[T MemoryNoting](
+	ctx context.Context,
+	inv *RoleInvoker,
+	roleName string,
+	vars map[string]string,
+	rc RunContext,
+	parse func(path string) (*T, error),
+) (*T, error) {
+	if inv == nil {
+		return nil, fmt.Errorf("role invoker is nil")
+	}
+	spec, ok := inv.Specs[roleName]
+	if !ok {
+		return nil, fmt.Errorf("role %q is not configured", roleName)
+	}
+
+	roleVars := copyVars(vars)
+	promptPath := takeVar(roleVars, VarPromptPath, spec.PromptPath)
+	resultPath := takeVar(roleVars, VarResultPath, spec.ResultPath)
+	archiveRole := takeVar(roleVars, VarArchiveRole, roleName)
+	agentOverride := takeVar(roleVars, VarAgentOverride, "")
+
+	mem, _ := memory.ReadAll(inv.MemPath)
+	roleVars["MEMORY"] = mem
+
+	tmpl, err := prompts.Load(absPath(inv.Dir, promptPath))
+	if err != nil {
+		return nil, err
+	}
+	prompt := prompts.Interpolate(tmpl, roleVars)
+	resultAbs := absPath(inv.Dir, resultPath)
+
+	if err := inv.run(ctx, roleName, spec, agentOverride, prompt, resultPath, resultAbs); err != nil {
+		return nil, err
+	}
+
+	raw, err := os.ReadFile(resultAbs)
+	if err != nil {
+		return nil, fmt.Errorf("read role result %s: %w", resultAbs, err)
+	}
+	if err := results.Archive(inv.Dir, archiveRole, rc.TaskID, rc.Cycle, rc.Attempt, raw); err != nil {
+		return nil, err
+	}
+
+	parsed, err := parse(resultAbs)
+	if err != nil {
+		return nil, err
+	}
+	if note := (*parsed).MemoryNote(); note != nil {
+		taskID := rc.TaskID
+		if taskID == "" {
+			taskID = "-"
+		}
+		_ = memory.Append(inv.MemPath, memory.Entry{
+			Cycle:  rc.Cycle,
+			TaskID: taskID,
+			Role:   roleName,
+			Body:   *note,
+		})
+	}
+	return parsed, nil
+}
+
+func (inv *RoleInvoker) run(ctx context.Context, roleName string, role config.RoleSpec, agentOverride, prompt, relResultPath, absResultPath string) error {
+	agents, err := selectAgents(role, agentOverride)
+	if err != nil {
+		return err
+	}
+	agentByName := make(map[string]config.AgentSpec, len(agents))
+	chain := make([]string, 0, len(agents))
+	for _, ag := range agents {
+		agentByName[ag.Name] = ag
+		chain = append(chain, ag.Name)
+	}
+
+	if inv.Health != nil {
+		chain = inv.Health.Filter(chain)
+		if len(chain) == 0 {
+			return fmt.Errorf("all agents for role %q are marked skipped: %v", roleName, inv.Health.SkippedAgents())
+		}
+	}
+
+	var lastResult *runner.Result
+	var lastErr error
+	var triedAgents []string
+	fc := inv.Fallback
+	if fc == nil {
+		fc = fallback.NewCaller(fallback.Config{})
+	}
+
+	_, _, err = fc.Call(ctx, chain, func(ctx context.Context, agentName string) (fallback.Outcome, error) {
+		ag := agentByName[agentName]
+		pattern := ag.RatePattern
+		if pattern == "" {
+			pattern = inv.DefaultRateLimitPattern
+		}
+		spec := runner.Spec{
+			Cmd:                        ag.Cmd,
+			Provider:                   ag.Provider,
+			Model:                      ag.Model,
+			Effort:                     ag.Effort,
+			DangerouslySkipPermissions: ag.SkipPerms,
+			Prompt:                     prompt,
+			ResultPath:                 absResultPath,
+			Timeout:                    role.Timeout,
+			RateLimitPattern:           pattern,
+			TemplateVars: map[string]string{
+				"RESULT_PATH": absResultPath,
+				"ROLE":        roleName,
+			},
+		}
+		r, err := inv.runner().Run(ctx, spec)
+		if err != nil {
+			return fallback.Outcome{}, err
+		}
+		lastResult = r
+		triedAgents = append(triedAgents, agentName)
+
+		shouldFallback, fallbackReason := Classify(r)
+		if shouldFallback {
+			lastErr = fmt.Errorf("agent %q (role %q) did not write %s: exit=%d; detail: %s",
+				agentName, roleName, relResultPath, r.ExitCode, errorDetail(r))
+		}
+
+		inv.recordHealth(roleName, agentName, shouldFallback, fallbackReason)
+		if !shouldFallback && inv.OnAgentSuccess != nil {
+			inv.OnAgentSuccess(roleName, agentName)
+		}
+		inv.logAgentRun(roleName, agentName, ag, spec, r, fallbackReason)
+
+		return fallback.Outcome{
+			RateLimited:    r.RateLimited,
+			ResultExists:   r.ResultExists,
+			TimedOut:       r.TimedOut,
+			ShouldFallback: shouldFallback,
+			FallbackReason: fallbackReason,
+		}, nil
+	})
+
+	if errors.Is(err, fallback.ErrAllAgentsFailed) {
+		tried := strings.Join(triedAgents, ", ")
+		lastErrStr := ""
+		if lastErr != nil {
+			lastErrStr = lastErr.Error()
+		} else if lastResult != nil {
+			lastErrStr = fmt.Sprintf("exit=%d; detail: %s", lastResult.ExitCode, errorDetail(lastResult))
+		}
+		return fmt.Errorf("all agents failed for role %q: tried [%s]; last error: %s", roleName, tried, lastErrStr)
+	}
+	return err
+}
+
+func (inv *RoleInvoker) runner() AgentRunner {
+	if inv.Runner != nil {
+		return inv.Runner
+	}
+	return ExecRunner{}
+}
+
+func (inv *RoleInvoker) recordHealth(roleName, agentName string, shouldFallback bool, fallbackReason string) {
+	if inv.Health == nil {
+		return
+	}
+	switch {
+	case !shouldFallback:
+		inv.Health.MarkSuccess(agentName)
+	case fallbackReason != "rate_limit":
+		if inv.Health.MarkFailure(agentName, agenthealth.ReasonResultMissing) && inv.Log != nil {
+			threshold := inv.AgentHealthThreshold
+			if threshold == 0 {
+				threshold = 2
+			}
+			inv.Log.Log(eventlog.Event{Type: "agent_marked_skipped", Fields: map[string]any{
+				"agent":                agentName,
+				"role":                 roleName,
+				"reason":               "consecutive_failures",
+				"threshold":            threshold,
+				"last_fallback_reason": fallbackReason,
+			}})
+		}
+	}
+}
+
+func (inv *RoleInvoker) logAgentRun(roleName, agentName string, ag config.AgentSpec, spec runner.Spec, r *runner.Result, fallbackReason string) {
+	if inv.Log == nil {
+		return
+	}
+	fields := map[string]any{
+		"role":             roleName,
+		"agent":            agentName,
+		"provider":         ag.Provider,
+		"model":            ag.Model,
+		"duration_s":       int(r.Duration.Seconds()),
+		"timed_out":        r.TimedOut,
+		"rate_limited":     r.RateLimited,
+		"result_exists":    r.ResultExists,
+		"exit_code":        r.ExitCode,
+		"session_id":       r.SessionID,
+		"final_text_tail":  runner.TailString(r.FinalText, 1000),
+		"tool_calls_count": toolCallsCount(r),
+		"stderr_tail":      r.StderrTail(2048),
+		"stdout_tail":      r.StdoutTail(2048),
+		"fallback_reason":  fallbackReason,
+	}
+	if cmdLine := redactedCmdLine(ag.Cmd, spec.TemplateVars); cmdLine != "" {
+		fields["cmd_line"] = cmdLine
+	}
+	if r.CodexHeader != nil {
+		fields["codex_header"] = r.CodexHeader
+	}
+	inv.Log.Log(eventlog.Event{Type: "agent_run", Fields: fields})
+}
+
+func selectAgents(role config.RoleSpec, override string) ([]config.AgentSpec, error) {
+	if override == "" {
+		return role.Agents, nil
+	}
+	for _, ag := range append(append([]config.AgentSpec{}, role.Agents...), role.EscalationLadder...) {
+		if ag.Name == override {
+			return []config.AgentSpec{ag}, nil
+		}
+	}
+	return nil, fmt.Errorf("agent override %q is not configured for role", override)
+}
+
+func copyVars(vars map[string]string) map[string]string {
+	out := make(map[string]string, len(vars)+1)
+	for k, v := range vars {
+		out[k] = v
+	}
+	return out
+}
+
+func takeVar(vars map[string]string, key, def string) string {
+	if v, ok := vars[key]; ok {
+		delete(vars, key)
+		return v
+	}
+	return def
+}
+
+func absPath(dir, path string) string {
+	if filepath.IsAbs(path) {
+		return path
+	}
+	return filepath.Join(dir, path)
+}
+
+func redactedCmdLine(cmd []string, vars map[string]string) string {
+	if len(cmd) == 0 {
+		return ""
+	}
+	parts := make([]string, len(cmd))
+	for i, tok := range cmd {
+		s := strings.ReplaceAll(tok, "{{PROMPT}}", "<elided>")
+		for k, v := range vars {
+			s = strings.ReplaceAll(s, "{{"+k+"}}", v)
+		}
+		parts[i] = s
+	}
+	return strings.Join(parts, " ")
+}
+
+func errorDetail(res *runner.Result) string {
+	if strings.TrimSpace(res.Stderr) != "" {
+		return res.StderrTail(2048)
+	}
+	if strings.TrimSpace(res.FinalText) != "" {
+		return runner.TailString(res.FinalText, 2048)
+	}
+	return lastNonEmptyLines(res.Stdout, 20)
+}
+
+func lastNonEmptyLines(s string, n int) string {
+	lines := strings.Split(s, "\n")
+	kept := make([]string, 0, n)
+	for i := len(lines) - 1; i >= 0 && len(kept) < n; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	for i, j := 0, len(kept)-1; i < j; i, j = i+1, j-1 {
+		kept[i], kept[j] = kept[j], kept[i]
+	}
+	return strings.Join(kept, "\n")
+}
+
+func toolCallsCount(res *runner.Result) int {
+	count := 0
+	for _, ev := range res.Events {
+		if ev.Type == providers.EventToolCall {
+			count++
+		}
+	}
+	return count
+}

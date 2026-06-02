@@ -2,6 +2,8 @@ package loops
 
 import (
 	"context"
+
+	"github.com/lionelchamorro/orquestalite/internal/invoke"
 )
 
 type CoderOutcome struct {
@@ -31,9 +33,9 @@ type CoderFeedback struct {
 }
 
 type RoleRunner interface {
-	RunCoder(ctx context.Context, attempt int, fb CoderFeedback) (CoderOutcome, error)
-	RunTester(ctx context.Context, attempt int) (TesterOutcome, error)
-	RunCritic(ctx context.Context, attempt int) (CriticOutcome, error)
+	RunCoder(ctx context.Context, rc invoke.RunContext, fb CoderFeedback) (CoderOutcome, error)
+	RunTester(ctx context.Context, rc invoke.RunContext) (TesterOutcome, error)
+	RunCritic(ctx context.Context, rc invoke.RunContext) (CriticOutcome, error)
 }
 
 type FixStatus int
@@ -71,7 +73,7 @@ func appendUnique(dst []string, src []string) []string {
 	return dst
 }
 
-func RunFix(ctx context.Context, cfg FixConfig, r RoleRunner) (*FixResult, error) {
+func RunFix(ctx context.Context, cfg FixConfig, r RoleRunner, baseRC invoke.RunContext) (*FixResult, error) {
 	var fb CoderFeedback
 	var prevHash string
 	sameHashCount := 0
@@ -81,10 +83,12 @@ func RunFix(ctx context.Context, cfg FixConfig, r RoleRunner) (*FixResult, error
 	var filesChangedSoFar []string
 
 	for attempt := 1; attempt <= cfg.MaxIterations; attempt++ {
+		rc := baseRC
+		rc.Attempt = attempt
 		fb.PreviousAttemptSummary = previousAttemptSummary
 		fb.FilesChangedSoFar = filesChangedSoFar
 
-		coder, err := r.RunCoder(ctx, attempt, fb)
+		coder, err := r.RunCoder(ctx, rc, fb)
 		if err != nil {
 			return nil, err
 		}
@@ -93,7 +97,7 @@ func RunFix(ctx context.Context, cfg FixConfig, r RoleRunner) (*FixResult, error
 		previousAttemptSummary = coder.Summary
 		filesChangedSoFar = appendUnique(filesChangedSoFar, coder.FilesChanged)
 
-		t, err := r.RunTester(ctx, attempt)
+		t, err := r.RunTester(ctx, rc)
 		if err != nil {
 			return nil, err
 		}
@@ -146,7 +150,7 @@ func RunFix(ctx context.Context, cfg FixConfig, r RoleRunner) (*FixResult, error
 		}
 
 		// Tester passed — run critic.
-		c, err := r.RunCritic(ctx, attempt)
+		c, err := r.RunCritic(ctx, rc)
 		if err != nil {
 			return nil, err
 		}

@@ -17,6 +17,8 @@ import (
 	"github.com/lionelchamorro/orquestalite/internal/config"
 	"github.com/lionelchamorro/orquestalite/internal/eventlog"
 	"github.com/lionelchamorro/orquestalite/internal/fallback"
+	"github.com/lionelchamorro/orquestalite/internal/invoke"
+	"github.com/lionelchamorro/orquestalite/internal/loops"
 	"github.com/lionelchamorro/orquestalite/internal/runner"
 	"github.com/lionelchamorro/orquestalite/internal/tasks"
 )
@@ -130,6 +132,83 @@ func writeFakeTeamJSON(t *testing.T, dir, cliPath string) {
 	teamPath := filepath.Join(dir, "team.json")
 	if err := os.WriteFile(teamPath, raw, 0o644); err != nil {
 		t.Fatalf("write team.json: %v", err)
+	}
+}
+
+type decomposeArchiveRunner struct{}
+
+func (decomposeArchiveRunner) Run(_ context.Context, spec runner.Spec) (*runner.Result, error) {
+	if err := os.MkdirAll(filepath.Dir(spec.ResultPath), 0o755); err != nil {
+		return nil, err
+	}
+	raw := []byte(`{"tasks":[{"title":"smaller","description":"smaller task","priority":1}],"notes_for_memory":null}`)
+	if err := os.WriteFile(spec.ResultPath, raw, 0o644); err != nil {
+		return nil, err
+	}
+	return &runner.Result{ResultExists: true, ExitCode: 0, Duration: time.Millisecond}, nil
+}
+
+func TestDecomposeArchivesPerSourceTaskAtSameAttempt(t *testing.T) {
+	dir := t.TempDir()
+	promptPath := filepath.Join(dir, "prompts", "parser-decompose.md")
+	if err := os.MkdirAll(filepath.Dir(promptPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(promptPath, []byte("decompose {{TASK_ID}}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	deps := &liveDeps{
+		dir:     dir,
+		memPath: filepath.Join(dir, ".orquestalite", "memory.md"),
+		inv: &invoke.RoleInvoker{
+			Dir:     dir,
+			MemPath: filepath.Join(dir, ".orquestalite", "memory.md"),
+			Runner:  decomposeArchiveRunner{},
+			Specs: map[string]config.RoleSpec{
+				"parser": {
+					Agents: []config.AgentSpec{{
+						Name: "fake_parser",
+						Cmd:  []string{"fake"},
+					}},
+					PromptPath:      "prompts/parser.md",
+					ResultPath:      ".orquestalite/results/parser.json",
+					DecomposePrompt: "prompts/parser-decompose.md",
+					Timeout:         time.Minute,
+				},
+			},
+		},
+	}
+
+	for _, taskID := range []string{"T001", "T002"} {
+		task := &tasks.Task{ID: taskID, Title: "large task", Description: "break this up", Priority: 1}
+		got, err := deps.Decompose(
+			context.Background(),
+			task,
+			&loops.FixResult{LastFeedback: "agent repeated failure"},
+			nil,
+			invoke.RunContext{TaskID: taskID, Cycle: 3, Attempt: 2},
+		)
+		if err != nil {
+			t.Fatalf("Decompose(%s): %v", taskID, err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("Decompose(%s) returned %d subtasks, want 1", taskID, len(got))
+		}
+	}
+
+	for _, taskID := range []string{"T001", "T002"} {
+		archivePath := filepath.Join(
+			dir,
+			".orquestalite",
+			"results",
+			"by-task",
+			taskID,
+			"parser-decompose.c3.a2.json",
+		)
+		if _, err := os.Stat(archivePath); err != nil {
+			t.Fatalf("archive for %s missing: %v", taskID, err)
+		}
 	}
 }
 
