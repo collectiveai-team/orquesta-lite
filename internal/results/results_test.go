@@ -8,6 +8,14 @@ import (
 	"github.com/lionelchamorro/orquestalite/internal/invoke"
 )
 
+var (
+	_ invoke.MemoryNoting = (*ParserResult)(nil)
+	_ invoke.MemoryNoting = (*CoderResult)(nil)
+	_ invoke.MemoryNoting = (*TesterResult)(nil)
+	_ invoke.MemoryNoting = (*CriticResult)(nil)
+	_ invoke.MemoryNoting = (*ReviewerResult)(nil)
+)
+
 func write(t *testing.T, body string) string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), "r.json")

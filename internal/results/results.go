@@ -20,12 +20,16 @@ type ParserResult struct {
 	NotesForMemory *string      `json:"notes_for_memory"`
 }
 
+func (r *ParserResult) MemoryNote() *string { return r.NotesForMemory }
+
 type CoderResult struct {
 	Status         string   `json:"status"`
 	Summary        string   `json:"summary"`
 	FilesChanged   []string `json:"files_changed"`
 	NotesForMemory *string  `json:"notes_for_memory"`
 }
+
+func (r *CoderResult) MemoryNote() *string { return r.NotesForMemory }
 
 type TestFailure struct {
 	Test    string `json:"test"`
@@ -40,6 +44,8 @@ type TesterResult struct {
 	NotesForMemory *string       `json:"notes_for_memory"`
 }
 
+func (r *TesterResult) MemoryNote() *string { return r.NotesForMemory }
+
 type Concern struct {
 	Severity   string `json:"severity"`
 	Where      string `json:"where"`
@@ -53,6 +59,8 @@ type CriticResult struct {
 	NotesForMemory *string   `json:"notes_for_memory"`
 }
 
+func (r *CriticResult) MemoryNote() *string { return r.NotesForMemory }
+
 type ReviewerNewTask struct {
 	Title       string `json:"title"`
 	Description string `json:"description"`
@@ -65,6 +73,8 @@ type ReviewerResult struct {
 	ShouldStop     *bool             `json:"should_stop"`
 	NotesForMemory *string           `json:"notes_for_memory"`
 }
+
+func (r *ReviewerResult) MemoryNote() *string { return r.NotesForMemory }
 
 func read(path string, into any) error {
 	raw, err := os.ReadFile(path)
