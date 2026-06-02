@@ -21,6 +21,7 @@ import (
 	"github.com/lionelchamorro/orquestalite/internal/fallback"
 	"github.com/lionelchamorro/orquestalite/internal/gitx"
 	"github.com/lionelchamorro/orquestalite/internal/handoff"
+	"github.com/lionelchamorro/orquestalite/internal/invoke"
 	"github.com/lionelchamorro/orquestalite/internal/loops"
 	"github.com/lionelchamorro/orquestalite/internal/memory"
 	"github.com/lionelchamorro/orquestalite/internal/preflight"
@@ -360,27 +361,7 @@ func (d *liveDeps) callRole(ctx context.Context, roleName, prompt string, role c
 			cmdLine = strings.Join(parts, " ")
 		}
 
-		// Determine fallback disposition.
-		// Precedence: rate_limit → timed_out (agent_crashed) → result_missing → success.
-		// TimedOut must be checked before !ResultExists because a timed-out agent
-		// always has ResultExists=false; checking !ResultExists first would shadow
-		// the more-specific "agent_crashed" reason.
-		var shouldFallback bool
-		var fallbackReason string
-		switch {
-		case r.RateLimited:
-			shouldFallback = true
-			fallbackReason = "rate_limit"
-		case r.TimedOut:
-			shouldFallback = true
-			fallbackReason = "agent_crashed"
-		case !r.ResultExists:
-			shouldFallback = true
-			fallbackReason = "result_missing"
-		// "invalid_contract" is reserved for Phase 3 contract validation.
-		default:
-			shouldFallback = false
-		}
+		shouldFallback, fallbackReason := invoke.Classify(r)
 
 		// Record last non-success error for reporting.
 		if shouldFallback {
