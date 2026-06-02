@@ -34,6 +34,8 @@ import (
 // in a row almost always means a stale model, wrong auth, or missing CLI.
 const agentHealthThreshold = 2
 
+var staticRunPreflightRoles = []string{"parser", "coder", "tester", "critic", "reviewer"}
+
 // RunOptions holds the parameters for the run command.
 type RunOptions struct {
 	ProjectDir string
@@ -73,7 +75,7 @@ func Run(ctx context.Context, opts RunOptions) error {
 	})
 
 	tracker := agenthealth.New(agentHealthThreshold)
-	runStaticAgentPreflight(cfg, tracker, logger)
+	runStaticAgentPreflight(cfg, tracker, logger, staticRunPreflightRoles)
 
 	deps := &liveDeps{
 		cfg:          cfg,
@@ -125,15 +127,19 @@ func newLiveRoleInvoker(
 	}, nil
 }
 
-// runStaticAgentPreflight verifies that each agent referenced by any role
+// runStaticAgentPreflight verifies that each agent referenced by the chosen roles
 // either declares a provider that orq-lite knows about (claude, codex) and
 // whose CLI is on PATH, OR a cmd whose first token is on PATH. Agents that
 // fail the check are marked skipped in the tracker so the fallback caller
 // can move past them without burning a real invocation. Never blocks the run
 // — the goal is to surface obvious misconfiguration cheaply.
-func runStaticAgentPreflight(cfg *config.Config, tracker *agenthealth.Tracker, log *eventlog.Logger) {
+func runStaticAgentPreflight(cfg *config.Config, tracker *agenthealth.Tracker, log *eventlog.Logger, roles []string) {
 	used := map[string]bool{}
-	for _, role := range cfg.Roles {
+	for _, roleName := range roles {
+		role, ok := cfg.Roles[roleName]
+		if !ok {
+			continue
+		}
 		for _, name := range role.Agents {
 			used[name] = true
 		}

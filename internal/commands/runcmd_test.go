@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lionelchamorro/orquestalite/internal/agenthealth"
 	"github.com/lionelchamorro/orquestalite/internal/config"
 	"github.com/lionelchamorro/orquestalite/internal/eventlog"
 	"github.com/lionelchamorro/orquestalite/internal/fallback"
@@ -208,6 +210,54 @@ func TestDecomposeArchivesPerSourceTaskAtSameAttempt(t *testing.T) {
 		)
 		if _, err := os.Stat(archivePath); err != nil {
 			t.Fatalf("archive for %s missing: %v", taskID, err)
+		}
+	}
+}
+
+func TestRunStaticAgentPreflightScopesToRequestedRoles(t *testing.T) {
+	dir := t.TempDir()
+	log, err := eventlog.Open(filepath.Join(dir, "run.log"), io.Discard)
+	if err != nil {
+		t.Fatalf("open logger: %v", err)
+	}
+	defer log.Close()
+
+	missingBinary := func(name string) string {
+		return filepath.Join(dir, name)
+	}
+	cfg := &config.Config{
+		Agents: map[string]config.Agent{
+			"parser_primary":    {Cmd: []string{missingBinary("parser-primary")}},
+			"parser_escalated":  {Cmd: []string{missingBinary("parser-escalated")}},
+			"coder_only":        {Cmd: []string{missingBinary("coder-only")}},
+			"reviewer_only":     {Cmd: []string{missingBinary("reviewer-only")}},
+			"unreferenced_only": {Cmd: []string{missingBinary("unreferenced-only")}},
+		},
+		Roles: map[string]config.Role{
+			"parser": {
+				Agents:           []string{"parser_primary"},
+				EscalationLadder: []string{"parser_escalated"},
+			},
+			"coder": {
+				Agents: []string{"coder_only"},
+			},
+			"reviewer": {
+				Agents: []string{"reviewer_only"},
+			},
+		},
+	}
+
+	tracker := agenthealth.New(agentHealthThreshold)
+	runStaticAgentPreflight(cfg, tracker, log, []string{"parser"})
+
+	for _, name := range []string{"parser_primary", "parser_escalated"} {
+		if reason, ok := tracker.IsSkipped(name); !ok || reason != agenthealth.ReasonUnreachable {
+			t.Fatalf("%s skipped = (%q, %v), want (%q, true)", name, reason, ok, agenthealth.ReasonUnreachable)
+		}
+	}
+	for _, name := range []string{"coder_only", "reviewer_only", "unreferenced_only"} {
+		if reason, ok := tracker.IsSkipped(name); ok {
+			t.Fatalf("%s was skipped with reason %q; want untouched", name, reason)
 		}
 	}
 }
