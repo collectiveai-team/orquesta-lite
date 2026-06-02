@@ -313,7 +313,7 @@ func (d *liveDeps) CycleBaseSHA(_ context.Context) (string, error) {
 // RunParser invokes the parser role with the given plan text and returns its result.
 // The parser prompt uses {{MEMORY}} and {{PLAN}} interpolation variables.
 func (d *liveDeps) RunParser(ctx context.Context, plan string) (*results.ParserResult, error) {
-	return invoke.Role(ctx, d.inv, "parser", map[string]string{"PLAN": plan}, invoke.RunContext{TaskID: "_plan", Attempt: 1}, results.ParseParser)
+	return invoke.Role(ctx, d.inv, "parser", invoke.RoleCall{Vars: map[string]string{"PLAN": plan}}, invoke.RunContext{TaskID: "_plan", Attempt: 1}, results.ParseParser)
 }
 
 // RunReviewer invokes the reviewer role and returns its parsed result.
@@ -328,12 +328,12 @@ func (d *liveDeps) RunReviewer(ctx context.Context, rc invoke.RunContext) (resul
 		gitLog, _ = gitx.LogStat(d.dir, "HEAD~5")
 	}
 
-	r, err := invoke.Role(ctx, d.inv, "reviewer", map[string]string{
+	r, err := invoke.Role(ctx, d.inv, "reviewer", invoke.RoleCall{Vars: map[string]string{
 		"REVIEW_CYCLE":   fmt.Sprintf("%d", rc.Cycle),
 		"CYCLE_BASE_SHA": rc.CycleBaseSHA,
 		"TASKS_JSON":     string(tasksRaw),
 		"GIT_LOG":        gitLog,
-	}, rc, results.ParseReviewer)
+	}}, rc, results.ParseReviewer)
 	if err != nil {
 		return results.ReviewerResult{}, err
 	}
@@ -393,18 +393,19 @@ func (d *liveDeps) Decompose(ctx context.Context, t *tasks.Task, fx *loops.FixRe
 		feedback = fx.LastFeedback
 	}
 
-	pr, err := invoke.Role(ctx, d.inv, "parser", map[string]string{
-		invoke.VarArchiveRole:      "parser-decompose",
-		invoke.VarPromptPath:       parserRole.DecomposePrompt,
-		invoke.VarResultPath:       ".orquestalite/results/parser-decompose.json",
-		"TASK_ID":                  t.ID,
-		"TASK_TITLE":               t.Title,
-		"TASK_DESCRIPTION":         t.Description,
-		"PREVIOUS_ATTEMPT_SUMMARY": feedback,
-		"FILES_CHANGED_SO_FAR":     strings.Join(files, "\n"),
-		"TESTER_FEEDBACK":          feedback,
-		"CRITIC_FEEDBACK":          feedback,
-	}, rc, results.ParseParser)
+	pr, err := invoke.Role(ctx, d.inv, "parser", invoke.RoleCall{
+		ArchiveRole: "parser-decompose",
+		PromptPath:  parserRole.DecomposePrompt,
+		ResultPath:  ".orquestalite/results/parser-decompose.json",
+		Vars: map[string]string{
+			"TASK_ID":                  t.ID,
+			"TASK_TITLE":               t.Title,
+			"TASK_DESCRIPTION":         t.Description,
+			"PREVIOUS_ATTEMPT_SUMMARY": feedback,
+			"FILES_CHANGED_SO_FAR":     strings.Join(files, "\n"),
+			"TESTER_FEEDBACK":          feedback,
+			"CRITIC_FEEDBACK":          feedback,
+		}}, rc, results.ParseParser)
 	if err != nil {
 		return nil, fmt.Errorf("decompose parser role: %w", err)
 	}
@@ -444,17 +445,18 @@ type liveRoleRunner struct {
 // RunCoder invokes the coder role for a single fix attempt.
 func (rr *liveRoleRunner) RunCoder(ctx context.Context, rc invoke.RunContext, fb loops.CoderFeedback) (loops.CoderOutcome, error) {
 	d := rr.deps
-	r, err := invoke.Role(ctx, d.inv, "coder", map[string]string{
-		invoke.VarAgentOverride:    fb.AgentOverride,
-		"TASK_ID":                  rc.TaskID,
-		"TASK_TITLE":               d.currentTaskTitle(),
-		"TASK_DESCRIPTION":         d.currentTaskDescription(),
-		"ATTEMPT_NUMBER":           strconv.Itoa(rc.Attempt),
-		"TESTER_FEEDBACK":          fb.TesterFeedback,
-		"CRITIC_FEEDBACK":          fb.CriticFeedback,
-		"PREVIOUS_ATTEMPT_SUMMARY": fb.PreviousAttemptSummary,
-		"FILES_CHANGED_SO_FAR":     strings.Join(fb.FilesChangedSoFar, "\n"),
-	}, rc, results.ParseCoder)
+	r, err := invoke.Role(ctx, d.inv, "coder", invoke.RoleCall{
+		AgentOverride: fb.AgentOverride,
+		Vars: map[string]string{
+			"TASK_ID":                  rc.TaskID,
+			"TASK_TITLE":               d.currentTaskTitle(),
+			"TASK_DESCRIPTION":         d.currentTaskDescription(),
+			"ATTEMPT_NUMBER":           strconv.Itoa(rc.Attempt),
+			"TESTER_FEEDBACK":          fb.TesterFeedback,
+			"CRITIC_FEEDBACK":          fb.CriticFeedback,
+			"PREVIOUS_ATTEMPT_SUMMARY": fb.PreviousAttemptSummary,
+			"FILES_CHANGED_SO_FAR":     strings.Join(fb.FilesChangedSoFar, "\n"),
+		}}, rc, results.ParseCoder)
 	if err != nil {
 		return loops.CoderOutcome{}, err
 	}
@@ -468,13 +470,13 @@ func (rr *liveRoleRunner) RunCoder(ctx context.Context, rc invoke.RunContext, fb
 // RunTester invokes the tester role after a coder attempt.
 func (rr *liveRoleRunner) RunTester(ctx context.Context, rc invoke.RunContext) (loops.TesterOutcome, error) {
 	d := rr.deps
-	r, err := invoke.Role(ctx, d.inv, "tester", map[string]string{
+	r, err := invoke.Role(ctx, d.inv, "tester", invoke.RoleCall{Vars: map[string]string{
 		"TASK_ID":          rc.TaskID,
 		"TASK_TITLE":       d.currentTaskTitle(),
 		"TASK_DESCRIPTION": d.currentTaskDescription(),
 		"ATTEMPT_NUMBER":   strconv.Itoa(rc.Attempt),
 		"FILES_CHANGED":    strings.Join(rr.filesChanged, "\n"),
-	}, rc, results.ParseTester)
+	}}, rc, results.ParseTester)
 	if err != nil {
 		return loops.TesterOutcome{}, err
 	}
@@ -494,13 +496,13 @@ func (rr *liveRoleRunner) RunTester(ctx context.Context, rc invoke.RunContext) (
 // RunCritic invokes the critic role after the tester passes.
 func (rr *liveRoleRunner) RunCritic(ctx context.Context, rc invoke.RunContext) (loops.CriticOutcome, error) {
 	d := rr.deps
-	r, err := invoke.Role(ctx, d.inv, "critic", map[string]string{
+	r, err := invoke.Role(ctx, d.inv, "critic", invoke.RoleCall{Vars: map[string]string{
 		"TASK_ID":          rc.TaskID,
 		"TASK_TITLE":       d.currentTaskTitle(),
 		"TASK_DESCRIPTION": d.currentTaskDescription(),
 		"ATTEMPT_NUMBER":   strconv.Itoa(rc.Attempt),
 		"FILES_CHANGED":    strings.Join(rr.filesChanged, "\n"),
-	}, rc, results.ParseCritic)
+	}}, rc, results.ParseCritic)
 	if err != nil {
 		return loops.CriticOutcome{}, err
 	}

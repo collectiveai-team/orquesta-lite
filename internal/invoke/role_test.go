@@ -86,7 +86,7 @@ func TestRoleRunsArchivesParsesAndAppendsMemory(t *testing.T) {
 		context.Background(),
 		inv,
 		"tester",
-		map[string]string{"TASK_ID": "T123"},
+		RoleCall{Vars: map[string]string{"TASK_ID": "T123"}},
 		RunContext{TaskID: "T123", Cycle: 4, Attempt: 2},
 		func(path string) (*fakeRoleResult, error) {
 			raw, err := os.ReadFile(path)
@@ -122,5 +122,87 @@ func TestRoleRunsArchivesParsesAndAppendsMemory(t *testing.T) {
 	mem := string(memRaw)
 	if !strings.Contains(mem, "## [cycle 4, task T123, tester]") || !strings.Contains(mem, "remember this") {
 		t.Fatalf("memory note not appended with run context: %q", mem)
+	}
+}
+
+func TestRoleCallUsesExplicitControlFields(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "prompts", "default.md"), []byte("default {{TASK_ID}}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "prompts", "override.md"), []byte("override {{TASK_ID}}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	fake := &fakeAgentRunner{}
+	var successfulAgent string
+	inv := &RoleInvoker{
+		Specs: map[string]config.RoleSpec{
+			"tester": {
+				Agents: []config.AgentSpec{{
+					Name: "default-agent",
+					Cmd:  []string{"fake", "{{PROMPT}}"},
+				}},
+				EscalationLadder: []config.AgentSpec{{
+					Name: "override-agent",
+					Cmd:  []string{"fake", "{{PROMPT}}"},
+				}},
+				PromptPath: "prompts/default.md",
+				ResultPath: ".orquestalite/results/default.json",
+				Timeout:    time.Minute,
+			},
+		},
+		Dir:      dir,
+		Fallback: fallback.NewCaller(fallback.Config{InitialBackoff: time.Millisecond, Factor: 2, MaxBackoff: time.Millisecond}),
+		MemPath:  filepath.Join(dir, ".orquestalite", "memory.md"),
+		Runner:   fake,
+		OnAgentSuccess: func(_, agent string) {
+			successfulAgent = agent
+		},
+	}
+
+	_, err := Role[fakeRoleResult](
+		context.Background(),
+		inv,
+		"tester",
+		RoleCall{
+			AgentOverride: "override-agent",
+			ArchiveRole:   "tester-override",
+			PromptPath:    "prompts/override.md",
+			ResultPath:    ".orquestalite/results/override.json",
+			Vars:          map[string]string{"TASK_ID": "T456"},
+		},
+		RunContext{TaskID: "T456", Cycle: 1, Attempt: 3},
+		func(path string) (*fakeRoleResult, error) {
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				return nil, err
+			}
+			var out fakeRoleResult
+			return &out, json.Unmarshal(raw, &out)
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if successfulAgent != "override-agent" {
+		t.Fatalf("successful agent = %q, want override-agent", successfulAgent)
+	}
+	if len(fake.specs) != 1 {
+		t.Fatalf("runner calls = %d, want 1", len(fake.specs))
+	}
+	if fake.specs[0].ResultPath != filepath.Join(dir, ".orquestalite", "results", "override.json") {
+		t.Fatalf("ResultPath = %q, want override result path", fake.specs[0].ResultPath)
+	}
+	if !strings.Contains(fake.specs[0].Prompt, "override T456") {
+		t.Fatalf("prompt = %q, want override prompt with vars", fake.specs[0].Prompt)
+	}
+	archivePath := filepath.Join(dir, ".orquestalite", "results", "by-task", "T456", "tester-override.c1.a3.json")
+	if _, err := os.Stat(archivePath); err != nil {
+		t.Fatalf("archive missing: %v", err)
 	}
 }

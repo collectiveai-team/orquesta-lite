@@ -19,13 +19,6 @@ import (
 	"github.com/lionelchamorro/orquestalite/internal/runner"
 )
 
-const (
-	VarAgentOverride = "__AGENT_OVERRIDE"
-	VarArchiveRole   = "__ARCHIVE_ROLE"
-	VarPromptPath    = "__PROMPT_PATH"
-	VarResultPath    = "__RESULT_PATH"
-)
-
 type AgentRunner interface {
 	Run(ctx context.Context, s runner.Spec) (*runner.Result, error)
 }
@@ -49,11 +42,19 @@ type RoleInvoker struct {
 	OnAgentSuccess          func(role, agent string)
 }
 
+type RoleCall struct {
+	AgentOverride string
+	ArchiveRole   string
+	PromptPath    string
+	ResultPath    string
+	Vars          map[string]string
+}
+
 func Role[T MemoryNoting](
 	ctx context.Context,
 	inv *RoleInvoker,
 	roleName string,
-	vars map[string]string,
+	call RoleCall,
 	rc RunContext,
 	parse func(path string) (*T, error),
 ) (*T, error) {
@@ -65,11 +66,19 @@ func Role[T MemoryNoting](
 		return nil, fmt.Errorf("role %q is not configured", roleName)
 	}
 
-	roleVars := copyVars(vars)
-	promptPath := takeVar(roleVars, VarPromptPath, spec.PromptPath)
-	resultPath := takeVar(roleVars, VarResultPath, spec.ResultPath)
-	archiveRole := takeVar(roleVars, VarArchiveRole, roleName)
-	agentOverride := takeVar(roleVars, VarAgentOverride, "")
+	roleVars := call.templateVars()
+	promptPath := call.PromptPath
+	if promptPath == "" {
+		promptPath = spec.PromptPath
+	}
+	resultPath := call.ResultPath
+	if resultPath == "" {
+		resultPath = spec.ResultPath
+	}
+	archiveRole := call.ArchiveRole
+	if archiveRole == "" {
+		archiveRole = roleName
+	}
 
 	mem, _ := memory.ReadAll(inv.MemPath)
 	roleVars["MEMORY"] = mem
@@ -81,7 +90,7 @@ func Role[T MemoryNoting](
 	prompt := prompts.Interpolate(tmpl, roleVars)
 	resultAbs := absPath(inv.Dir, resultPath)
 
-	if err := inv.run(ctx, roleName, spec, agentOverride, prompt, resultPath, resultAbs); err != nil {
+	if err := inv.run(ctx, roleName, spec, call.AgentOverride, prompt, resultPath, resultAbs); err != nil {
 		return nil, err
 	}
 
@@ -110,6 +119,14 @@ func Role[T MemoryNoting](
 		})
 	}
 	return parsed, nil
+}
+
+func (call RoleCall) templateVars() map[string]string {
+	out := make(map[string]string, len(call.Vars)+1)
+	for k, v := range call.Vars {
+		out[k] = v
+	}
+	return out
 }
 
 func (inv *RoleInvoker) run(ctx context.Context, roleName string, role config.RoleSpec, agentOverride, prompt, relResultPath, absResultPath string) error {
@@ -272,22 +289,6 @@ func selectAgents(role config.RoleSpec, override string) ([]config.AgentSpec, er
 		}
 	}
 	return nil, fmt.Errorf("agent override %q is not configured for role", override)
-}
-
-func copyVars(vars map[string]string) map[string]string {
-	out := make(map[string]string, len(vars)+1)
-	for k, v := range vars {
-		out[k] = v
-	}
-	return out
-}
-
-func takeVar(vars map[string]string, key, def string) string {
-	if v, ok := vars[key]; ok {
-		delete(vars, key)
-		return v
-	}
-	return def
 }
 
 func absPath(dir, path string) string {

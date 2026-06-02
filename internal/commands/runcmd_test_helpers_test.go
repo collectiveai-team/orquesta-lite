@@ -32,7 +32,7 @@ func (d *liveDeps) callRole(ctx context.Context, roleName, prompt string, role c
 		return err
 	}
 	inv := d.invokerWithRole(roleName, spec)
-	_, err = invoke.Role(ctx, inv, roleName, nil, invoke.RunContext{TaskID: "-", Attempt: 1}, parseRoleSmokeResult)
+	_, err = invoke.Role(ctx, inv, roleName, invoke.RoleCall{}, invoke.RunContext{TaskID: "-", Attempt: 1}, parseRoleSmokeResult)
 	return err
 }
 
