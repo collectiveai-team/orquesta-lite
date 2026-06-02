@@ -8,13 +8,16 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lionelchamorro/orquestalite/internal/config"
 	"github.com/lionelchamorro/orquestalite/internal/eventlog"
 	"github.com/lionelchamorro/orquestalite/internal/fallback"
+	"github.com/lionelchamorro/orquestalite/internal/runner"
 	"github.com/lionelchamorro/orquestalite/internal/tasks"
 )
 
@@ -730,13 +733,60 @@ exit 0
 	}
 }
 
+func TestExecRunnerMatchesRunAgent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("posix shell script test, skipping on windows")
+	}
+
+	var _ AgentRunner = execRunner{}
+
+	dir := t.TempDir()
+	resultPath := filepath.Join(dir, "result.json")
+	spec := runner.Spec{
+		Cmd: []string{
+			"sh",
+			"-c",
+			`printf '%s\n' "stdout:$1"; printf '%s\n' "stderr:$1" >&2; printf '%s' '{"status":"ok"}' > "$2"`,
+			"agent-script",
+			"{{PROMPT}}",
+			resultPath,
+		},
+		Prompt:           "hello",
+		ResultPath:       resultPath,
+		Timeout:          5 * time.Second,
+		RateLimitPattern: "rate_?limit",
+	}
+
+	direct, err := runner.RunAgent(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("RunAgent: %v", err)
+	}
+	adapted, err := execRunner{}.Run(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("execRunner.Run: %v", err)
+	}
+
+	if direct.Duration <= 0 {
+		t.Fatalf("RunAgent duration = %v, want positive", direct.Duration)
+	}
+	if adapted.Duration <= 0 {
+		t.Fatalf("execRunner duration = %v, want positive", adapted.Duration)
+	}
+	direct.Duration = 0
+	adapted.Duration = 0
+
+	if !reflect.DeepEqual(adapted, direct) {
+		t.Fatalf("execRunner result mismatch\nadapted: %#v\ndirect:  %#v", *adapted, *direct)
+	}
+}
+
 // TestRunFix_EscalationLadderPlumbedFromConfig verifies that the escalation_ladder
 // field in team.json is correctly read and plumbed into FixConfig.EscalationLadder
 // by liveDeps.RunFix.
 func TestRunFix_EscalationLadderPlumbedFromConfig(t *testing.T) {
 	cfg := &config.Config{
 		Agents: map[string]config.Agent{
-			"fake_coder":  {Cmd: []string{"sh", "-c", "exit 0"}},
+			"fake_coder":      {Cmd: []string{"sh", "-c", "exit 0"}},
 			"fake_escalation": {Cmd: []string{"sh", "-c", "exit 0"}},
 		},
 		Roles: map[string]config.Role{
