@@ -297,6 +297,19 @@ func (d *liveDeps) SaveTasks(ctx context.Context, tl *tasks.TaskList) error {
 	return tasks.Save(d.tasksPath, tl)
 }
 
+// CycleBaseSHA returns the commit at the start of a review cycle. Non-git
+// workspaces are allowed; the reviewer prompt will receive an empty base.
+func (d *liveDeps) CycleBaseSHA(_ context.Context) (string, error) {
+	if !gitx.IsRepo(d.dir) {
+		return "", nil
+	}
+	sha, err := gitx.HeadSHA(d.dir)
+	if err != nil {
+		return "", nil
+	}
+	return sha, nil
+}
+
 // RunParser invokes the parser role with the given plan text and returns its result.
 // The parser prompt uses {{MEMORY}} and {{PLAN}} interpolation variables.
 func (d *liveDeps) RunParser(ctx context.Context, plan string) (*results.ParserResult, error) {
@@ -309,14 +322,17 @@ func (d *liveDeps) RunReviewer(ctx context.Context, rc invoke.RunContext) (resul
 	tasksRaw, _ := os.ReadFile(d.tasksPath)
 
 	gitLog := ""
-	if _, headErr := gitx.HeadSHA(d.dir); headErr == nil {
+	if rc.CycleBaseSHA != "" {
+		gitLog, _ = gitx.LogStat(d.dir, rc.CycleBaseSHA)
+	} else if _, headErr := gitx.HeadSHA(d.dir); headErr == nil {
 		gitLog, _ = gitx.LogStat(d.dir, "HEAD~5")
 	}
 
 	r, err := invoke.Role(ctx, d.inv, "reviewer", map[string]string{
-		"REVIEW_CYCLE": fmt.Sprintf("%d", rc.Cycle),
-		"TASKS_JSON":   string(tasksRaw),
-		"GIT_LOG":      gitLog,
+		"REVIEW_CYCLE":   fmt.Sprintf("%d", rc.Cycle),
+		"CYCLE_BASE_SHA": rc.CycleBaseSHA,
+		"TASKS_JSON":     string(tasksRaw),
+		"GIT_LOG":        gitLog,
 	}, rc, results.ParseReviewer)
 	if err != nil {
 		return results.ReviewerResult{}, err

@@ -11,6 +11,7 @@ import (
 // ReviewDeps extends TaskDeps with the reviewer agent call.
 type ReviewDeps interface {
 	TaskDeps
+	CycleBaseSHA(ctx context.Context) (string, error)
 	RunReviewer(ctx context.Context, rc invoke.RunContext) (results.ReviewerResult, error)
 }
 
@@ -27,7 +28,11 @@ type ReviewConfig struct {
 //  5. Return nil early if reviewer signals stop or there is nothing left to do.
 func RunReviewLoop(ctx context.Context, tl *tasks.TaskList, cfg ReviewConfig, d ReviewDeps) error {
 	for cycle := 1; cycle <= cfg.MaxCycles; cycle++ {
-		rc := invoke.RunContext{Cycle: cycle, Attempt: 1}
+		cycleBaseSHA, err := d.CycleBaseSHA(ctx)
+		if err != nil {
+			return err
+		}
+		rc := invoke.RunContext{Cycle: cycle, Attempt: 1, CycleBaseSHA: cycleBaseSHA}
 		if err := RunTaskLoopWithContext(ctx, tl, d, rc); err != nil {
 			return err
 		}

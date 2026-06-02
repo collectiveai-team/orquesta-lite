@@ -150,6 +150,94 @@ func (decomposeArchiveRunner) Run(_ context.Context, spec runner.Spec) (*runner.
 	return &runner.Result{ResultExists: true, ExitCode: 0, Duration: time.Millisecond}, nil
 }
 
+type reviewerPromptRunner struct {
+	prompt string
+}
+
+func (r *reviewerPromptRunner) Run(_ context.Context, spec runner.Spec) (*runner.Result, error) {
+	r.prompt = spec.Prompt
+	if err := os.MkdirAll(filepath.Dir(spec.ResultPath), 0o755); err != nil {
+		return nil, err
+	}
+	raw := []byte(`{"summary_of_cycle":"done","new_tasks":[],"should_stop":true,"notes_for_memory":null}`)
+	if err := os.WriteFile(spec.ResultPath, raw, 0o644); err != nil {
+		return nil, err
+	}
+	return &runner.Result{ResultExists: true, ExitCode: 0, Duration: time.Millisecond}, nil
+}
+
+func TestRunReviewerPassesCycleBaseSHAToPrompt(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	dir := t.TempDir()
+	for _, args := range [][]string{
+		{"init", "-q"},
+		{"config", "user.email", "test@example.com"},
+		{"config", "user.name", "Test User"},
+		{"config", "commit.gpgsign", "false"},
+		{"commit", "--allow-empty", "-m", "init"},
+	} {
+		c := exec.Command("git", args...)
+		c.Dir = dir
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+
+	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "prompts", "reviewer.md"), []byte("base={{CYCLE_BASE_SHA}}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tasksPath := filepath.Join(dir, ".orquestalite", "tasks.json")
+	if err := os.MkdirAll(filepath.Dir(tasksPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tasksPath, []byte(`{"tasks":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	runner := &reviewerPromptRunner{}
+	d := &liveDeps{
+		dir:       dir,
+		tasksPath: tasksPath,
+		memPath:   filepath.Join(dir, ".orquestalite", "memory.md"),
+		inv: &invoke.RoleInvoker{
+			Dir:     dir,
+			MemPath: filepath.Join(dir, ".orquestalite", "memory.md"),
+			Runner:  runner,
+			Specs: map[string]config.RoleSpec{
+				"reviewer": {
+					Agents: []config.AgentSpec{{
+						Name: "fake_reviewer",
+						Cmd:  []string{"fake"},
+					}},
+					PromptPath: "prompts/reviewer.md",
+					ResultPath: ".orquestalite/results/reviewer.json",
+					Timeout:    time.Minute,
+				},
+			},
+		},
+	}
+
+	base, err := d.CycleBaseSHA(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(base) != 40 {
+		t.Fatalf("CycleBaseSHA = %q, want full git SHA", base)
+	}
+	if _, err := d.RunReviewer(context.Background(), invoke.RunContext{Cycle: 1, Attempt: 1, CycleBaseSHA: base}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(runner.prompt, "base="+base) {
+		t.Fatalf("reviewer prompt missing cycle base SHA: %q", runner.prompt)
+	}
+}
+
 func TestDecomposeArchivesPerSourceTaskAtSameAttempt(t *testing.T) {
 	dir := t.TempDir()
 	promptPath := filepath.Join(dir, "prompts", "parser-decompose.md")

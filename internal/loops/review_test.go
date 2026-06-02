@@ -11,9 +11,11 @@ import (
 )
 
 type stubReviewDeps struct {
-	taskDeps TaskDeps
-	reviewer func(cycle int) results.ReviewerResult
-	cycles   []int
+	taskDeps     TaskDeps
+	cycleBaseSHA func() (string, error)
+	reviewer     func(cycle int) results.ReviewerResult
+	cycles       []int
+	bases        []string
 }
 
 func (s *stubReviewDeps) RunFix(ctx context.Context, id string, rc invoke.RunContext) (*FixResult, error) {
@@ -37,8 +39,15 @@ func (s *stubReviewDeps) PreflightEnabled() bool { return s.taskDeps.PreflightEn
 func (s *stubReviewDeps) Preflight(ctx context.Context, t *tasks.Task) preflight.Verdict {
 	return s.taskDeps.Preflight(ctx, t)
 }
+func (s *stubReviewDeps) CycleBaseSHA(ctx context.Context) (string, error) {
+	if s.cycleBaseSHA != nil {
+		return s.cycleBaseSHA()
+	}
+	return "", nil
+}
 func (s *stubReviewDeps) RunReviewer(ctx context.Context, rc invoke.RunContext) (results.ReviewerResult, error) {
 	s.cycles = append(s.cycles, rc.Cycle)
+	s.bases = append(s.bases, rc.CycleBaseSHA)
 	return s.reviewer(rc.Cycle), nil
 }
 
@@ -114,5 +123,32 @@ func TestReview_AppendsNewTasks(t *testing.T) {
 	}
 	if tl.Tasks[1].Title != "follow-up" || tl.Tasks[1].CreatedInReviewCycle != 1 {
 		t.Errorf("appended task wrong: %+v", tl.Tasks[1])
+	}
+}
+
+func TestReview_PassesCycleBaseSHAToReviewer(t *testing.T) {
+	tl := &tasks.TaskList{Tasks: []tasks.Task{{ID: "T001", Status: tasks.StatusPending, Priority: 1}}}
+	td := &stubTaskDeps{
+		fix:       func(string) *FixResult { return &FixResult{Status: FixDone, Iterations: 1} },
+		fullSuite: func() error { return nil },
+		commit:    func(string) (string, error) { return "new-head", nil },
+		rollback:  func() error { return nil },
+		saveTasks: func(*tasks.TaskList) error { return nil },
+	}
+	const base = "0123456789abcdef0123456789abcdef01234567"
+	d := &stubReviewDeps{
+		taskDeps:     td,
+		cycleBaseSHA: func() (string, error) { return base, nil },
+		reviewer:     func(int) results.ReviewerResult { return results.ReviewerResult{ShouldStop: boolPtr(true)} },
+	}
+
+	if err := RunReviewLoop(context.Background(), tl, ReviewConfig{MaxCycles: 1}, d); err != nil {
+		t.Fatal(err)
+	}
+	if len(d.bases) != 1 {
+		t.Fatalf("reviewer calls = %d, want 1", len(d.bases))
+	}
+	if d.bases[0] != base {
+		t.Fatalf("CycleBaseSHA = %q, want %q", d.bases[0], base)
 	}
 }
