@@ -17,6 +17,7 @@ func TestInit_CreatesScaffolding(t *testing.T) {
 	for _, p := range []string{
 		"team.json",
 		"prompts/parser.md", "prompts/coder.md", "prompts/tester.md", "prompts/critic.md", "prompts/reviewer.md",
+		"prompts/_review-rubric.md",
 		".orquestalite/results",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, p)); err != nil {

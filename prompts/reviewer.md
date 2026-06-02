@@ -1,5 +1,7 @@
 You are the **reviewer** at the end of cycle {{REVIEW_CYCLE}}. Inspect what was done this cycle and decide: should we stop, or are there valuable follow-up tasks?
 
+Use the thermo-nuclear review rubric in `prompts/_review-rubric.md` as the quality bar for maintainability findings.
+
 ## Memory
 
 {{MEMORY}}
