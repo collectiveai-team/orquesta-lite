@@ -324,8 +324,6 @@ func (d *liveDeps) RunReviewer(ctx context.Context, rc invoke.RunContext) (resul
 	gitLog := ""
 	if rc.CycleBaseSHA != "" {
 		gitLog, _ = gitx.LogStat(d.dir, rc.CycleBaseSHA)
-	} else if _, headErr := gitx.HeadSHA(d.dir); headErr == nil {
-		gitLog, _ = gitx.LogStat(d.dir, "HEAD~5")
 	}
 
 	r, err := invoke.Role(ctx, d.inv, "reviewer", invoke.RoleCall{Vars: map[string]string{
