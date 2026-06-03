@@ -9,3 +9,14 @@
 *.test
 *.out
 coverage.txt
+<<<<<<< Updated upstream
+=======
+
+# OS/editor
+.DS_Store
+*.swp
+*.swo
+
+# local planning docs (not committed)
+plan*.md
+>>>>>>> Stashed changes
