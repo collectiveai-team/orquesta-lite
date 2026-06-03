@@ -5,16 +5,23 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/lionelchamorro/orquestalite/internal/agenthealth"
 	"github.com/lionelchamorro/orquestalite/internal/config"
 	"github.com/lionelchamorro/orquestalite/internal/eventlog"
 	"github.com/lionelchamorro/orquestalite/internal/fallback"
+	"github.com/lionelchamorro/orquestalite/internal/invoke"
+	"github.com/lionelchamorro/orquestalite/internal/loops"
+	"github.com/lionelchamorro/orquestalite/internal/runner"
 	"github.com/lionelchamorro/orquestalite/internal/tasks"
 )
 
@@ -127,6 +134,275 @@ func writeFakeTeamJSON(t *testing.T, dir, cliPath string) {
 	teamPath := filepath.Join(dir, "team.json")
 	if err := os.WriteFile(teamPath, raw, 0o644); err != nil {
 		t.Fatalf("write team.json: %v", err)
+	}
+}
+
+type decomposeArchiveRunner struct{}
+
+func (decomposeArchiveRunner) Run(_ context.Context, spec runner.Spec) (*runner.Result, error) {
+	if err := os.MkdirAll(filepath.Dir(spec.ResultPath), 0o755); err != nil {
+		return nil, err
+	}
+	raw := []byte(`{"tasks":[{"title":"smaller","description":"smaller task","priority":1}],"notes_for_memory":null}`)
+	if err := os.WriteFile(spec.ResultPath, raw, 0o644); err != nil {
+		return nil, err
+	}
+	return &runner.Result{ResultExists: true, ExitCode: 0, Duration: time.Millisecond}, nil
+}
+
+type reviewerPromptRunner struct {
+	prompt string
+}
+
+func (r *reviewerPromptRunner) Run(_ context.Context, spec runner.Spec) (*runner.Result, error) {
+	r.prompt = spec.Prompt
+	if err := os.MkdirAll(filepath.Dir(spec.ResultPath), 0o755); err != nil {
+		return nil, err
+	}
+	raw := []byte(`{"summary_of_cycle":"done","new_tasks":[],"should_stop":true,"notes_for_memory":null}`)
+	if err := os.WriteFile(spec.ResultPath, raw, 0o644); err != nil {
+		return nil, err
+	}
+	return &runner.Result{ResultExists: true, ExitCode: 0, Duration: time.Millisecond}, nil
+}
+
+func TestRunReviewerPassesCycleBaseSHAToPrompt(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	dir := t.TempDir()
+	for _, args := range [][]string{
+		{"init", "-q"},
+		{"config", "user.email", "test@example.com"},
+		{"config", "user.name", "Test User"},
+		{"config", "commit.gpgsign", "false"},
+		{"commit", "--allow-empty", "-m", "init"},
+	} {
+		c := exec.Command("git", args...)
+		c.Dir = dir
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+
+	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "prompts", "reviewer.md"), []byte("base={{CYCLE_BASE_SHA}}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tasksPath := filepath.Join(dir, ".orquestalite", "tasks.json")
+	if err := os.MkdirAll(filepath.Dir(tasksPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tasksPath, []byte(`{"tasks":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	runner := &reviewerPromptRunner{}
+	d := &liveDeps{
+		dir:       dir,
+		tasksPath: tasksPath,
+		memPath:   filepath.Join(dir, ".orquestalite", "memory.md"),
+		inv: &invoke.RoleInvoker{
+			Dir:     dir,
+			MemPath: filepath.Join(dir, ".orquestalite", "memory.md"),
+			Runner:  runner,
+			Specs: map[string]config.RoleSpec{
+				"reviewer": {
+					Agents: []config.AgentSpec{{
+						Name: "fake_reviewer",
+						Cmd:  []string{"fake"},
+					}},
+					PromptPath: "prompts/reviewer.md",
+					ResultPath: ".orquestalite/results/reviewer.json",
+					Timeout:    time.Minute,
+				},
+			},
+		},
+	}
+
+	base, err := d.CycleBaseSHA(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(base) != 40 {
+		t.Fatalf("CycleBaseSHA = %q, want full git SHA", base)
+	}
+	if _, err := d.RunReviewer(context.Background(), invoke.RunContext{Cycle: 1, Attempt: 1, CycleBaseSHA: base}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(runner.prompt, "base="+base) {
+		t.Fatalf("reviewer prompt missing cycle base SHA: %q", runner.prompt)
+	}
+}
+
+func TestDecomposeArchivesPerSourceTaskAtSameAttempt(t *testing.T) {
+	dir := t.TempDir()
+	promptPath := filepath.Join(dir, "prompts", "parser-decompose.md")
+	if err := os.MkdirAll(filepath.Dir(promptPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(promptPath, []byte("decompose {{TASK_ID}}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	deps := &liveDeps{
+		dir:     dir,
+		memPath: filepath.Join(dir, ".orquestalite", "memory.md"),
+		inv: &invoke.RoleInvoker{
+			Dir:     dir,
+			MemPath: filepath.Join(dir, ".orquestalite", "memory.md"),
+			Runner:  decomposeArchiveRunner{},
+			Specs: map[string]config.RoleSpec{
+				"parser": {
+					Agents: []config.AgentSpec{{
+						Name: "fake_parser",
+						Cmd:  []string{"fake"},
+					}},
+					PromptPath:      "prompts/parser.md",
+					ResultPath:      ".orquestalite/results/parser.json",
+					DecomposePrompt: "prompts/parser-decompose.md",
+					Timeout:         time.Minute,
+				},
+			},
+		},
+	}
+
+	for _, taskID := range []string{"T001", "T002"} {
+		task := &tasks.Task{ID: taskID, Title: "large task", Description: "break this up", Priority: 1}
+		got, err := deps.Decompose(
+			context.Background(),
+			task,
+			&loops.FixResult{LastFeedback: "agent repeated failure"},
+			nil,
+			invoke.RunContext{TaskID: taskID, Cycle: 3, Attempt: 2},
+		)
+		if err != nil {
+			t.Fatalf("Decompose(%s): %v", taskID, err)
+		}
+		if len(got) != 1 {
+			t.Fatalf("Decompose(%s) returned %d subtasks, want 1", taskID, len(got))
+		}
+	}
+
+	for _, taskID := range []string{"T001", "T002"} {
+		archivePath := filepath.Join(
+			dir,
+			".orquestalite",
+			"results",
+			"by-task",
+			taskID,
+			"parser-decompose.c3.a2.json",
+		)
+		if _, err := os.Stat(archivePath); err != nil {
+			t.Fatalf("archive for %s missing: %v", taskID, err)
+		}
+	}
+}
+
+func TestRunStaticAgentPreflightScopesToRequestedRoles(t *testing.T) {
+	dir := t.TempDir()
+	log, err := eventlog.Open(filepath.Join(dir, "run.log"), io.Discard)
+	if err != nil {
+		t.Fatalf("open logger: %v", err)
+	}
+	defer log.Close()
+
+	missingBinary := func(name string) string {
+		return filepath.Join(dir, name)
+	}
+	cfg := &config.Config{
+		Agents: map[string]config.Agent{
+			"parser_primary":    {Cmd: []string{missingBinary("parser-primary")}},
+			"parser_escalated":  {Cmd: []string{missingBinary("parser-escalated")}},
+			"coder_only":        {Cmd: []string{missingBinary("coder-only")}},
+			"reviewer_only":     {Cmd: []string{missingBinary("reviewer-only")}},
+			"unreferenced_only": {Cmd: []string{missingBinary("unreferenced-only")}},
+		},
+		Roles: map[string]config.Role{
+			"parser": {
+				Agents:           []string{"parser_primary"},
+				EscalationLadder: []string{"parser_escalated"},
+			},
+			"coder": {
+				Agents: []string{"coder_only"},
+			},
+			"reviewer": {
+				Agents: []string{"reviewer_only"},
+			},
+		},
+	}
+
+	tracker := agenthealth.New(agentHealthThreshold)
+	runStaticAgentPreflight(cfg, tracker, log, []string{"parser"})
+
+	for _, name := range []string{"parser_primary", "parser_escalated"} {
+		if reason, ok := tracker.IsSkipped(name); !ok || reason != agenthealth.ReasonUnreachable {
+			t.Fatalf("%s skipped = (%q, %v), want (%q, true)", name, reason, ok, agenthealth.ReasonUnreachable)
+		}
+	}
+	for _, name := range []string{"coder_only", "reviewer_only", "unreferenced_only"} {
+		if reason, ok := tracker.IsSkipped(name); ok {
+			t.Fatalf("%s was skipped with reason %q; want untouched", name, reason)
+		}
+	}
+}
+
+func TestNewLiveDepsLoadsEmptyTasksAndCleanupClosesLog(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("posix shell script test, skipping on windows")
+	}
+
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".orquestalite", "results"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "prompts", "parser.md"), []byte("parse {{PLAN}}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cliPath := filepath.Join(dir, "fakecli.sh")
+	if err := os.WriteFile(cliPath, []byte(fakeCLI), 0o755); err != nil {
+		t.Fatalf("write fakecli.sh: %v", err)
+	}
+	writePlanPreflightTeamJSON(t, dir, cliPath)
+
+	deps, cleanup, err := newLiveDeps(liveDepsOptions{
+		ProjectDir: dir,
+		TeamPath:   filepath.Join(dir, "team.json"),
+		Roles:      []string{"parser"},
+	})
+	if err != nil {
+		t.Fatalf("newLiveDeps: %v", err)
+	}
+	if deps.tl == nil {
+		t.Fatal("task list is nil")
+	}
+	if len(deps.tl.Tasks) != 0 {
+		t.Fatalf("loaded %d tasks, want empty list", len(deps.tl.Tasks))
+	}
+
+	deps.log.Log(eventlog.Event{Type: "before_cleanup", Fields: map[string]any{}})
+	if err := cleanup(); err != nil {
+		t.Fatalf("cleanup: %v", err)
+	}
+	deps.log.Log(eventlog.Event{Type: "after_cleanup", Fields: map[string]any{}})
+
+	raw, err := os.ReadFile(filepath.Join(dir, ".orquestalite", "run.log"))
+	if err != nil {
+		t.Fatalf("read run.log: %v", err)
+	}
+	log := string(raw)
+	if !strings.Contains(log, `"event":"before_cleanup"`) {
+		t.Fatalf("run.log missing event before cleanup:\n%s", log)
+	}
+	if strings.Contains(log, `"event":"after_cleanup"`) {
+		t.Fatalf("logger still wrote after cleanup:\n%s", log)
 	}
 }
 
@@ -730,13 +1006,60 @@ exit 0
 	}
 }
 
+func TestExecRunnerMatchesRunAgent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("posix shell script test, skipping on windows")
+	}
+
+	var _ AgentRunner = execRunner{}
+
+	dir := t.TempDir()
+	resultPath := filepath.Join(dir, "result.json")
+	spec := runner.Spec{
+		Cmd: []string{
+			"sh",
+			"-c",
+			`printf '%s\n' "stdout:$1"; printf '%s\n' "stderr:$1" >&2; printf '%s' '{"status":"ok"}' > "$2"`,
+			"agent-script",
+			"{{PROMPT}}",
+			resultPath,
+		},
+		Prompt:           "hello",
+		ResultPath:       resultPath,
+		Timeout:          5 * time.Second,
+		RateLimitPattern: "rate_?limit",
+	}
+
+	direct, err := runner.RunAgent(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("RunAgent: %v", err)
+	}
+	adapted, err := execRunner{}.Run(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("execRunner.Run: %v", err)
+	}
+
+	if direct.Duration <= 0 {
+		t.Fatalf("RunAgent duration = %v, want positive", direct.Duration)
+	}
+	if adapted.Duration <= 0 {
+		t.Fatalf("execRunner duration = %v, want positive", adapted.Duration)
+	}
+	direct.Duration = 0
+	adapted.Duration = 0
+
+	if !reflect.DeepEqual(adapted, direct) {
+		t.Fatalf("execRunner result mismatch\nadapted: %#v\ndirect:  %#v", *adapted, *direct)
+	}
+}
+
 // TestRunFix_EscalationLadderPlumbedFromConfig verifies that the escalation_ladder
 // field in team.json is correctly read and plumbed into FixConfig.EscalationLadder
 // by liveDeps.RunFix.
 func TestRunFix_EscalationLadderPlumbedFromConfig(t *testing.T) {
 	cfg := &config.Config{
 		Agents: map[string]config.Agent{
-			"fake_coder":  {Cmd: []string{"sh", "-c", "exit 0"}},
+			"fake_coder":      {Cmd: []string{"sh", "-c", "exit 0"}},
 			"fake_escalation": {Cmd: []string{"sh", "-c", "exit 0"}},
 		},
 		Roles: map[string]config.Role{

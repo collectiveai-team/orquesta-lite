@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/lionelchamorro/orquestalite/internal/invoke"
 	"github.com/lionelchamorro/orquestalite/internal/preflight"
 	"github.com/lionelchamorro/orquestalite/internal/tasks"
 )
@@ -23,7 +24,7 @@ var ErrNoDecomposer = errors.New("no decomposer configured")
 var ErrCommitSkipped = errors.New("commit skipped: not a git repository")
 
 type TaskDeps interface {
-	RunFix(ctx context.Context, taskID string) (*FixResult, error)
+	RunFix(ctx context.Context, taskID string, rc invoke.RunContext) (*FixResult, error)
 	FullSuite(ctx context.Context) error
 	Commit(ctx context.Context, msg string) (string, error)
 	Rollback(ctx context.Context) error
@@ -31,7 +32,7 @@ type TaskDeps interface {
 	// Decompose attempts to break task t into 2-5 subtasks when the fix loop
 	// exhausted all retries. Return ErrNoDecomposer if decomposition is not
 	// configured for this project; the task loop will fall through to failed.
-	Decompose(ctx context.Context, t *tasks.Task, fx *FixResult, filesChangedSoFar []string) ([]tasks.Task, error)
+	Decompose(ctx context.Context, t *tasks.Task, fx *FixResult, filesChangedSoFar []string, rc invoke.RunContext) ([]tasks.Task, error)
 	// Handoff writes a human-readable markdown handoff file for the task and
 	// returns the path of the file written. It is called when both the escalation
 	// ladder and auto-decomposition have been exhausted.
@@ -54,6 +55,10 @@ func findTaskIdx(tl *tasks.TaskList, id string) int {
 }
 
 func RunTaskLoop(ctx context.Context, tl *tasks.TaskList, d TaskDeps) error {
+	return RunTaskLoopWithContext(ctx, tl, d, invoke.RunContext{})
+}
+
+func RunTaskLoopWithContext(ctx context.Context, tl *tasks.TaskList, d TaskDeps, baseRC invoke.RunContext) error {
 	for {
 		t := tl.NextPending()
 		if t == nil {
@@ -75,7 +80,9 @@ func RunTaskLoop(ctx context.Context, tl *tasks.TaskList, d TaskDeps) error {
 		t.Attempts++
 		_ = d.SaveTasks(ctx, tl)
 
-		fx, err := d.RunFix(ctx, taskID)
+		taskRC := baseRC
+		taskRC.TaskID = taskID
+		fx, err := d.RunFix(ctx, taskID, taskRC)
 		if err != nil {
 			return err
 		}
@@ -88,7 +95,12 @@ func RunTaskLoop(ctx context.Context, tl *tasks.TaskList, d TaskDeps) error {
 					t = &tl.Tasks[idx]
 				}
 				var decomposeFailureNote string
-				subtasks, decompErr := d.Decompose(ctx, t, fx, fx.FilesChangedSoFar)
+				decomposeRC := taskRC
+				decomposeRC.Attempt = fx.Iterations
+				if decomposeRC.Attempt == 0 {
+					decomposeRC.Attempt = 1
+				}
+				subtasks, decompErr := d.Decompose(ctx, t, fx, fx.FilesChangedSoFar, decomposeRC)
 				if decompErr == nil && len(subtasks) > 0 {
 					added := tl.Append(subtasks, t.CreatedInReviewCycle)
 					ids := make([]string, len(added))

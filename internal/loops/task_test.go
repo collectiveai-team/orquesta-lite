@@ -6,24 +6,25 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lionelchamorro/orquestalite/internal/invoke"
 	"github.com/lionelchamorro/orquestalite/internal/preflight"
 	"github.com/lionelchamorro/orquestalite/internal/tasks"
 )
 
 type stubTaskDeps struct {
-	fix                    func(taskID string) *FixResult
-	fullSuite              func() error
-	commit                 func(msg string) (string, error)
-	rollback               func() error
-	saveTasks              func(*tasks.TaskList) error
-	decompose              func(t *tasks.Task, fx *FixResult) ([]tasks.Task, error)
-	handoff                func(t *tasks.Task) (string, error)
-	preflightEnabled       bool
-	preflightVerdict       preflight.Verdict
-	commits                []string
-	rollbacks              int
-	fixCalled              int
-	lastDecomposeFiles     []string // captures filesChangedSoFar passed to Decompose
+	fix                func(taskID string) *FixResult
+	fullSuite          func() error
+	commit             func(msg string) (string, error)
+	rollback           func() error
+	saveTasks          func(*tasks.TaskList) error
+	decompose          func(t *tasks.Task, fx *FixResult) ([]tasks.Task, error)
+	handoff            func(t *tasks.Task) (string, error)
+	preflightEnabled   bool
+	preflightVerdict   preflight.Verdict
+	commits            []string
+	rollbacks          int
+	fixCalled          int
+	lastDecomposeFiles []string // captures filesChangedSoFar passed to Decompose
 }
 
 func (s *stubTaskDeps) PreflightEnabled() bool { return s.preflightEnabled }
@@ -31,7 +32,7 @@ func (s *stubTaskDeps) Preflight(_ context.Context, _ *tasks.Task) preflight.Ver
 	return s.preflightVerdict
 }
 
-func (s *stubTaskDeps) RunFix(ctx context.Context, taskID string) (*FixResult, error) {
+func (s *stubTaskDeps) RunFix(ctx context.Context, taskID string, rc invoke.RunContext) (*FixResult, error) {
 	s.fixCalled++
 	return s.fix(taskID), nil
 }
@@ -48,7 +49,7 @@ func (s *stubTaskDeps) Rollback(ctx context.Context) error {
 func (s *stubTaskDeps) SaveTasks(ctx context.Context, tl *tasks.TaskList) error {
 	return s.saveTasks(tl)
 }
-func (s *stubTaskDeps) Decompose(ctx context.Context, t *tasks.Task, fx *FixResult, filesChangedSoFar []string) ([]tasks.Task, error) {
+func (s *stubTaskDeps) Decompose(ctx context.Context, t *tasks.Task, fx *FixResult, filesChangedSoFar []string, rc invoke.RunContext) ([]tasks.Task, error) {
 	s.lastDecomposeFiles = filesChangedSoFar
 	if s.decompose != nil {
 		return s.decompose(t, fx)

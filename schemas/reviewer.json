@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ReviewerResult",
+  "type": "object",
+  "properties": {
+    "summary_of_cycle": { "type": "string" },
+    "new_tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title":       { "type": "string" },
+          "description": { "type": "string" },
+          "priority":    { "type": "integer" }
+        },
+        "required": ["title", "description", "priority"]
+      }
+    },
+    "should_stop":      { "type": "boolean" },
+    "notes_for_memory": { "type": ["string", "null"] }
+  },
+  "required": ["summary_of_cycle", "new_tasks", "should_stop"]
+}
