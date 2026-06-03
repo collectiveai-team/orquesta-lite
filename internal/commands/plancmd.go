@@ -6,11 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
-	"github.com/lionelchamorro/orquestalite/internal/config"
 	"github.com/lionelchamorro/orquestalite/internal/eventlog"
-	"github.com/lionelchamorro/orquestalite/internal/fallback"
 	"github.com/lionelchamorro/orquestalite/internal/results"
 	"github.com/lionelchamorro/orquestalite/internal/tasks"
 )
@@ -20,42 +17,22 @@ import (
 // looked up at <projectDir>/team.json.
 func PlanWithLiveCaller(ctx context.Context, projectDir, planPath string, appendMode bool) error {
 	teamPath := filepath.Join(projectDir, "team.json")
-	cfg, err := config.Load(teamPath)
-	if err != nil {
-		return err
-	}
-
-	logPath := filepath.Join(projectDir, ".orquestalite", "run.log")
-	logger, err := eventlog.Open(logPath, os.Stdout)
-	if err != nil {
-		return err
-	}
-	defer logger.Close()
-
-	memPath := filepath.Join(projectDir, ".orquestalite", "memory.md")
-	tasksPath := filepath.Join(projectDir, ".orquestalite", "tasks.json")
-
-	fc := fallback.NewCaller(fallback.Config{
-		InitialBackoff: time.Duration(cfg.RateLimitBackoff.InitialSeconds) * time.Second,
-		Factor:         cfg.RateLimitBackoff.Factor,
-		MaxBackoff:     time.Duration(cfg.RateLimitBackoff.MaxSeconds) * time.Second,
+	deps, cleanup, err := newLiveDeps(liveDepsOptions{
+		ProjectDir: projectDir,
+		TeamPath:   teamPath,
+		Roles:      []string{"parser"},
 	})
-
-	deps := &liveDeps{
-		cfg:       cfg,
-		dir:       projectDir,
-		fc:        fc,
-		log:       logger,
-		tl:        &tasks.TaskList{},
-		memPath:   memPath,
-		tasksPath: tasksPath,
+	if err != nil {
+		return err
 	}
+	defer cleanup()
 
 	if err := Plan(ctx, projectDir, planPath, appendMode, deps); err != nil {
 		return err
 	}
+	tasksPath := filepath.Join(projectDir, ".orquestalite", "tasks.json")
 	if tl, err := tasks.Load(tasksPath); err == nil {
-		logger.Log(eventlog.Event{Type: "plan_written", Fields: map[string]any{
+		deps.log.Log(eventlog.Event{Type: "plan_written", Fields: map[string]any{
 			"tasks_count": len(tl.Tasks),
 			"path":        tasksPath,
 			"append":      appendMode,

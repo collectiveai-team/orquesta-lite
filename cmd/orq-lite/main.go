@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/lionelchamorro/orquestalite/internal/commands"
+	"github.com/lionelchamorro/orquestalite/internal/eventlog"
 )
 
 var version = "dev"
@@ -24,11 +25,14 @@ func main() {
 
 	switch cmd {
 	case "init":
+		fs := flag.NewFlagSet("init", flag.ExitOnError)
+		lang := fs.String("lang", "", "language hint: python|node|go|auto (default: autodetect)")
+		_ = fs.Parse(args)
 		dir := "."
-		if len(args) > 0 {
-			dir = args[0]
+		if fs.NArg() > 0 {
+			dir = fs.Arg(0)
 		}
-		exit(commands.Init(dir))
+		exit(commands.InitWithOptions(dir, commands.InitOptions{Lang: *lang}))
 
 	case "plan":
 		fs := flag.NewFlagSet("plan", flag.ExitOnError)
@@ -42,9 +46,14 @@ func main() {
 
 	case "run":
 		fs := flag.NewFlagSet("run", flag.ExitOnError)
+		logFormat := fs.String("log-format", "verbose", "stdout log format: verbose|human")
 		_ = fs.Parse(args)
 		teamPath := "team.json"
-		exit(commands.Run(ctx, commands.RunOptions{ProjectDir: ".", TeamPath: teamPath}))
+		exit(commands.Run(ctx, commands.RunOptions{
+			ProjectDir: ".",
+			TeamPath:   teamPath,
+			LogFormat:  eventlog.Format(*logFormat),
+		}))
 
 	case "status":
 		fs := flag.NewFlagSet("status", flag.ExitOnError)
@@ -85,9 +94,9 @@ func usage() {
 	fmt.Fprintln(os.Stderr, `Usage: orq-lite <command> [args]
 
 Commands:
-  init [dir]            scaffold .orquestalite, team.json, prompts/
+  init [--lang L] [dir] scaffold .orquestalite, team.json, prompts/ (--lang: python|node|go|auto)
   plan <plan.md>        invoke parser, write tasks.json (--append to add)
-  run                   run review/task/fix loops over existing tasks.json
+  run [--log-format F]  run review/task/fix loops over existing tasks.json (--log-format: verbose|human)
   status [--watch]      print tasks table (--watch refreshes until Ctrl+C)
   reset                 remove .orquestalite state
   update [--check]      download and install the latest release from GitHub

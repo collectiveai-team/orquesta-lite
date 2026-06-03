@@ -84,3 +84,41 @@ func TestRotateAtThreshold(t *testing.T) {
 		t.Errorf("expected at least one rotated file, found 0")
 	}
 }
+
+// TestHumanFormat_SummarisesAgentRun verifies that FormatHuman produces a
+// one-line "role/agent → outcome (Ns)" summary on stdout, while the JSONL
+// file still contains the full structured fields.
+func TestHumanFormat_SummarisesAgentRun(t *testing.T) {
+	dir := t.TempDir()
+	pretty := &bytes.Buffer{}
+	l, err := OpenWithFormat(filepath.Join(dir, "run.log"), pretty, FormatHuman)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+
+	l.Log(Event{Type: "agent_run", Fields: map[string]any{
+		"role":            "coder",
+		"agent":           "claude_sonnet",
+		"duration_s":      12,
+		"fallback_reason": "",
+		"stdout_tail":     "some long base64 blob we never want printed in human mode",
+	}})
+	l.Log(Event{Type: "agent_run", Fields: map[string]any{
+		"role":            "coder",
+		"agent":           "codex_gpt5",
+		"duration_s":      1,
+		"fallback_reason": "result_missing",
+	}})
+
+	out := pretty.String()
+	if !strings.Contains(out, "coder/claude_sonnet → ok (12s)") {
+		t.Errorf("human pretty output missing success summary:\n%s", out)
+	}
+	if !strings.Contains(out, "coder/codex_gpt5 → no-result (1s)") {
+		t.Errorf("human pretty output missing failure summary:\n%s", out)
+	}
+	if strings.Contains(out, "stdout_tail") {
+		t.Errorf("human pretty output must elide stdout_tail blobs, got:\n%s", out)
+	}
+}

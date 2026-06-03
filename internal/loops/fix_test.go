@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"testing"
+
+	"github.com/lionelchamorro/orquestalite/internal/invoke"
 )
 
 type stubRoles struct {
@@ -12,14 +14,14 @@ type stubRoles struct {
 	critic func(attempt int) CriticOutcome
 }
 
-func (s *stubRoles) RunCoder(ctx context.Context, attempt int, fb CoderFeedback) (CoderOutcome, error) {
-	return s.coder(attempt, fb), nil
+func (s *stubRoles) RunCoder(ctx context.Context, rc invoke.RunContext, fb CoderFeedback) (CoderOutcome, error) {
+	return s.coder(rc.Attempt, fb), nil
 }
-func (s *stubRoles) RunTester(ctx context.Context, attempt int) (TesterOutcome, error) {
-	return s.tester(attempt), nil
+func (s *stubRoles) RunTester(ctx context.Context, rc invoke.RunContext) (TesterOutcome, error) {
+	return s.tester(rc.Attempt), nil
 }
-func (s *stubRoles) RunCritic(ctx context.Context, attempt int) (CriticOutcome, error) {
-	return s.critic(attempt), nil
+func (s *stubRoles) RunCritic(ctx context.Context, rc invoke.RunContext) (CriticOutcome, error) {
+	return s.critic(rc.Attempt), nil
 }
 
 func TestFix_PassFirstTry(t *testing.T) {
@@ -28,7 +30,7 @@ func TestFix_PassFirstTry(t *testing.T) {
 		tester: func(int) TesterOutcome { return TesterOutcome{Status: "pass"} },
 		critic: func(int) CriticOutcome { return CriticOutcome{Status: "approved"} },
 	}
-	out, err := RunFix(context.Background(), FixConfig{MaxIterations: 5}, r)
+	out, err := RunFix(context.Background(), FixConfig{MaxIterations: 5}, r, invoke.RunContext{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +52,7 @@ func TestFix_TesterShortCircuitsCritic(t *testing.T) {
 		},
 		critic: func(int) CriticOutcome { criticCalls++; return CriticOutcome{Status: "approved"} },
 	}
-	out, _ := RunFix(context.Background(), FixConfig{MaxIterations: 5}, r)
+	out, _ := RunFix(context.Background(), FixConfig{MaxIterations: 5}, r, invoke.RunContext{})
 	if out.Status != FixDone {
 		t.Errorf("status=%v", out.Status)
 	}
@@ -67,7 +69,7 @@ func TestFix_HitsMaxIterations(t *testing.T) {
 	}
 	// MaxIterations=2: the max_iterations check fires on attempt 2 (attempt >= MaxIterations),
 	// which takes priority over stuck detection in the same iteration.
-	out, _ := RunFix(context.Background(), FixConfig{MaxIterations: 2}, r)
+	out, _ := RunFix(context.Background(), FixConfig{MaxIterations: 2}, r, invoke.RunContext{})
 	if out.Status != FixFailed || out.Reason != "max_iterations" {
 		t.Errorf("got %+v", out)
 	}
@@ -82,7 +84,7 @@ func TestFix_DetectsAgentRepeatedFailure(t *testing.T) {
 		tester: func(int) TesterOutcome { return TesterOutcome{Status: "fail", FailuresHash: "same"} },
 		critic: func(int) CriticOutcome { return CriticOutcome{Status: "approved"} },
 	}
-	out, _ := RunFix(context.Background(), FixConfig{MaxIterations: 10}, r)
+	out, _ := RunFix(context.Background(), FixConfig{MaxIterations: 10}, r, invoke.RunContext{})
 	if out.Reason != "agent_repeated_failure" {
 		t.Errorf("expected agent_repeated_failure, got %q", out.Reason)
 	}
@@ -105,7 +107,7 @@ func TestFix_CriticVetoesAndReruns(t *testing.T) {
 			return CriticOutcome{Status: "approved"}
 		},
 	}
-	out, _ := RunFix(context.Background(), FixConfig{MaxIterations: 5}, r)
+	out, _ := RunFix(context.Background(), FixConfig{MaxIterations: 5}, r, invoke.RunContext{})
 	if out.Status != FixDone || out.Iterations != 2 {
 		t.Errorf("got %+v", out)
 	}
@@ -140,7 +142,7 @@ func TestRunFix_PassesEnrichedFeedback(t *testing.T) {
 		critic: func(int) CriticOutcome { return CriticOutcome{Status: "approved"} },
 	}
 
-	out, err := RunFix(context.Background(), FixConfig{MaxIterations: 5}, r)
+	out, err := RunFix(context.Background(), FixConfig{MaxIterations: 5}, r, invoke.RunContext{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +193,7 @@ func TestRunFix_StuckTriggersEscalation(t *testing.T) {
 		MaxIterations:    10,
 		EscalationLadder: []string{"claude_opus"},
 	}
-	out, err := RunFix(context.Background(), cfg, r)
+	out, err := RunFix(context.Background(), cfg, r, invoke.RunContext{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,7 +226,7 @@ func TestRunFix_FilesChangedSoFarPopulatedInResult(t *testing.T) {
 		critic: func(int) CriticOutcome { return CriticOutcome{Status: "approved"} },
 	}
 
-	out, err := RunFix(context.Background(), FixConfig{MaxIterations: 10}, r)
+	out, err := RunFix(context.Background(), FixConfig{MaxIterations: 10}, r, invoke.RunContext{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +268,7 @@ func TestRunFix_EscalationExhaustedReturnsFailed(t *testing.T) {
 		MaxIterations:    20,
 		EscalationLadder: []string{"claude_opus"},
 	}
-	out, err := RunFix(context.Background(), cfg, r)
+	out, err := RunFix(context.Background(), cfg, r, invoke.RunContext{})
 	if err != nil {
 		t.Fatal(err)
 	}

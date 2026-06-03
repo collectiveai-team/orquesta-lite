@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/lionelchamorro/orquestalite/internal/results"
@@ -66,5 +68,116 @@ func TestPlan_AppendPreservesExisting(t *testing.T) {
 	_ = json.Unmarshal(out, &tl)
 	if len(tl.Tasks) != 2 || tl.Tasks[1].ID != "T002" {
 		t.Fatalf("append failed: %+v", tl.Tasks)
+	}
+}
+
+func TestPlanWithLiveCallerPreflightsOnlyParserAgents(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("posix shell script test, skipping on windows")
+	}
+
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".orquestalite", "results"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "prompts", "parser.md"), []byte("parse {{PLAN}}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cliPath := filepath.Join(dir, "fakecli.sh")
+	if err := os.WriteFile(cliPath, []byte(fakeCLI), 0o755); err != nil {
+		t.Fatalf("write fakecli.sh: %v", err)
+	}
+	writePlanPreflightTeamJSON(t, dir, cliPath)
+
+	planPath := filepath.Join(dir, "plan.md")
+	if err := os.WriteFile(planPath, []byte("# plan"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := PlanWithLiveCaller(context.Background(), dir, planPath, false); err != nil {
+		t.Fatalf("PlanWithLiveCaller: %v", err)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(dir, ".orquestalite", "run.log"))
+	if err != nil {
+		t.Fatalf("read run.log: %v", err)
+	}
+	log := string(raw)
+	if !strings.Contains(log, `"agent":"parser_missing"`) {
+		t.Fatalf("run.log missing parser preflight skip:\n%s", log)
+	}
+	if strings.Contains(log, `"agent":"coder_missing"`) {
+		t.Fatalf("plan preflight reported non-parser agent:\n%s", log)
+	}
+}
+
+func writePlanPreflightTeamJSON(t *testing.T, dir, cliPath string) {
+	t.Helper()
+
+	resultDir := filepath.Join(dir, ".orquestalite", "results")
+	missing := func(name string) string {
+		return filepath.Join(dir, name)
+	}
+	parserResult := filepath.Join(resultDir, "parser.json")
+	roleResult := func(kind string) string {
+		return filepath.Join(".orquestalite", "results", kind+".json")
+	}
+
+	type agentDef struct {
+		Cmd []string `json:"cmd"`
+	}
+	type roleDef struct {
+		Agents         []string `json:"agents"`
+		Prompt         string   `json:"prompt"`
+		ResultPath     string   `json:"result_path"`
+		TimeoutSeconds int      `json:"timeout_seconds"`
+	}
+	type teamJSON struct {
+		Agents           map[string]agentDef `json:"agents"`
+		Roles            map[string]roleDef  `json:"roles"`
+		Limits           map[string]int      `json:"limits"`
+		RateLimitBackoff map[string]any      `json:"rate_limit_backoff"`
+		FullTestCommand  string              `json:"full_test_command"`
+	}
+
+	team := teamJSON{
+		Agents: map[string]agentDef{
+			"parser_missing": {Cmd: []string{missing("parser-missing"), "{{PROMPT}}"}},
+			"parser_ok":      {Cmd: []string{"sh", cliPath, "-p", "{{PROMPT}}", "--result", parserResult, "--kind", "parser"}},
+			"coder_missing":  {Cmd: []string{missing("coder-missing"), "{{PROMPT}}"}},
+			"tester_ok":      {Cmd: []string{"sh", "-c", "true # {{PROMPT}}"}},
+			"critic_ok":      {Cmd: []string{"sh", "-c", "true # {{PROMPT}}"}},
+			"reviewer_ok":    {Cmd: []string{"sh", "-c", "true # {{PROMPT}}"}},
+		},
+		Roles: map[string]roleDef{
+			"parser":   {Agents: []string{"parser_missing", "parser_ok"}, Prompt: "prompts/parser.md", ResultPath: roleResult("parser"), TimeoutSeconds: 30},
+			"coder":    {Agents: []string{"coder_missing"}, Prompt: "prompts/coder.md", ResultPath: roleResult("coder"), TimeoutSeconds: 30},
+			"tester":   {Agents: []string{"tester_ok"}, Prompt: "prompts/tester.md", ResultPath: roleResult("tester"), TimeoutSeconds: 30},
+			"critic":   {Agents: []string{"critic_ok"}, Prompt: "prompts/critic.md", ResultPath: roleResult("critic"), TimeoutSeconds: 30},
+			"reviewer": {Agents: []string{"reviewer_ok"}, Prompt: "prompts/reviewer.md", ResultPath: roleResult("reviewer"), TimeoutSeconds: 30},
+		},
+		Limits: map[string]int{
+			"max_review_cycles":  1,
+			"max_fix_iterations": 1,
+		},
+		RateLimitBackoff: map[string]any{
+			"initial_seconds": 1,
+			"factor":          2,
+			"max_seconds":     4,
+			"default_pattern": "rate_?limit",
+		},
+		FullTestCommand: "true",
+	}
+
+	raw, err := json.MarshalIndent(team, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal team.json: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "team.json"), raw, 0o644); err != nil {
+		t.Fatalf("write team.json: %v", err)
 	}
 }

@@ -2,8 +2,10 @@ package results
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 type ParserTask struct {
@@ -17,12 +19,16 @@ type ParserResult struct {
 	NotesForMemory *string      `json:"notes_for_memory"`
 }
 
+func (r ParserResult) MemoryNote() *string { return r.NotesForMemory }
+
 type CoderResult struct {
 	Status         string   `json:"status"`
 	Summary        string   `json:"summary"`
 	FilesChanged   []string `json:"files_changed"`
 	NotesForMemory *string  `json:"notes_for_memory"`
 }
+
+func (r CoderResult) MemoryNote() *string { return r.NotesForMemory }
 
 type TestFailure struct {
 	Test    string `json:"test"`
@@ -37,6 +43,8 @@ type TesterResult struct {
 	NotesForMemory *string       `json:"notes_for_memory"`
 }
 
+func (r TesterResult) MemoryNote() *string { return r.NotesForMemory }
+
 type Concern struct {
 	Severity   string `json:"severity"`
 	Where      string `json:"where"`
@@ -49,6 +57,8 @@ type CriticResult struct {
 	Concerns       []Concern `json:"concerns"`
 	NotesForMemory *string   `json:"notes_for_memory"`
 }
+
+func (r CriticResult) MemoryNote() *string { return r.NotesForMemory }
 
 type ReviewerNewTask struct {
 	Title       string `json:"title"`
@@ -63,6 +73,8 @@ type ReviewerResult struct {
 	NotesForMemory *string           `json:"notes_for_memory"`
 }
 
+func (r ReviewerResult) MemoryNote() *string { return r.NotesForMemory }
+
 func read(path string, into any) error {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -72,6 +84,53 @@ func read(path string, into any) error {
 		return fmt.Errorf("parse %s: %w", path, err)
 	}
 	return nil
+}
+
+// Archive writes an immutable copy of a role's raw result for one run context.
+func Archive(dir, role, taskID string, cycle, attempt int, raw []byte) error {
+	switch role {
+	case "parser":
+		taskID = "_plan"
+	case "reviewer":
+		taskID = "_review"
+	}
+
+	basePath := filepath.Join(
+		dir,
+		".orquestalite",
+		"results",
+		"by-task",
+		taskID,
+		fmt.Sprintf("%s.c%d.a%d.json", role, cycle, attempt),
+	)
+	if err := os.MkdirAll(filepath.Dir(basePath), 0o755); err != nil {
+		return fmt.Errorf("create archive dir: %w", err)
+	}
+
+	path := basePath
+	for rerun := 1; ; rerun++ {
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if err == nil {
+			if _, err := f.Write(raw); err != nil {
+				_ = f.Close()
+				return fmt.Errorf("write archive %s: %w", path, err)
+			}
+			if err := f.Close(); err != nil {
+				return fmt.Errorf("close archive %s: %w", path, err)
+			}
+			return nil
+		}
+		if !errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("create archive %s: %w", path, err)
+		}
+		path = rerunArchivePath(basePath, rerun+1)
+	}
+}
+
+func rerunArchivePath(basePath string, rerun int) string {
+	ext := filepath.Ext(basePath)
+	stem := basePath[:len(basePath)-len(ext)]
+	return fmt.Sprintf("%s.r%d%s", stem, rerun, ext)
 }
 
 func ParseParser(path string) (*ParserResult, error) {

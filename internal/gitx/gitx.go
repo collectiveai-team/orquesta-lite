@@ -24,6 +24,19 @@ func IsCleanTree(dir string) (bool, error) {
 	return out == "", nil
 }
 
+// IsRepo reports whether dir lies inside a git work tree. Returns false on
+// any error (including "git not installed") so callers can treat absent-git
+// as a soft signal rather than a hard failure.
+func IsRepo(dir string) bool {
+	c := exec.Command("git", "rev-parse", "--is-inside-work-tree")
+	c.Dir = dir
+	out, err := c.Output()
+	if err != nil {
+		return false
+	}
+	return strings.TrimSpace(string(out)) == "true"
+}
+
 func CommitAll(dir, message string) (string, error) {
 	if _, err := run(dir, "add", "-A"); err != nil {
 		return "", err

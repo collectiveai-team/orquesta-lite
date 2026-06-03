@@ -6,11 +6,10 @@
 /.orquestalite/
 
 # go
+bin/
 *.test
 *.out
 coverage.txt
-<<<<<<< Updated upstream
-=======
 
 # OS/editor
 .DS_Store
@@ -19,4 +18,3 @@ coverage.txt
 
 # local planning docs (not committed)
 plan*.md
->>>>>>> Stashed changes

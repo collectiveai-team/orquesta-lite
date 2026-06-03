@@ -3,6 +3,7 @@ package loops
 import (
 	"context"
 
+	"github.com/lionelchamorro/orquestalite/internal/invoke"
 	"github.com/lionelchamorro/orquestalite/internal/results"
 	"github.com/lionelchamorro/orquestalite/internal/tasks"
 )
@@ -10,7 +11,8 @@ import (
 // ReviewDeps extends TaskDeps with the reviewer agent call.
 type ReviewDeps interface {
 	TaskDeps
-	RunReviewer(ctx context.Context, cycle int) (results.ReviewerResult, error)
+	CycleBaseSHA(ctx context.Context) (string, error)
+	RunReviewer(ctx context.Context, rc invoke.RunContext) (results.ReviewerResult, error)
 }
 
 // ReviewConfig holds configuration for the review loop.
@@ -26,11 +28,16 @@ type ReviewConfig struct {
 //  5. Return nil early if reviewer signals stop or there is nothing left to do.
 func RunReviewLoop(ctx context.Context, tl *tasks.TaskList, cfg ReviewConfig, d ReviewDeps) error {
 	for cycle := 1; cycle <= cfg.MaxCycles; cycle++ {
-		if err := RunTaskLoop(ctx, tl, d); err != nil {
+		cycleBaseSHA, err := d.CycleBaseSHA(ctx)
+		if err != nil {
+			return err
+		}
+		rc := invoke.RunContext{Cycle: cycle, Attempt: 1, CycleBaseSHA: cycleBaseSHA}
+		if err := RunTaskLoopWithContext(ctx, tl, d, rc); err != nil {
 			return err
 		}
 
-		rev, err := d.RunReviewer(ctx, cycle)
+		rev, err := d.RunReviewer(ctx, rc)
 		if err != nil {
 			return err
 		}

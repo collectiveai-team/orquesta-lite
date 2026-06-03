@@ -46,24 +46,32 @@ type Provider interface {
 	ParseLine(line string) []Event
 }
 
+var providerRegistry = map[string]func() Provider{}
+
+func registerProvider(name string, factory func() Provider) {
+	if name == "" {
+		panic("provider name cannot be empty")
+	}
+	if factory == nil {
+		panic(fmt.Sprintf("provider %q factory cannot be nil", name))
+	}
+	if _, exists := providerRegistry[name]; exists {
+		panic(fmt.Sprintf("provider %q already registered", name))
+	}
+	providerRegistry[name] = factory
+}
+
 func New(name string) (Provider, error) {
-	switch name {
-	case "claude":
-		return Claude{}, nil
-	case "codex":
-		return Codex{}, nil
-	default:
+	factory, ok := providerRegistry[name]
+	if !ok {
 		return nil, fmt.Errorf("unknown provider %q", name)
 	}
+	return factory(), nil
 }
 
 func IsKnown(name string) bool {
-	switch name {
-	case "claude", "codex":
-		return true
-	default:
-		return false
-	}
+	_, ok := providerRegistry[name]
+	return ok
 }
 
 func insertAfter(args []string, after string, values ...string) []string {

@@ -4,19 +4,22 @@ import (
 	"context"
 	"testing"
 
+	"github.com/lionelchamorro/orquestalite/internal/invoke"
 	"github.com/lionelchamorro/orquestalite/internal/preflight"
 	"github.com/lionelchamorro/orquestalite/internal/results"
 	"github.com/lionelchamorro/orquestalite/internal/tasks"
 )
 
 type stubReviewDeps struct {
-	taskDeps TaskDeps
-	reviewer func(cycle int) results.ReviewerResult
-	cycles   []int
+	taskDeps     TaskDeps
+	cycleBaseSHA func() (string, error)
+	reviewer     func(cycle int) results.ReviewerResult
+	cycles       []int
+	bases        []string
 }
 
-func (s *stubReviewDeps) RunFix(ctx context.Context, id string) (*FixResult, error) {
-	return s.taskDeps.RunFix(ctx, id)
+func (s *stubReviewDeps) RunFix(ctx context.Context, id string, rc invoke.RunContext) (*FixResult, error) {
+	return s.taskDeps.RunFix(ctx, id, rc)
 }
 func (s *stubReviewDeps) FullSuite(ctx context.Context) error { return s.taskDeps.FullSuite(ctx) }
 func (s *stubReviewDeps) Commit(ctx context.Context, m string) (string, error) {
@@ -26,8 +29,8 @@ func (s *stubReviewDeps) Rollback(ctx context.Context) error { return s.taskDeps
 func (s *stubReviewDeps) SaveTasks(ctx context.Context, tl *tasks.TaskList) error {
 	return s.taskDeps.SaveTasks(ctx, tl)
 }
-func (s *stubReviewDeps) Decompose(ctx context.Context, t *tasks.Task, fx *FixResult, files []string) ([]tasks.Task, error) {
-	return s.taskDeps.Decompose(ctx, t, fx, files)
+func (s *stubReviewDeps) Decompose(ctx context.Context, t *tasks.Task, fx *FixResult, files []string, rc invoke.RunContext) ([]tasks.Task, error) {
+	return s.taskDeps.Decompose(ctx, t, fx, files, rc)
 }
 func (s *stubReviewDeps) Handoff(ctx context.Context, t *tasks.Task) (string, error) {
 	return s.taskDeps.Handoff(ctx, t)
@@ -36,9 +39,16 @@ func (s *stubReviewDeps) PreflightEnabled() bool { return s.taskDeps.PreflightEn
 func (s *stubReviewDeps) Preflight(ctx context.Context, t *tasks.Task) preflight.Verdict {
 	return s.taskDeps.Preflight(ctx, t)
 }
-func (s *stubReviewDeps) RunReviewer(ctx context.Context, cycle int) (results.ReviewerResult, error) {
-	s.cycles = append(s.cycles, cycle)
-	return s.reviewer(cycle), nil
+func (s *stubReviewDeps) CycleBaseSHA(ctx context.Context) (string, error) {
+	if s.cycleBaseSHA != nil {
+		return s.cycleBaseSHA()
+	}
+	return "", nil
+}
+func (s *stubReviewDeps) RunReviewer(ctx context.Context, rc invoke.RunContext) (results.ReviewerResult, error) {
+	s.cycles = append(s.cycles, rc.Cycle)
+	s.bases = append(s.bases, rc.CycleBaseSHA)
+	return s.reviewer(rc.Cycle), nil
 }
 
 func boolPtr(b bool) *bool { return &b }
@@ -113,5 +123,32 @@ func TestReview_AppendsNewTasks(t *testing.T) {
 	}
 	if tl.Tasks[1].Title != "follow-up" || tl.Tasks[1].CreatedInReviewCycle != 1 {
 		t.Errorf("appended task wrong: %+v", tl.Tasks[1])
+	}
+}
+
+func TestReview_PassesCycleBaseSHAToReviewer(t *testing.T) {
+	tl := &tasks.TaskList{Tasks: []tasks.Task{{ID: "T001", Status: tasks.StatusPending, Priority: 1}}}
+	td := &stubTaskDeps{
+		fix:       func(string) *FixResult { return &FixResult{Status: FixDone, Iterations: 1} },
+		fullSuite: func() error { return nil },
+		commit:    func(string) (string, error) { return "new-head", nil },
+		rollback:  func() error { return nil },
+		saveTasks: func(*tasks.TaskList) error { return nil },
+	}
+	const base = "0123456789abcdef0123456789abcdef01234567"
+	d := &stubReviewDeps{
+		taskDeps:     td,
+		cycleBaseSHA: func() (string, error) { return base, nil },
+		reviewer:     func(int) results.ReviewerResult { return results.ReviewerResult{ShouldStop: boolPtr(true)} },
+	}
+
+	if err := RunReviewLoop(context.Background(), tl, ReviewConfig{MaxCycles: 1}, d); err != nil {
+		t.Fatal(err)
+	}
+	if len(d.bases) != 1 {
+		t.Fatalf("reviewer calls = %d, want 1", len(d.bases))
+	}
+	if d.bases[0] != base {
+		t.Fatalf("CycleBaseSHA = %q, want %q", d.bases[0], base)
 	}
 }
