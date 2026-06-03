@@ -22,7 +22,7 @@ import (
 
 const (
 	updateRepoOwner = "lionelchamorro"
-	updateRepoName  = "orquestalite"
+	updateRepoName  = "orquesta-lite"
 	updateBinary    = "orq-lite"
 )
 
