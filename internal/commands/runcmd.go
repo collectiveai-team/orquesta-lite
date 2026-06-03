@@ -71,6 +71,33 @@ type liveDepsOptions struct {
 	Roles      []string
 }
 
+// resolveLogFormat turns an explicit/auto format choice into a concrete one.
+// "" and "auto" select human when stdout is an interactive terminal (so an
+// operator gets readable output) and verbose otherwise (so pipes and CI keep
+// the machine-parseable key=value stream).
+func resolveLogFormat(f eventlog.Format, out *os.File) eventlog.Format {
+	switch f {
+	case eventlog.FormatHuman, eventlog.FormatVerbose:
+		return f
+	default: // "" or "auto"
+		if isTerminal(out) {
+			return eventlog.FormatHuman
+		}
+		return eventlog.FormatVerbose
+	}
+}
+
+func isTerminal(f *os.File) bool {
+	if f == nil {
+		return false
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
+}
+
 func newLiveDeps(opts liveDepsOptions) (*liveDeps, func() error, error) {
 	cfg, err := config.Load(opts.TeamPath)
 	if err != nil {
@@ -83,7 +110,7 @@ func newLiveDeps(opts liveDepsOptions) (*liveDeps, func() error, error) {
 
 	tasksPath := filepath.Join(opts.ProjectDir, ".orquestalite", "tasks.json")
 	logPath := filepath.Join(opts.ProjectDir, ".orquestalite", "run.log")
-	logger, err := eventlog.OpenWithFormat(logPath, os.Stdout, opts.LogFormat)
+	logger, err := eventlog.OpenWithFormat(logPath, os.Stdout, resolveLogFormat(opts.LogFormat, os.Stdout))
 	if err != nil {
 		return nil, nil, err
 	}

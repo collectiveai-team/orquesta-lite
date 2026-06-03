@@ -46,7 +46,7 @@ func main() {
 
 	case "run":
 		fs := flag.NewFlagSet("run", flag.ExitOnError)
-		logFormat := fs.String("log-format", "verbose", "stdout log format: verbose|human")
+		logFormat := fs.String("log-format", "auto", "stdout log format: auto|verbose|human")
 		_ = fs.Parse(args)
 		teamPath := "team.json"
 		exit(commands.Run(ctx, commands.RunOptions{
@@ -67,6 +67,20 @@ func main() {
 		} else {
 			exit(commands.Status(".", os.Stdout))
 		}
+
+	case "log":
+		fs := flag.NewFlagSet("log", flag.ExitOnError)
+		role := fs.String("role", "", "show only agent_run events for this role")
+		event := fs.String("event", "", "show only events of this type")
+		expand := fs.Int("expand", 0, "print event #N in full (use the leading #N from the listing)")
+		full := fs.Bool("full", false, "print full stdout/stderr/final_text tails for each agent_run")
+		_ = fs.Parse(args)
+		exit(commands.Log(".", os.Stdout, commands.LogViewOptions{
+			Role:   *role,
+			Event:  *event,
+			Expand: *expand,
+			Full:   *full,
+		}))
 
 	case "reset":
 		exit(commands.Reset("."))
@@ -96,8 +110,9 @@ func usage() {
 Commands:
   init [--lang L] [dir] scaffold .orquestalite, team.json, prompts/ (--lang: python|node|go|auto)
   plan <plan.md>        invoke parser, write tasks.json (--append to add)
-  run [--log-format F]  run review/task/fix loops over existing tasks.json (--log-format: verbose|human)
+  run [--log-format F]  run review/task/fix loops over existing tasks.json (--log-format: auto|verbose|human)
   status [--watch]      print tasks table (--watch refreshes until Ctrl+C)
+  log [--role R]        replay .orquestalite/run.log (--event T, --expand N, --full)
   reset                 remove .orquestalite state
   update [--check]      download and install the latest release from GitHub
   version               print the binary version`)

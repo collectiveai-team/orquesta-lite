@@ -86,8 +86,9 @@ func TestRotateAtThreshold(t *testing.T) {
 }
 
 // TestHumanFormat_SummarisesAgentRun verifies that FormatHuman produces a
-// one-line "role/agent → outcome (Ns)" summary on stdout, while the JSONL
-// file still contains the full structured fields.
+// one-line "role/agent → outcome (Ns)" headline on stdout, followed by an
+// indented preview of what the agent produced, while the JSONL file still
+// contains the full structured fields.
 func TestHumanFormat_SummarisesAgentRun(t *testing.T) {
 	dir := t.TempDir()
 	pretty := &bytes.Buffer{}
@@ -97,13 +98,24 @@ func TestHumanFormat_SummarisesAgentRun(t *testing.T) {
 	}
 	defer l.Close()
 
+	// final_text_tail present -> it is preferred for the preview.
 	l.Log(Event{Type: "agent_run", Fields: map[string]any{
 		"role":            "coder",
 		"agent":           "claude_sonnet",
 		"duration_s":      12,
 		"fallback_reason": "",
-		"stdout_tail":     "some long base64 blob we never want printed in human mode",
+		"final_text_tail": "Implemented T001.\nlots of detail we don't want on the headline",
+		"stdout_tail":     "raw stdout we ignore when final_text is present",
 	}})
+	// No final_text -> fall back to stdout_tail for the preview.
+	l.Log(Event{Type: "agent_run", Fields: map[string]any{
+		"role":            "parser",
+		"agent":           "claude_opus",
+		"duration_s":      36,
+		"fallback_reason": "",
+		"stdout_tail":     "Parsed the plan into 11 atomic tasks.\nmore noise below",
+	}})
+	// Failure with nothing to preview -> headline only.
 	l.Log(Event{Type: "agent_run", Fields: map[string]any{
 		"role":            "coder",
 		"agent":           "codex_gpt5",
@@ -113,12 +125,65 @@ func TestHumanFormat_SummarisesAgentRun(t *testing.T) {
 
 	out := pretty.String()
 	if !strings.Contains(out, "coder/claude_sonnet → ok (12s)") {
-		t.Errorf("human pretty output missing success summary:\n%s", out)
+		t.Errorf("human pretty output missing success headline:\n%s", out)
+	}
+	if !strings.Contains(out, "↳ Implemented T001.") {
+		t.Errorf("human pretty output missing final_text preview:\n%s", out)
+	}
+	if !strings.Contains(out, "↳ Parsed the plan into 11 atomic tasks.") {
+		t.Errorf("human pretty output missing stdout fallback preview:\n%s", out)
 	}
 	if !strings.Contains(out, "coder/codex_gpt5 → no-result (1s)") {
-		t.Errorf("human pretty output missing failure summary:\n%s", out)
+		t.Errorf("human pretty output missing failure headline:\n%s", out)
 	}
-	if strings.Contains(out, "stdout_tail") {
-		t.Errorf("human pretty output must elide stdout_tail blobs, got:\n%s", out)
+	// Only the first line of each tail is previewed; trailing detail is dropped.
+	if strings.Contains(out, "lots of detail") || strings.Contains(out, "more noise below") {
+		t.Errorf("human preview must show first line only, got:\n%s", out)
+	}
+	// Field keys are never printed in human mode.
+	if strings.Contains(out, "stdout_tail") || strings.Contains(out, "final_text_tail") {
+		t.Errorf("human pretty output must not print field keys, got:\n%s", out)
+	}
+}
+
+// TestVerboseFormat_StableOrderAndElidesEmpty verifies the verbose renderer
+// produces a deterministic key order (role/agent first, tails last) and omits
+// empty-string fields, while keeping zero/false scalars for pipe consumers.
+func TestVerboseFormat_StableOrderAndElidesEmpty(t *testing.T) {
+	dir := t.TempDir()
+	pretty := &bytes.Buffer{}
+	l, err := OpenWithFormat(filepath.Join(dir, "run.log"), pretty, FormatVerbose)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+
+	l.Log(Event{Type: "agent_run", Fields: map[string]any{
+		"agent":           "claude_opus",
+		"role":            "parser",
+		"model":           "", // empty string -> elided
+		"provider":        "",
+		"session_id":      "",
+		"exit_code":       0,     // zero scalar -> kept
+		"timed_out":       false, // false scalar -> kept
+		"duration_s":      36,
+		"stdout_tail":     "summary text",
+		"fallback_reason": "",
+	}})
+
+	out := pretty.String()
+	if strings.Contains(out, "model=") || strings.Contains(out, "session_id=") || strings.Contains(out, "provider=") {
+		t.Errorf("verbose output should elide empty-string fields, got:\n%s", out)
+	}
+	if !strings.Contains(out, "exit_code=0") || !strings.Contains(out, "timed_out=false") {
+		t.Errorf("verbose output should keep zero/false scalars, got:\n%s", out)
+	}
+	// role and agent come first; stdout_tail comes last.
+	roleIdx := strings.Index(out, "role=")
+	agentIdx := strings.Index(out, "agent=")
+	durIdx := strings.Index(out, "duration_s=")
+	tailIdx := strings.Index(out, "stdout_tail=")
+	if !(roleIdx < agentIdx && agentIdx < durIdx && durIdx < tailIdx) {
+		t.Errorf("verbose field order unexpected (want role<agent<duration_s<stdout_tail):\n%s", out)
 	}
 }

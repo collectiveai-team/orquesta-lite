@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -88,7 +89,7 @@ func (l *Logger) Log(e Event) {
 	raw = append(raw, '\n')
 	_, _ = l.f.Write(raw)
 	if l.format == FormatHuman {
-		_, _ = fmt.Fprintf(l.pretty, "[%s] %s\n", time.Now().Format("15:04:05"), humanLine(e))
+		_, _ = fmt.Fprintf(l.pretty, "[%s] %s\n", time.Now().Format("15:04:05"), HumanLine(e))
 	} else {
 		_, _ = fmt.Fprintf(l.pretty, "[%s] %s %s\n", time.Now().Format("15:04:05"), e.Type, summariseFields(e.Fields))
 	}
@@ -121,10 +122,12 @@ func (l *Logger) rotateLocked() {
 	l.f, _ = os.OpenFile(l.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 }
 
-// humanLine renders an event into a one-line operator-friendly summary. Falls
+// HumanLine renders an event into a one-line operator-friendly summary. Falls
 // back to a compact `type {key=val}` form for events the formatter doesn't
-// recognise so additions to event vocabulary don't silently disappear.
-func humanLine(e Event) string {
+// recognise so additions to event vocabulary don't silently disappear. For
+// agent_run it may return a two-line string: a headline plus an indented
+// preview of what the agent produced.
+func HumanLine(e Event) string {
 	switch e.Type {
 	case "agent_run":
 		return formatAgentRun(e.Fields)
@@ -152,6 +155,10 @@ func humanLine(e Event) string {
 	return fmt.Sprintf("%s %s", e.Type, summariseFields(e.Fields))
 }
 
+// humanIndent aligns continuation lines under the content of a
+// "[15:04:05] " timestamp prefix (11 characters wide).
+const humanIndent = "           "
+
 func formatAgentRun(fs_ map[string]any) string {
 	role := fs(fs_["role"])
 	agent := fs(fs_["agent"])
@@ -168,7 +175,38 @@ func formatAgentRun(fs_ map[string]any) string {
 	case reason != "":
 		outcome = reason
 	}
-	return fmt.Sprintf("%s/%s → %s (%ss)", role, agent, outcome, dur)
+	line := fmt.Sprintf("%s/%s → %s (%ss)", role, agent, outcome, dur)
+	if summary := AgentSummaryLine(fs_); summary != "" {
+		line += "\n" + humanIndent + "↳ " + summary
+	}
+	return line
+}
+
+// summaryLimit bounds the preview rendered for an agent_run so a long tail can
+// never flood the terminal.
+const summaryLimit = 200
+
+// AgentSummaryLine returns a short, single-line preview of what an agent
+// produced. It prefers the parsed final_text_tail and falls back to the raw
+// stdout_tail. Only the first non-empty line is used, bounded to summaryLimit
+// bytes. Returns "" when neither field has usable content.
+func AgentSummaryLine(fields map[string]any) string {
+	text := fs(fields["final_text_tail"])
+	if strings.TrimSpace(text) == "" {
+		text = fs(fields["stdout_tail"])
+	}
+	return firstLinePreview(text)
+}
+
+func firstLinePreview(s string) string {
+	s = strings.ReplaceAll(s, "\r", "")
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return truncateUTF8(line, summaryLimit)
+		}
+	}
+	return ""
 }
 
 func fs(v any) string {
@@ -185,23 +223,62 @@ func shortSHA(s string) string {
 	return s
 }
 
+// verbosePriority lists fields that should appear first, in this order. Any
+// field not listed here (and not a tail) sorts alphabetically in the middle;
+// bulky tails sort last so the scannable scalars stay left-aligned.
+var verbosePriority = []string{
+	"role", "agent", "task_id", "provider", "model",
+	"duration_s", "exit_code", "outcome", "fallback_reason",
+}
+
+func verboseRank(k string) int {
+	for i, p := range verbosePriority {
+		if k == p {
+			return i
+		}
+	}
+	switch k {
+	case "cmd_line", "final_text_tail", "stdout_tail", "stderr_tail", "codex_header", "result_snapshot":
+		return 1000
+	}
+	return 100
+}
+
+// fieldIsEmpty reports whether a field should be omitted from the verbose line.
+// Only nil and empty strings are dropped; zero/false scalars are kept so tools
+// parsing stdout still see a complete record.
+func fieldIsEmpty(v any) bool {
+	if v == nil {
+		return true
+	}
+	s, ok := v.(string)
+	return ok && s == ""
+}
+
 func summariseFields(fs map[string]any) string {
-	parts := make([]string, 0, len(fs))
+	keys := make([]string, 0, len(fs))
 	for k, v := range fs {
+		if fieldIsEmpty(v) {
+			continue
+		}
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		ri, rj := verboseRank(keys[i]), verboseRank(keys[j])
+		if ri != rj {
+			return ri < rj
+		}
+		return keys[i] < keys[j]
+	})
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
 		if k == "result_snapshot" {
 			parts = append(parts, k+"=...")
 			continue
 		}
-		parts = append(parts, fmt.Sprintf("%s=%s", k, summariseValue(v)))
+		parts = append(parts, fmt.Sprintf("%s=%s", k, summariseValue(fs[k])))
 	}
-	out := ""
-	for i, p := range parts {
-		if i > 0 {
-			out += " "
-		}
-		out += p
-	}
-	return out
+	return strings.Join(parts, " ")
 }
 
 func summariseValue(v any) string {
