@@ -176,9 +176,12 @@ Standard interpolation variables passed by the orchestrator:
 - **One commit per successful task.** The fix loop mutates files in place
   across iterations. When `tester == pass AND critic == approved`, the
   orchestrator commits with a message derived from the task title.
-  Failed tasks: orchestrator runs `git checkout .` before moving on, so the
-  next task starts from a clean tree. Uncommitted work from the failed
-  attempt is discarded.
+  Failed tasks: the orchestrator rolls the tree back to the state captured at
+  the start of the task (`git reset --hard` to that commit, plus removal of the
+  untracked files the agent created) before moving on, so the next task starts
+  clean. Pre-existing untracked files the user already had (scratch notes,
+  un-added WIP) are preserved — rollback only undoes the failed agent's work,
+  never unrelated files. See `gitx.RollbackTo`.
 - **Global memory file**, write-on-discretion: `.orquestalite/memory.md`.
   Each role's result schema includes an optional `notes_for_memory: string | null`
   field. The orchestrator appends non-null entries with metadata:

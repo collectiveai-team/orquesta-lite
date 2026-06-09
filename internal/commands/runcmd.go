@@ -242,6 +242,37 @@ type liveDeps struct {
 	currentTask  *tasks.Task
 	health       *agenthealth.Tracker
 	inv          *invoke.RoleInvoker
+
+	// Rollback baseline captured at the start of each task (in RunFix). On
+	// failure, Rollback resets tracked files to taskBaseSHA and removes only
+	// untracked files NOT in taskUntracked — so the agent's work is undone
+	// without deleting pre-existing user files. See gitx.RollbackTo.
+	taskBaseSHA   string
+	taskUntracked map[string]bool
+}
+
+// captureRollbackBase snapshots the work tree at the start of a task so a later
+// Rollback can restore exactly this state. No-op outside a git repo.
+func (d *liveDeps) captureRollbackBase() {
+	d.taskBaseSHA = ""
+	d.taskUntracked = nil
+	if !gitx.IsRepo(d.dir) {
+		return
+	}
+	sha, err := gitx.HeadSHA(d.dir)
+	if err != nil {
+		return
+	}
+	files, err := gitx.UntrackedFiles(d.dir)
+	if err != nil {
+		return
+	}
+	set := make(map[string]bool, len(files))
+	for _, f := range files {
+		set[f] = true
+	}
+	d.taskBaseSHA = sha
+	d.taskUntracked = set
 }
 
 // RunFix sets up the current task and runs the fix loop.
@@ -252,6 +283,9 @@ func (d *liveDeps) RunFix(ctx context.Context, taskID string, rc invoke.RunConte
 			break
 		}
 	}
+	// Snapshot the tree before the agent touches anything; Rollback restores to
+	// here. RunFix always runs before any Rollback in the same task iteration.
+	d.captureRollbackBase()
 	escalationLadder := []string{}
 	if coderRole, ok := d.cfg.Roles["coder"]; ok {
 		escalationLadder = coderRole.EscalationLadder
@@ -314,9 +348,15 @@ func (d *liveDeps) Commit(ctx context.Context, msg string) (string, error) {
 	return sha, nil
 }
 
-// Rollback discards uncommitted changes via git checkout + clean.
+// Rollback restores the work tree to the state captured at the start of the
+// task (captureRollbackBase): it reverts the agent's tracked changes and removes
+// only the untracked files the agent created, leaving pre-existing user files
+// intact. No-op outside a git repo.
 func (d *liveDeps) Rollback(ctx context.Context) error {
-	return gitx.CheckoutAll(d.dir)
+	if !gitx.IsRepo(d.dir) {
+		return nil
+	}
+	return gitx.RollbackTo(d.dir, d.taskBaseSHA, d.taskUntracked)
 }
 
 // SaveTasks persists the task list to disk.

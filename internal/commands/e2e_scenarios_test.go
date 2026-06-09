@@ -48,6 +48,16 @@ fi
 
 mkdir -p "$(dirname "$result")"
 cp "$src" "$result"
+
+# The coder makes a real, trackable change so the per-task commit is non-empty.
+# (Init now gitignores team.json/prompts/schemas and commits .gitignore, so
+# scaffolding no longer incidentally provides commit content.) result is an
+# absolute path: <projectDir>/.orquestalite/results/<kind>.json — strip three
+# segments to reach the project root.
+if [ "$kind" = "coder" ]; then
+  proj=$(dirname "$(dirname "$(dirname "$result")")")
+  echo "coder run $n" >> "$proj/work.txt"
+fi
 exit 0
 `
 
@@ -421,8 +431,17 @@ func TestRun_E2EScenarios(t *testing.T) {
 				if task.FailureReason == nil || *task.FailureReason != tasks.ReasonMaxIterations {
 					t.Errorf("T001 failure_reason: got %v, want max_iterations", task.FailureReason)
 				}
-				if commits := countGitCommits(t, dir); commits != 1 {
-					t.Errorf("git commits: got %d, want 1 (only init)", commits)
+				if commits := countGitCommits(t, dir); commits != 2 {
+					t.Errorf("git commits: got %d, want 2 (init scaffold + .gitignore, no task commits)", commits)
+				}
+				// Rollback safety: the pre-existing untracked user file must
+				// survive every failed-task rollback, while the agent's own
+				// untracked output (work.txt) is removed.
+				if _, err := os.Stat(filepath.Join(dir, "notes.txt")); err != nil {
+					t.Errorf("pre-existing untracked user file was destroyed by rollback: %v", err)
+				}
+				if _, err := os.Stat(filepath.Join(dir, "work.txt")); !os.IsNotExist(err) {
+					t.Errorf("agent-created work.txt should have been rolled back, got err=%v", err)
 				}
 			},
 		},
@@ -525,13 +544,25 @@ func TestRun_E2EScenarios(t *testing.T) {
 				t.Fatalf("Init: %v", err)
 			}
 
-			resultsDir := filepath.Join(dir, ".mock-results")
-			stateDir := filepath.Join(dir, ".mock-state")
+			// A pre-existing untracked user file (scratch notes the user never
+			// committed). Rollback must never delete it. On scenarios that
+			// commit, it is swept into the first task commit (harmless); on
+			// rollback-only scenarios it must survive untouched.
+			if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("user scratch"), 0o644); err != nil {
+				t.Fatalf("write notes.txt: %v", err)
+			}
+
+			// The fake CLI and its staged results/state live OUTSIDE the project
+			// dir. A real agent binary lives on $PATH, not in the repo; keeping
+			// the harness out of the work tree also keeps it clear of Rollback.
+			harnessDir := t.TempDir()
+			resultsDir := filepath.Join(harnessDir, ".mock-results")
+			stateDir := filepath.Join(harnessDir, ".mock-state")
 			for role, jsons := range sc.resultsSeq {
 				stageRoleResults(t, resultsDir, role, jsons)
 			}
 
-			cliPath := filepath.Join(dir, "fakecli_staged.sh")
+			cliPath := filepath.Join(harnessDir, "fakecli_staged.sh")
 			if err := os.WriteFile(cliPath, []byte(fakeCLIStaged), 0o755); err != nil {
 				t.Fatalf("write fakecli_staged.sh: %v", err)
 			}

@@ -186,9 +186,10 @@ func TestInit_InitialisesGitRepo(t *testing.T) {
 	}
 }
 
-// TestInit_IsNoopInsideExistingRepo verifies Init does not create a nested
-// repo or extra commit when the directory is already a git work tree.
-func TestInit_IsNoopInsideExistingRepo(t *testing.T) {
+// TestInit_DoesNotNestRepoAndCommitsGitignore verifies Init does not create a
+// nested repo inside an existing work tree, and commits exactly the .gitignore
+// (one new commit) so the ignore rules are tracked and survive run's rollback.
+func TestInit_DoesNotNestRepoAndCommitsGitignore(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
 	}
@@ -203,19 +204,65 @@ func TestInit_IsNoopInsideExistingRepo(t *testing.T) {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
 	}
-	c := exec.Command("git", "rev-list", "--count", "HEAD")
-	c.Dir = dir
-	before, _ := c.CombinedOutput()
+	count := func() string {
+		c := exec.Command("git", "rev-list", "--count", "HEAD")
+		c.Dir = dir
+		out, _ := c.CombinedOutput()
+		return strings.TrimSpace(string(out))
+	}
+	before := count()
 
 	if err := Init(dir); err != nil {
 		t.Fatal(err)
 	}
 
-	c = exec.Command("git", "rev-list", "--count", "HEAD")
+	// No nested repo.
+	if _, err := os.Stat(filepath.Join(dir, ".git", ".git")); err == nil {
+		t.Error("Init created a nested .git repo")
+	}
+	// Exactly one new commit (the .gitignore).
+	if got := count(); !(before == "1" && got == "2") {
+		t.Errorf("expected exactly one new commit (before=1 after=2), got before=%s after=%s", before, got)
+	}
+	// .gitignore is tracked.
+	c := exec.Command("git", "ls-files", "--error-unmatch", ".gitignore")
 	c.Dir = dir
-	after, _ := c.CombinedOutput()
-	if string(before) != string(after) {
-		t.Errorf("Init added a commit inside an existing repo: before=%q after=%q", before, after)
+	if out, err := c.CombinedOutput(); err != nil {
+		t.Errorf(".gitignore is not tracked after Init: %v\n%s", err, out)
+	}
+}
+
+// TestInit_ScaffoldingSurvivesRollback is the regression test for the data-loss
+// bug: run's Rollback executes `git checkout .` + `git clean -fd`, which deletes
+// untracked files. Init must gitignore team.json/prompts/schemas/.orquestalite
+// AND commit the .gitignore so it is tracked — otherwise the .gitignore itself
+// is wiped on the first rollback and the ignored dirs die on the next one.
+func TestInit_ScaffoldingSurvivesRollback(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	dir := t.TempDir()
+	if err := Init(dir); err != nil {
+		t.Fatal(err)
+	}
+	gitRun := func(args ...string) {
+		t.Helper()
+		c := exec.Command("git", args...)
+		c.Dir = dir
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	// Simulate two consecutive failed-task rollbacks (the cascade that
+	// previously erased .orquestalite once the .gitignore was gone).
+	for i := 0; i < 2; i++ {
+		gitRun("checkout", ".")
+		gitRun("clean", "-fd")
+	}
+	for _, p := range []string{"team.json", "prompts", "schemas", ".orquestalite", ".gitignore"} {
+		if _, err := os.Stat(filepath.Join(dir, p)); err != nil {
+			t.Errorf("%s did not survive rollback: %v", p, err)
+		}
 	}
 }
 

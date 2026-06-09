@@ -84,7 +84,41 @@ func InitWithOptions(dir string, opts InitOptions) error {
 		}
 	}
 
-	return writeGitignore(filepath.Join(dir, ".gitignore"), lang)
+	if err := writeGitignore(filepath.Join(dir, ".gitignore"), lang); err != nil {
+		return err
+	}
+
+	return commitGitignore(dir)
+}
+
+// commitGitignore stages and commits ONLY the .gitignore so the ignore rules
+// (which keep run's Rollback `git clean -fd` from deleting team.json/prompts/
+// schemas/.orquestalite) are themselves tracked and survive across rollbacks.
+//
+// It is a no-op when git is absent, dir is not a work tree, or .gitignore has
+// no staged change (keeps re-running Init idempotent). Only the .gitignore path
+// is committed; any other staged work the user has is left untouched.
+func commitGitignore(dir string) error {
+	if _, err := exec.LookPath("git"); err != nil {
+		return nil
+	}
+	c := exec.Command("git", "rev-parse", "--is-inside-work-tree")
+	c.Dir = dir
+	if err := c.Run(); err != nil {
+		return nil
+	}
+	if out, err := runGit(dir, "add", "--", ".gitignore"); err != nil {
+		return fmt.Errorf("git add .gitignore: %w\n%s", err, out)
+	}
+	// `git diff --cached --quiet` exits 0 when nothing is staged for .gitignore
+	// (already committed with identical content) — skip the commit in that case.
+	if _, err := runGit(dir, "diff", "--cached", "--quiet", "--", ".gitignore"); err == nil {
+		return nil
+	}
+	if out, err := runGit(dir, "commit", "-q", "-m", "chore: orq-lite ignore rules", "--", ".gitignore"); err != nil {
+		return fmt.Errorf("git commit .gitignore: %w\n%s", err, out)
+	}
+	return nil
 }
 
 // ensureGitRepo runs `git init` and creates an empty initial commit when the
@@ -172,7 +206,12 @@ func applyTestCommand(team []byte, lang string) []byte {
 // writeGitignore ensures .gitignore covers .orquestalite/ plus any
 // language-appropriate build artefacts. Idempotent: re-running adds nothing.
 func writeGitignore(path, lang string) error {
-	entries := []string{".orquestalite/"}
+	// team.json, prompts/, and schemas/ are ignored alongside .orquestalite/ so
+	// run's Rollback (`git clean -fd`) cannot delete them. The .gitignore itself
+	// is committed by commitGitignore so the rules are tracked and survive the
+	// clean — otherwise an untracked .gitignore is wiped on the first rollback
+	// and the ignored dirs die on the next one.
+	entries := []string{".orquestalite/", "team.json", "prompts/", "schemas/"}
 	switch lang {
 	case "python":
 		entries = append(entries,

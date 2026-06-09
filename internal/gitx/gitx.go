@@ -2,7 +2,9 @@ package gitx
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -47,14 +49,73 @@ func CommitAll(dir, message string) (string, error) {
 	return HeadSHA(dir)
 }
 
-func CheckoutAll(dir string) error {
-	if _, err := run(dir, "checkout", "."); err != nil {
+// UntrackedFiles returns the repo-relative paths of untracked files that are
+// not covered by .gitignore — exactly the set `git clean -fd` would delete.
+// Used to snapshot the work tree at task start so RollbackTo can tell the
+// agent's new files apart from pre-existing user files.
+func UntrackedFiles(dir string) ([]string, error) {
+	out, err := run(dir, "ls-files", "--others", "--exclude-standard")
+	if err != nil {
+		return nil, err
+	}
+	if out == "" {
+		return nil, nil
+	}
+	return strings.Split(out, "\n"), nil
+}
+
+// ResetHard reverts tracked files to sha: it discards staged and unstaged
+// modifications and restores tracked deletions. Untracked files are left
+// untouched.
+func ResetHard(dir, sha string) error {
+	_, err := run(dir, "reset", "--hard", sha)
+	return err
+}
+
+// RollbackTo restores the work tree to the state a task found it in:
+//   - tracked modifications and deletions are reverted via `reset --hard baseSHA`
+//   - untracked files created since the task began are removed
+//
+// Untracked paths present in keepUntracked (the snapshot taken at task start)
+// are preserved, so pre-existing user files and scratch work are never
+// destroyed. Ignored files (.gitignore) are never touched. Empty directories
+// left behind by removed files are pruned best-effort.
+//
+// A known limitation: an untracked file the agent *deleted* cannot be restored
+// (it exists in no commit); this matches the previous `git clean` behaviour.
+func RollbackTo(dir, baseSHA string, keepUntracked map[string]bool) error {
+	if baseSHA != "" {
+		if err := ResetHard(dir, baseSHA); err != nil {
+			return err
+		}
+	}
+	now, err := UntrackedFiles(dir)
+	if err != nil {
 		return err
 	}
-	if _, err := run(dir, "clean", "-fd"); err != nil {
-		return err
+	for _, rel := range now {
+		if keepUntracked[rel] {
+			continue
+		}
+		abs := filepath.Join(dir, rel)
+		if err := os.Remove(abs); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		pruneEmptyParents(dir, filepath.Dir(abs))
 	}
 	return nil
+}
+
+// pruneEmptyParents removes now-empty directories from leaf up to (but not
+// including) root. It stops at the first non-empty directory: os.Remove only
+// succeeds on empty dirs, so a populated parent ends the walk.
+func pruneEmptyParents(root, leaf string) {
+	for leaf != root && strings.HasPrefix(leaf, root) {
+		if err := os.Remove(leaf); err != nil {
+			return
+		}
+		leaf = filepath.Dir(leaf)
+	}
 }
 
 func HeadSHA(dir string) (string, error) {
