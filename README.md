@@ -112,6 +112,29 @@ Reset local orchestration state:
 ./orq-lite reset
 ```
 
+Run a whole backlog of features, each on its own branch (factory mode):
+
+```bash
+cat > features.md <<'EOF'
+## Add login endpoint
+
+POST /login issuing a JWT; reject bad credentials with 401.
+
+## Add health check
+
+GET /healthz returns 200 with build info.
+EOF
+
+./orq-lite factory features.md
+./orq-lite factory --status
+```
+
+Watch everything live in the browser:
+
+```bash
+./orq-lite serve   # http://127.0.0.1:4173
+```
+
 ## Commands
 
 ```text
@@ -119,11 +142,29 @@ orq-lite init [dir]            scaffold .orquestalite, team.json, prompts/
 orq-lite plan <plan.md>        invoke parser, write tasks.json
 orq-lite plan <plan.md> --append
 orq-lite run                   run review/task/fix loops
+orq-lite factory <features.md> develop each '## ' feature on its own branch
+orq-lite factory               resume an interrupted queue (--status, --force)
+orq-lite serve [--addr A]      web dashboard with live SSE event stream
 orq-lite status [--watch]      print task status
+orq-lite log [--role R]        replay run.log
 orq-lite reset                 remove .orquestalite state
 orq-lite update [--check]      install the latest release from GitHub
 orq-lite version               print the binary version
 ```
+
+## Docker
+
+Run the whole factory (orq-lite + claude/codex/gemini CLIs) in a container,
+with credentials mounted from your host logins:
+
+```bash
+docker compose build
+export TARGET_PROJECT=$HOME/code/my-app
+docker compose run --rm factory factory features.md
+docker compose up dashboard   # http://localhost:4173
+```
+
+See [docs/docker.md](./docs/docker.md).
 
 ### Updating
 
@@ -141,10 +182,14 @@ will always report itself as outdated).
 
 `team.json` defines:
 
-- an agent pool with provider configs or legacy CLI commands, models, and optional rate-limit patterns
-- role bindings for `parser`, `coder`, `tester`, `critic`, and `reviewer`
+- an agent pool with provider configs (`claude`, `codex`, `gemini`) or legacy
+  CLI commands, models, and optional rate-limit patterns
+- role bindings for `parser`, `coder`, `tester`, `critic`, `reviewer`, and the
+  optional `verifier` (black-box manual verification after critic approval)
 - prompt paths and expected result paths
-- loop limits and rate-limit backoff settings
+- loop limits and rate-limit backoff settings, including
+  `verify_tester_command` (the orchestrator re-runs the tester's reported
+  command and overrides a false "pass"; on by default)
 - the full-suite test command
 
 Prompts live in `prompts/` and use `{{VAR}}` interpolation markers.
@@ -162,8 +207,13 @@ The main loop is intentionally small:
 
 1. `parser` turns a plan into atomic tasks.
 2. `coder`, `tester`, and `critic` iterate on one task until it passes or fails.
+   The orchestrator independently re-runs the tester's command, and the
+   optional `verifier` role exercises the running software black-box (start
+   the app, hit endpoints) before a task can close — closing the "tests pass
+   but manual testing fails" gap.
 3. `reviewer` inspects completed work and can append follow-up tasks.
 4. Successful tasks are committed one at a time.
+5. Factory mode wraps all of the above per feature, on per-feature branches.
 
 See [CONTEXT.md](./CONTEXT.md) for the full domain model and
 [docs/adr/](./docs/adr/) for architecture decisions.
