@@ -67,9 +67,18 @@ credentials, multi-feature factory mode, and an embedded web dashboard.
       and `serve` smoke-tested against real .orquestalite state with curl
       (tasks API, index, SSE replay all verified).
 
+## Iteration 2 (user feedback)
+- [x] Verifier placement mode: `per_cycle` (new default) | `per_task` | `both`.
+      Per-cycle pass uses prompts/verifier-cycle.md, runs after the task loop
+      drains, and its report is injected into the reviewer as
+      {{VERIFICATION_REPORT}}; reviewer converts FAIL checks into priority-1
+      tasks and cannot should_stop while failures remain.
+- [x] One-command mode: `orq-lite run --serve` / `orq-lite factory f.md --serve`
+      host the dashboard alongside the loops.
+
 ## Review
 
-Five commits on `feat/production-factory`:
+Six commits on `feat/production-factory`:
 
 1. gemini provider + verifier role + verified testing + loop hardening
 2. factory mode + handoff/rollback bug fix
