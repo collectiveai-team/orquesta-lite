@@ -55,6 +55,27 @@ func main() {
 			LogFormat:  eventlog.Format(*logFormat),
 		}))
 
+	case "factory":
+		fs := flag.NewFlagSet("factory", flag.ExitOnError)
+		force := fs.Bool("force", false, "replace an existing unfinished queue")
+		statusOnly := fs.Bool("status", false, "print the factory queue and exit")
+		logFormat := fs.String("log-format", "auto", "stdout log format: auto|verbose|human")
+		_ = fs.Parse(args)
+		featuresPath := ""
+		if fs.NArg() > 0 {
+			featuresPath = fs.Arg(0)
+		}
+		runCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
+		defer stop()
+		exit(commands.Factory(runCtx, commands.FactoryOptions{
+			ProjectDir:   ".",
+			FeaturesPath: featuresPath,
+			Force:        *force,
+			StatusOnly:   *statusOnly,
+			LogFormat:    eventlog.Format(*logFormat),
+			Out:          os.Stdout,
+		}))
+
 	case "status":
 		fs := flag.NewFlagSet("status", flag.ExitOnError)
 		watch := fs.Bool("watch", false, "refresh status every interval until Ctrl+C")
@@ -111,6 +132,7 @@ Commands:
   init [--lang L] [dir] scaffold .orquestalite, team.json, prompts/ (--lang: python|node|go|auto)
   plan <plan.md>        invoke parser, write tasks.json (--append to add)
   run [--log-format F]  run review/task/fix loops over existing tasks.json (--log-format: auto|verbose|human)
+  factory <features.md> develop each feature on its own branch, sequentially (no args: resume; --status; --force)
   status [--watch]      print tasks table (--watch refreshes until Ctrl+C)
   log [--role R]        replay .orquestalite/run.log (--event T, --expand N, --full)
   reset                 remove .orquestalite state

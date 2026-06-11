@@ -125,3 +125,35 @@ func HeadSHA(dir string) (string, error) {
 func LogStat(dir, sinceSHA string) (string, error) {
 	return run(dir, "log", sinceSHA+"..HEAD", "--stat")
 }
+
+// CurrentBranch returns the checked-out branch name, or an error in detached
+// HEAD state (factory mode requires a named base branch).
+func CurrentBranch(dir string) (string, error) {
+	out, err := run(dir, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	if out == "HEAD" {
+		return "", fmt.Errorf("detached HEAD: factory mode requires a named branch")
+	}
+	return out, nil
+}
+
+// BranchExists reports whether a local branch with the given name exists.
+func BranchExists(dir, name string) bool {
+	c := exec.Command("git", "rev-parse", "--verify", "refs/heads/"+name)
+	c.Dir = dir
+	return c.Run() == nil
+}
+
+// Checkout switches to an existing branch.
+func Checkout(dir, name string) error {
+	_, err := run(dir, "checkout", name)
+	return err
+}
+
+// CheckoutNewBranch creates branch name starting at base and switches to it.
+func CheckoutNewBranch(dir, name, base string) error {
+	_, err := run(dir, "checkout", "-b", name, base)
+	return err
+}

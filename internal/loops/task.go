@@ -145,13 +145,17 @@ func RunTaskLoopWithContext(ctx context.Context, tl *tasks.TaskList, d TaskDeps,
 					LastStderrTail: decomposeFailureNote,
 				}
 				t.FailureDetails = fd
+				// Rollback BEFORE writing the handoff: Rollback removes untracked
+				// files created since the task started, which would include a
+				// freshly written handoff document. The handoff only needs the
+				// task state, not the (discarded) work tree.
+				_ = d.Rollback(ctx)
 				handoffPath, _ := d.Handoff(ctx, t)
 				t.FailureDetails.HandoffPath = handoffPath
 				t.Status = tasks.StatusNeedsHuman
 				r := tasks.ReasonAgentRepeatedFail
 				t.FailureReason = &r
 				t.LastFeedback = strPtr(fx.LastFeedback)
-				_ = d.Rollback(ctx)
 				_ = d.SaveTasks(ctx, tl)
 				continue
 			}
