@@ -10,6 +10,7 @@ import (
 
 	"github.com/lionelchamorro/orquestalite/internal/commands"
 	"github.com/lionelchamorro/orquestalite/internal/eventlog"
+	"github.com/lionelchamorro/orquestalite/internal/web"
 )
 
 var version = "dev"
@@ -89,6 +90,15 @@ func main() {
 			exit(commands.Status(".", os.Stdout))
 		}
 
+	case "serve":
+		fs := flag.NewFlagSet("serve", flag.ExitOnError)
+		addr := fs.String("addr", "127.0.0.1:4173", "listen address for the dashboard")
+		_ = fs.Parse(args)
+		serveCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
+		defer stop()
+		fmt.Printf("orquestalite dashboard: http://%s\n", *addr)
+		exit(web.Serve(serveCtx, *addr, "."))
+
 	case "log":
 		fs := flag.NewFlagSet("log", flag.ExitOnError)
 		role := fs.String("role", "", "show only agent_run events for this role")
@@ -134,6 +144,7 @@ Commands:
   run [--log-format F]  run review/task/fix loops over existing tasks.json (--log-format: auto|verbose|human)
   factory <features.md> develop each feature on its own branch, sequentially (no args: resume; --status; --force)
   status [--watch]      print tasks table (--watch refreshes until Ctrl+C)
+  serve [--addr A]      web dashboard with live events (default 127.0.0.1:4173)
   log [--role R]        replay .orquestalite/run.log (--event T, --expand N, --full)
   reset                 remove .orquestalite state
   update [--check]      download and install the latest release from GitHub
