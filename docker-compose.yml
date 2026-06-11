@@ -1,0 +1,34 @@
+# orquestalite factory in a container.
+#
+#   docker compose run --rm factory init
+#   docker compose run --rm factory factory features.md
+#   docker compose up dashboard          # http://localhost:4173
+#
+# Credentials come from the host: log in once on the host with each CLI
+# (`claude`, `codex login`, `gemini`) and the mounts below expose the
+# resulting config dirs to the container. They are mounted read-write
+# because the CLIs rotate OAuth tokens in place.
+
+services:
+  factory:
+    build: .
+    image: orquestalite:local
+    working_dir: /workspace
+    volumes:
+      - ${TARGET_PROJECT:-.}:/workspace
+      - ~/.claude:/home/node/.claude
+      - ~/.claude.json:/home/node/.claude.json
+      - ~/.codex:/home/node/.codex
+      - ~/.gemini:/home/node/.gemini
+    environment:
+      - CLAUDE_CODE_DISABLE_AUTOUPDATE=1
+
+  dashboard:
+    build: .
+    image: orquestalite:local
+    command: ["serve", "--addr", "0.0.0.0:4173"]
+    working_dir: /workspace
+    ports:
+      - "4173:4173"
+    volumes:
+      - ${TARGET_PROJECT:-.}:/workspace
