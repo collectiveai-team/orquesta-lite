@@ -90,6 +90,9 @@ type Task struct {
 	// (or attempted the most recent failed call) for this task. Useful for
 	// debugging which model worked or didn't.
 	LastAgent string `json:"last_agent,omitempty"`
+	// DecompositionDepth counts how many decomposition generations produced
+	// this task (0 = from the plan or reviewer). Caps recursive decomposition.
+	DecompositionDepth int `json:"decomposition_depth,omitempty"`
 }
 
 type TaskList struct {

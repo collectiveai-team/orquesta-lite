@@ -16,16 +16,23 @@
       "model": "gpt-5.5",
       "effort": "medium",
       "rate_limit_pattern": "(?i)(429|usage limit reached|rate_?limit_exceeded|quota.*exceeded|usage limit)"
+    },
+    "gemini_pro": {
+      "provider": "gemini",
+      "model": "gemini-2.5-pro",
+      "dangerously_skip_permissions": true,
+      "rate_limit_pattern": "(?i)(429|rate_?limit|quota.*exceeded|resource.*exhausted)"
     }
   },
   "roles": {
     "parser":   { "agents": ["claude_opus"],                          "prompt": "prompts/parser.md",   "result_path": ".orquestalite/results/parser.json",   "timeout_seconds": 300, "decompose_prompt": "prompts/parser-decompose.md" },
     "coder":    { "agents": ["codex_gpt5", "claude_sonnet"],          "prompt": "prompts/coder.md",    "result_path": ".orquestalite/results/coder.json",    "timeout_seconds": 900 },
-    "tester":   { "agents": ["claude_sonnet", "codex_gpt5"],          "prompt": "prompts/tester.md",   "result_path": ".orquestalite/results/tester.json",   "timeout_seconds": 600 },
+    "tester":   { "agents": ["claude_sonnet", "codex_gpt5", "gemini_pro"], "prompt": "prompts/tester.md", "result_path": ".orquestalite/results/tester.json", "timeout_seconds": 600 },
     "critic":   { "agents": ["claude_opus", "codex_gpt5"],            "prompt": "prompts/critic.md",   "result_path": ".orquestalite/results/critic.json",   "timeout_seconds": 300 },
+    "verifier": { "agents": ["claude_sonnet", "codex_gpt5"],          "prompt": "prompts/verifier.md", "result_path": ".orquestalite/results/verifier.json", "timeout_seconds": 600 },
     "reviewer": { "agents": ["claude_opus", "codex_gpt5"],            "prompt": "prompts/reviewer.md", "result_path": ".orquestalite/results/reviewer.json", "timeout_seconds": 600 }
   },
-  "limits": { "max_review_cycles": 3, "max_fix_iterations": 5 },
+  "limits": { "max_review_cycles": 3, "max_fix_iterations": 5, "verify_tester_command": true },
   "rate_limit_backoff": { "initial_seconds": 30, "factor": 2, "max_seconds": 1800, "default_pattern": "rate_?limit|429|quota|too many requests" },
   "full_test_command": "go test ./..."
 }

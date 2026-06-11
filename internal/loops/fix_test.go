@@ -9,9 +9,10 @@ import (
 )
 
 type stubRoles struct {
-	coder  func(attempt int, fb CoderFeedback) CoderOutcome
-	tester func(attempt int) TesterOutcome
-	critic func(attempt int) CriticOutcome
+	coder    func(attempt int, fb CoderFeedback) CoderOutcome
+	tester   func(attempt int) TesterOutcome
+	critic   func(attempt int) CriticOutcome
+	verifier func(attempt int) VerifierOutcome
 }
 
 func (s *stubRoles) RunCoder(ctx context.Context, rc invoke.RunContext, fb CoderFeedback) (CoderOutcome, error) {
@@ -22,6 +23,12 @@ func (s *stubRoles) RunTester(ctx context.Context, rc invoke.RunContext) (Tester
 }
 func (s *stubRoles) RunCritic(ctx context.Context, rc invoke.RunContext) (CriticOutcome, error) {
 	return s.critic(rc.Attempt), nil
+}
+func (s *stubRoles) RunVerifier(ctx context.Context, rc invoke.RunContext) (VerifierOutcome, error) {
+	if s.verifier == nil {
+		return VerifierOutcome{Status: "pass"}, nil
+	}
+	return s.verifier(rc.Attempt), nil
 }
 
 func TestFix_PassFirstTry(t *testing.T) {
@@ -284,5 +291,86 @@ func TestRunFix_EscalationExhaustedReturnsFailed(t *testing.T) {
 	// So should fail at iteration 4.
 	if out.Iterations > 5 {
 		t.Errorf("expected fast failure after exhausted escalation, got iter=%d", out.Iterations)
+	}
+}
+
+// TestRunFix_VerifierRejectsThenPasses verifies that a failing verifier loops
+// back to the coder with VerifierFeedback and the loop converges once the
+// verifier passes.
+func TestRunFix_VerifierRejectsThenPasses(t *testing.T) {
+	var fbOnAttempt2 CoderFeedback
+	verifierCalls := 0
+	r := &stubRoles{
+		coder: func(attempt int, fb CoderFeedback) CoderOutcome {
+			if attempt == 2 {
+				fbOnAttempt2 = fb
+			}
+			return CoderOutcome{Status: "completed"}
+		},
+		tester: func(int) TesterOutcome { return TesterOutcome{Status: "pass"} },
+		critic: func(int) CriticOutcome { return CriticOutcome{Status: "approved"} },
+		verifier: func(int) VerifierOutcome {
+			verifierCalls++
+			if verifierCalls == 1 {
+				return VerifierOutcome{Status: "fail", Feedback: "endpoint returns 500"}
+			}
+			return VerifierOutcome{Status: "pass"}
+		},
+	}
+	out, err := RunFix(context.Background(), FixConfig{MaxIterations: 5, VerifierEnabled: true}, r, invoke.RunContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != FixDone || out.Iterations != 2 {
+		t.Errorf("got %+v", out)
+	}
+	if fbOnAttempt2.VerifierFeedback != "endpoint returns 500" {
+		t.Errorf("VerifierFeedback = %q", fbOnAttempt2.VerifierFeedback)
+	}
+	if fbOnAttempt2.TesterFeedback != "" || fbOnAttempt2.CriticFeedback != "" {
+		t.Errorf("other feedback should be cleared: %+v", fbOnAttempt2)
+	}
+}
+
+// TestRunFix_VerifierDisabledNotCalled verifies the verifier is skipped when
+// VerifierEnabled is false.
+func TestRunFix_VerifierDisabledNotCalled(t *testing.T) {
+	called := false
+	r := &stubRoles{
+		coder:    func(int, CoderFeedback) CoderOutcome { return CoderOutcome{Status: "completed"} },
+		tester:   func(int) TesterOutcome { return TesterOutcome{Status: "pass"} },
+		critic:   func(int) CriticOutcome { return CriticOutcome{Status: "approved"} },
+		verifier: func(int) VerifierOutcome { called = true; return VerifierOutcome{Status: "fail"} },
+	}
+	out, err := RunFix(context.Background(), FixConfig{MaxIterations: 5}, r, invoke.RunContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != FixDone {
+		t.Errorf("got %+v", out)
+	}
+	if called {
+		t.Error("verifier must not be called when disabled")
+	}
+}
+
+// TestRunFix_VerifierFailExhaustsBudget verifies max_iterations fires when the
+// verifier never passes.
+func TestRunFix_VerifierFailExhaustsBudget(t *testing.T) {
+	r := &stubRoles{
+		coder:    func(int, CoderFeedback) CoderOutcome { return CoderOutcome{Status: "completed"} },
+		tester:   func(int) TesterOutcome { return TesterOutcome{Status: "pass"} },
+		critic:   func(int) CriticOutcome { return CriticOutcome{Status: "approved"} },
+		verifier: func(int) VerifierOutcome { return VerifierOutcome{Status: "fail", Feedback: "still broken"} },
+	}
+	out, err := RunFix(context.Background(), FixConfig{MaxIterations: 3, VerifierEnabled: true}, r, invoke.RunContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != FixFailed || out.Reason != "max_iterations" {
+		t.Errorf("got %+v", out)
+	}
+	if out.LastFeedback != "still broken" {
+		t.Errorf("LastFeedback = %q", out.LastFeedback)
 	}
 }

@@ -12,6 +12,10 @@ import (
 
 var orchestratedRoles = []string{"parser", "coder", "tester", "critic", "reviewer"}
 
+// optionalRoles are resolved when declared in team.json but are not required.
+// "verifier" black-box-verifies the change after the critic approves.
+var optionalRoles = []string{"verifier"}
+
 type Agent struct {
 	Cmd                        []string `json:"cmd,omitempty"`
 	Provider                   string   `json:"provider,omitempty"`
@@ -53,6 +57,17 @@ type Limits struct {
 	MaxReviewCycles  int  `json:"max_review_cycles"`
 	MaxFixIterations int  `json:"max_fix_iterations"`
 	PreflightEnabled bool `json:"preflight_enabled,omitempty"`
+	// VerifyTesterCommand re-runs the tester's command_run in the orchestrator
+	// after a reported pass; a non-zero exit overrides the pass. Defaults to
+	// true (nil = enabled) because a tester claiming pass on a failing command
+	// is the root cause of "tests pass but manual testing fails" runs.
+	VerifyTesterCommand *bool `json:"verify_tester_command,omitempty"`
+}
+
+// TesterVerificationEnabled reports whether the orchestrator should re-run the
+// tester's command itself. Enabled unless explicitly set to false.
+func (l Limits) TesterVerificationEnabled() bool {
+	return l.VerifyTesterCommand == nil || *l.VerifyTesterCommand
 }
 
 type RateLimitBackoff struct {
@@ -102,7 +117,7 @@ func (c *Config) Resolve() (map[string]RoleSpec, error) {
 		resolvedAgents[name] = spec
 	}
 
-	roles := make(map[string]RoleSpec, len(orchestratedRoles))
+	roles := make(map[string]RoleSpec, len(orchestratedRoles)+len(optionalRoles))
 	for _, roleName := range orchestratedRoles {
 		role, ok := c.Roles[roleName]
 		if !ok {
@@ -114,8 +129,25 @@ func (c *Config) Resolve() (map[string]RoleSpec, error) {
 		}
 		roles[roleName] = spec
 	}
+	for _, roleName := range optionalRoles {
+		role, ok := c.Roles[roleName]
+		if !ok {
+			continue
+		}
+		spec, err := resolveRoleSpec(roleName, role, resolvedAgents)
+		if err != nil {
+			return nil, err
+		}
+		roles[roleName] = spec
+	}
 
 	return roles, nil
+}
+
+// HasVerifier reports whether the optional verifier role is configured.
+func (c *Config) HasVerifier() bool {
+	_, ok := c.Roles["verifier"]
+	return ok
 }
 
 func (c *Config) Validate() error {

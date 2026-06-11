@@ -60,6 +60,24 @@ type CriticResult struct {
 
 func (r CriticResult) MemoryNote() *string { return r.NotesForMemory }
 
+// VerifyCheck is one black-box check the verifier performed against the
+// running software (an HTTP call, a CLI invocation, a rendered page, ...).
+type VerifyCheck struct {
+	Name     string `json:"name"`
+	Action   string `json:"action"`
+	Expected string `json:"expected"`
+	Actual   string `json:"actual"`
+	Passed   bool   `json:"passed"`
+}
+
+type VerifierResult struct {
+	Status         string        `json:"status"`
+	Checks         []VerifyCheck `json:"checks"`
+	NotesForMemory *string       `json:"notes_for_memory"`
+}
+
+func (r VerifierResult) MemoryNote() *string { return r.NotesForMemory }
+
 type ReviewerNewTask struct {
 	Title       string `json:"title"`
 	Description string `json:"description"`
@@ -176,6 +194,32 @@ func ParseCritic(path string) (*CriticResult, error) {
 	}
 	if r.Status == "rejected" && len(r.Concerns) == 0 {
 		return nil, fmt.Errorf("rejected critic must list concerns")
+	}
+	return &r, nil
+}
+
+func ParseVerifier(path string) (*VerifierResult, error) {
+	var r VerifierResult
+	if err := read(path, &r); err != nil {
+		return nil, err
+	}
+	if r.Status != "pass" && r.Status != "fail" {
+		return nil, fmt.Errorf("verifier.status %q invalid", r.Status)
+	}
+	if len(r.Checks) == 0 {
+		return nil, fmt.Errorf("verifier.checks required: at least one black-box check must be performed")
+	}
+	if r.Status == "fail" {
+		anyFailed := false
+		for _, c := range r.Checks {
+			if !c.Passed {
+				anyFailed = true
+				break
+			}
+		}
+		if !anyFailed {
+			return nil, fmt.Errorf("verifier.status is fail but no check has passed=false")
+		}
 	}
 	return &r, nil
 }

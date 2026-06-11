@@ -38,6 +38,8 @@ If `.gitignore` is missing entries for the project's language, add them before c
 
 {{CRITIC_FEEDBACK}}
 
+{{VERIFIER_FEEDBACK}}
+
 ## Previous attempt (if applicable)
 
 {{PREVIOUS_ATTEMPT_SUMMARY}}

@@ -397,3 +397,78 @@ func completeResolveConfig() *Config {
 		},
 	}
 }
+
+func fiveRolesJSON() string {
+	role := func(name string) string {
+		return `"` + name + `": {"agents": ["a1"], "prompt": "prompts/` + name + `.md", "result_path": ".orquestalite/results/` + name + `.json", "timeout_seconds": 60}`
+	}
+	return role("parser") + "," + role("coder") + "," + role("tester") + "," + role("critic") + "," + role("reviewer")
+}
+
+func TestConfig_ResolveOptionalVerifierRole(t *testing.T) {
+	p := writeTeamJSON(t, `{
+		"agents": {"a1": {"provider": "claude"}},
+		"roles": {`+fiveRolesJSON()+`,
+			"verifier": {"agents": ["a1"], "prompt": "prompts/verifier.md", "result_path": ".orquestalite/results/verifier.json", "timeout_seconds": 600}
+		},
+		"limits": {"max_review_cycles": 1, "max_fix_iterations": 1},
+		"rate_limit_backoff": {"initial_seconds": 1, "factor": 2, "max_seconds": 2, "default_pattern": "x"},
+		"full_test_command": "true"
+	}`)
+
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.HasVerifier() {
+		t.Error("HasVerifier() = false, want true")
+	}
+	specs, err := cfg.Resolve()
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, ok := specs["verifier"]
+	if !ok {
+		t.Fatal("verifier role not resolved")
+	}
+	if v.Timeout != 600*time.Second {
+		t.Errorf("verifier timeout = %v", v.Timeout)
+	}
+}
+
+func TestConfig_ResolveWithoutVerifierRole(t *testing.T) {
+	p := writeTeamJSON(t, `{
+		"agents": {"a1": {"provider": "claude"}},
+		"roles": {`+fiveRolesJSON()+`},
+		"limits": {"max_review_cycles": 1, "max_fix_iterations": 1},
+		"rate_limit_backoff": {"initial_seconds": 1, "factor": 2, "max_seconds": 2, "default_pattern": "x"},
+		"full_test_command": "true"
+	}`)
+
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.HasVerifier() {
+		t.Error("HasVerifier() = true, want false")
+	}
+	specs, err := cfg.Resolve()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := specs["verifier"]; ok {
+		t.Error("verifier should not be resolved when absent")
+	}
+}
+
+func TestLimits_TesterVerificationDefaultsOn(t *testing.T) {
+	var l Limits
+	if !l.TesterVerificationEnabled() {
+		t.Error("nil verify_tester_command should default to enabled")
+	}
+	off := false
+	l.VerifyTesterCommand = &off
+	if l.TesterVerificationEnabled() {
+		t.Error("explicit false should disable verification")
+	}
+}

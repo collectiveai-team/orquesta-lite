@@ -23,12 +23,23 @@ type CriticOutcome struct {
 	Feedback string
 }
 
+// VerifierOutcome is the result of the optional black-box verification pass
+// that runs after the critic approves. The verifier exercises the change the
+// way a human would (start the app, hit endpoints, run the CLI) instead of
+// trusting the test suite — closing the "tests pass but manual testing
+// fails" gap.
+type VerifierOutcome struct {
+	Status   string // "pass" | "fail"
+	Feedback string // injected back to coder on fail
+}
+
 // CoderFeedback carries all inputs to a coder attempt.
 type CoderFeedback struct {
 	PreviousAttemptSummary string
 	FilesChangedSoFar      []string
 	TesterFeedback         string
 	CriticFeedback         string
+	VerifierFeedback       string
 	AgentOverride          string // empty = use default chain; non-empty = use this specific agent
 }
 
@@ -36,6 +47,8 @@ type RoleRunner interface {
 	RunCoder(ctx context.Context, rc invoke.RunContext, fb CoderFeedback) (CoderOutcome, error)
 	RunTester(ctx context.Context, rc invoke.RunContext) (TesterOutcome, error)
 	RunCritic(ctx context.Context, rc invoke.RunContext) (CriticOutcome, error)
+	// RunVerifier is only called when FixConfig.VerifierEnabled is true.
+	RunVerifier(ctx context.Context, rc invoke.RunContext) (VerifierOutcome, error)
 }
 
 type FixStatus int
@@ -48,6 +61,7 @@ const (
 type FixConfig struct {
 	MaxIterations    int
 	EscalationLadder []string // tried in order when stuck detected
+	VerifierEnabled  bool     // run the verifier role after critic approval
 }
 
 type FixResult struct {
@@ -131,6 +145,7 @@ func RunFix(ctx context.Context, cfg FixConfig, r RoleRunner, baseRC invoke.RunC
 					prevHash = ""
 					fb.TesterFeedback = t.Feedback
 					fb.CriticFeedback = ""
+					fb.VerifierFeedback = ""
 					continue
 				}
 				// Ladder exhausted.
@@ -145,6 +160,7 @@ func RunFix(ctx context.Context, cfg FixConfig, r RoleRunner, baseRC invoke.RunC
 
 			fb.TesterFeedback = t.Feedback
 			fb.CriticFeedback = ""
+			fb.VerifierFeedback = ""
 			fb.AgentOverride = ""
 			continue
 		}
@@ -155,12 +171,41 @@ func RunFix(ctx context.Context, cfg FixConfig, r RoleRunner, baseRC invoke.RunC
 			return nil, err
 		}
 		if c.Status == "approved" {
+			// Critic approved — optionally run the black-box verifier before
+			// declaring the task done. The verifier exercises the running
+			// software directly, so a green-but-meaningless test suite cannot
+			// close the task on its own.
+			if cfg.VerifierEnabled {
+				v, err := r.RunVerifier(ctx, rc)
+				if err != nil {
+					return nil, err
+				}
+				if v.Status != "pass" {
+					if attempt >= cfg.MaxIterations {
+						return &FixResult{
+							Status:            FixFailed,
+							Reason:            "max_iterations",
+							Iterations:        cfg.MaxIterations,
+							LastFeedback:      v.Feedback,
+							FilesChangedSoFar: filesChangedSoFar,
+						}, nil
+					}
+					fb.VerifierFeedback = v.Feedback
+					fb.TesterFeedback = ""
+					fb.CriticFeedback = ""
+					fb.AgentOverride = ""
+					prevHash = ""
+					sameHashCount = 0
+					continue
+				}
+			}
 			return &FixResult{Status: FixDone, Iterations: attempt}, nil
 		}
 		// Critic rejected: feed critic feedback back to coder on next attempt.
 		// Reset hash tracking so a future tester failure starts fresh.
 		fb.CriticFeedback = c.Feedback
 		fb.TesterFeedback = ""
+		fb.VerifierFeedback = ""
 		fb.AgentOverride = ""
 		prevHash = ""
 		sameHashCount = 0
