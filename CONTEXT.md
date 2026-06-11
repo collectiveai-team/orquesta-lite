@@ -23,12 +23,20 @@ plan.
 - **role** — function performed in the team: `parser`, `coder`, `tester`,
   `critic`, `reviewer`, plus the optional `verifier`. Roles are abstract;
   agents are concrete.
-- **verifier** — optional sixth role. After the critic approves, it exercises
-  the running software black-box (start the app, curl endpoints, run the CLI)
-  and reports evidence-backed checks. It exists because a green test suite
-  does not prove the application works; this closes the "tests pass but
-  manual testing fails" gap. Enabled by declaring `roles.verifier` in
-  team.json.
+- **verifier** — optional sixth role. It exercises the running software
+  black-box (start the app, curl endpoints, run the CLI) and reports
+  evidence-backed checks. It exists because a green test suite does not
+  prove the application works; this closes the "tests pass but manual
+  testing fails" gap. Enabled by declaring `roles.verifier` in team.json;
+  `mode` selects where it runs: `per_cycle` (default — once after all tasks
+  drain, report fed to the reviewer, uses `cycle_prompt`), `per_task`
+  (inside every fix loop after critic approval), or `both`.
+- **end-of-cycle analysis** — the pair of roles that runs when a cycle's
+  tasks are drained: the verifier answers "does the increment actually
+  work?" and the reviewer answers "is the code sound, and what should the
+  next cycle do?". The reviewer receives the verification report as
+  `{{VERIFICATION_REPORT}}` and must convert each FAIL check into a
+  priority-1 task; it may not set `should_stop` while failures remain.
 - **factory** — a queue of features (one per `## ` heading in a markdown
   file) processed sequentially, each on its own `factory/NNN-slug` git branch
   via a full plan+run cycle. State lives in `.orquestalite/factory.json`.
@@ -124,7 +132,7 @@ result path, timeout).
     "coder":    { "agents": ["claude_sonnet", "codex_gpt5", "claude_opus"],  "prompt": "prompts/coder.md",    "result_path": ".orquestalite/results/coder.json",    "timeout_seconds": 900 },
     "tester":   { "agents": ["claude_sonnet", "codex_gpt5", "gemini_pro"],   "prompt": "prompts/tester.md",   "result_path": ".orquestalite/results/tester.json",   "timeout_seconds": 600 },
     "critic":   { "agents": ["claude_opus", "claude_sonnet"],                "prompt": "prompts/critic.md",   "result_path": ".orquestalite/results/critic.json",   "timeout_seconds": 300 },
-    "verifier": { "agents": ["claude_sonnet"],                               "prompt": "prompts/verifier.md", "result_path": ".orquestalite/results/verifier.json", "timeout_seconds": 600 },
+    "verifier": { "agents": ["claude_sonnet"],                               "prompt": "prompts/verifier.md", "result_path": ".orquestalite/results/verifier.json", "timeout_seconds": 600, "mode": "per_cycle", "cycle_prompt": "prompts/verifier-cycle.md" },
     "reviewer": { "agents": ["claude_opus"],                                 "prompt": "prompts/reviewer.md", "result_path": ".orquestalite/results/reviewer.json", "timeout_seconds": 600 }
   },
   "limits": {
@@ -304,8 +312,10 @@ At least one check is required; a `fail` must contain a check with
   tester timeout). A non-zero exit overrides the pass: the task goes back to
   the coder with the real output as feedback and a `tester_verification_failed`
   event is logged. Controlled by `limits.verify_tester_command` (default on).
-- **Verifier (optional)**: after the critic approves, the verifier role
-  black-box-verifies the change against the running software. A fail loops
+- **Verifier (optional)**: black-box verification against the running
+  software. In `per_cycle` mode (default) it runs once after the cycle's
+  tasks drain and its report drives the reviewer's new tasks; in `per_task`
+  mode it runs inside the fix loop after critic approval and a fail loops
   back to the coder like a critic rejection.
 - **Before commit**: the orchestrator runs the **full test suite**
   (`team.json.full_test_command`). If it fails, the task is marked `failed`

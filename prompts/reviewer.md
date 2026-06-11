@@ -10,6 +10,16 @@ Apply the rubric to findings:
 - Use priority `1` for structural blockers or structural regressions.
 - Use priority `2` for code smells and maintainability follow-ups.
 - Never set `should_stop` to `true` in a cycle where you reported a structural regression.
+- Treat every FAIL line in the verification report below as a defect shipped
+  this cycle: convert each into a priority `1` task describing the observed
+  behavior vs the expected one. Never set `should_stop` to `true` while the
+  verification report contains failures.
+
+## End-of-cycle verification report
+
+Black-box checks the verifier ran against the working software this cycle:
+
+{{VERIFICATION_REPORT}}
 
 ## Memory
 

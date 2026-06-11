@@ -129,7 +129,13 @@ EOF
 ./orq-lite factory --status
 ```
 
-Watch everything live in the browser:
+Or do it all with one command — queue, loops, and live dashboard together:
+
+```bash
+./orq-lite factory features.md --serve   # work + http://127.0.0.1:4173
+```
+
+The dashboard can also run standalone (e.g. pointed at a container's mount):
 
 ```bash
 ./orq-lite serve   # http://127.0.0.1:4173
@@ -207,11 +213,13 @@ The main loop is intentionally small:
 
 1. `parser` turns a plan into atomic tasks.
 2. `coder`, `tester`, and `critic` iterate on one task until it passes or fails.
-   The orchestrator independently re-runs the tester's command, and the
-   optional `verifier` role exercises the running software black-box (start
-   the app, hit endpoints) before a task can close — closing the "tests pass
-   but manual testing fails" gap.
-3. `reviewer` inspects completed work and can append follow-up tasks.
+   The orchestrator independently re-runs the tester's command — a tester
+   cannot close a task by claiming "pass" on a failing command.
+3. End-of-cycle analysis: the optional `verifier` role exercises the running
+   software black-box (start the app, hit endpoints, run the CLI) and its
+   report feeds the `reviewer`, which converts every failed check into a
+   next-cycle task — closing the "tests pass but manual testing fails" gap.
+   (`mode: per_task` moves verification inside the fix loop instead.)
 4. Successful tasks are committed one at a time.
 5. Factory mode wraps all of the above per feature, on per-feature branches.
 

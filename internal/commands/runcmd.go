@@ -294,7 +294,7 @@ func (d *liveDeps) RunFix(ctx context.Context, taskID string, rc invoke.RunConte
 	return loops.RunFix(ctx, loops.FixConfig{
 		MaxIterations:    d.cfg.Limits.MaxFixIterations,
 		EscalationLadder: escalationLadder,
-		VerifierEnabled:  d.cfg.HasVerifier(),
+		VerifierEnabled:  d.cfg.VerifierPerTask(),
 	}, rr, rc)
 }
 
@@ -401,8 +401,75 @@ func (d *liveDeps) RunParser(ctx context.Context, plan string) (*results.ParserR
 	return invoke.Role(ctx, d.inv, "parser", invoke.RoleCall{Vars: map[string]string{"PLAN": plan}}, invoke.RunContext{TaskID: "_plan", Attempt: 1}, results.ParseParser)
 }
 
+// CycleVerification runs the verifier role once over the whole increment
+// shipped this cycle (per-cycle mode). The report — passed and failed checks
+// alike — is handed to the reviewer, which turns failures into next-cycle
+// tasks. Verifier-agent failures are folded into the report instead of
+// erroring so a flaky verifier cannot kill the run.
+func (d *liveDeps) CycleVerification(ctx context.Context, rc invoke.RunContext) (string, error) {
+	if !d.cfg.VerifierPerCycle() {
+		return "", nil
+	}
+
+	gitLog := ""
+	if rc.CycleBaseSHA != "" {
+		gitLog, _ = gitx.LogStat(d.dir, rc.CycleBaseSHA)
+	}
+	var doneTitles []string
+	for _, t := range d.tl.Tasks {
+		if t.Status == tasks.StatusDone {
+			doneTitles = append(doneTitles, fmt.Sprintf("- %s: %s", t.ID, t.Title))
+		}
+	}
+
+	call := invoke.RoleCall{
+		ArchiveRole: "verifier-cycle",
+		Vars: map[string]string{
+			"TASK_ID":          "_cycle",
+			"TASK_TITLE":       fmt.Sprintf("End-of-cycle verification (cycle %d)", rc.Cycle),
+			"TASK_DESCRIPTION": "Verify the increment shipped this cycle works end to end.\n\nTasks completed:\n" + strings.Join(doneTitles, "\n"),
+			"ATTEMPT_NUMBER":   "1",
+			"FILES_CHANGED":    gitLog,
+			"REVIEW_CYCLE":     fmt.Sprintf("%d", rc.Cycle),
+		},
+	}
+	if cp := d.inv.Specs["verifier"].CyclePrompt; cp != "" {
+		call.PromptPath = cp
+	}
+
+	cycleRC := rc
+	cycleRC.TaskID = "_cycle"
+	r, err := invoke.Role(ctx, d.inv, "verifier", call, cycleRC, results.ParseVerifier)
+	if err != nil {
+		d.log.Log(eventlog.Event{Type: "cycle_verification_error", Fields: map[string]any{
+			"cycle": rc.Cycle,
+			"error": err.Error(),
+		}})
+		return fmt.Sprintf("(cycle verification could not run: %v)", err), nil
+	}
+
+	failed := 0
+	var b strings.Builder
+	fmt.Fprintf(&b, "Overall: %s\n", r.Status)
+	for _, c := range r.Checks {
+		mark := "PASS"
+		if !c.Passed {
+			mark = "FAIL"
+			failed++
+		}
+		fmt.Fprintf(&b, "[%s] %s — %s; expected: %s; actual: %s\n", mark, c.Name, c.Action, c.Expected, c.Actual)
+	}
+	d.log.Log(eventlog.Event{Type: "cycle_verification", Fields: map[string]any{
+		"cycle":         rc.Cycle,
+		"status":        r.Status,
+		"checks":        len(r.Checks),
+		"failed_checks": failed,
+	}})
+	return b.String(), nil
+}
+
 // RunReviewer invokes the reviewer role and returns its parsed result.
-func (d *liveDeps) RunReviewer(ctx context.Context, rc invoke.RunContext) (results.ReviewerResult, error) {
+func (d *liveDeps) RunReviewer(ctx context.Context, rc invoke.RunContext, verificationReport string) (results.ReviewerResult, error) {
 	d.currentCycle = rc.Cycle
 	tasksRaw, _ := os.ReadFile(d.tasksPath)
 
@@ -410,12 +477,16 @@ func (d *liveDeps) RunReviewer(ctx context.Context, rc invoke.RunContext) (resul
 	if rc.CycleBaseSHA != "" {
 		gitLog, _ = gitx.LogStat(d.dir, rc.CycleBaseSHA)
 	}
+	if verificationReport == "" {
+		verificationReport = "(no end-of-cycle verification configured)"
+	}
 
 	r, err := invoke.Role(ctx, d.inv, "reviewer", invoke.RoleCall{Vars: map[string]string{
-		"REVIEW_CYCLE":   fmt.Sprintf("%d", rc.Cycle),
-		"CYCLE_BASE_SHA": rc.CycleBaseSHA,
-		"TASKS_JSON":     string(tasksRaw),
-		"GIT_LOG":        gitLog,
+		"REVIEW_CYCLE":        fmt.Sprintf("%d", rc.Cycle),
+		"CYCLE_BASE_SHA":      rc.CycleBaseSHA,
+		"TASKS_JSON":          string(tasksRaw),
+		"GIT_LOG":             gitLog,
+		"VERIFICATION_REPORT": verificationReport,
 	}}, rc, results.ParseReviewer)
 	if err != nil {
 		return results.ReviewerResult{}, err

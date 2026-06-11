@@ -42,6 +42,13 @@ type Role struct {
 	TimeoutSeconds   int      `json:"timeout_seconds"`
 	EscalationLadder []string `json:"escalation_ladder,omitempty"`
 	DecomposePrompt  string   `json:"decompose_prompt,omitempty"`
+	// Mode applies to the verifier role only: "per_cycle" (default) verifies
+	// the whole increment once per review cycle and feeds the report to the
+	// reviewer; "per_task" verifies inside every fix loop; "both" does both.
+	Mode string `json:"mode,omitempty"`
+	// CyclePrompt is the prompt used for the per-cycle verification pass
+	// (verifier role only). Falls back to Prompt when unset.
+	CyclePrompt string `json:"cycle_prompt,omitempty"`
 }
 
 type RoleSpec struct {
@@ -51,6 +58,8 @@ type RoleSpec struct {
 	Timeout          time.Duration
 	EscalationLadder []AgentSpec
 	DecomposePrompt  string
+	Mode             string
+	CyclePrompt      string
 }
 
 type Limits struct {
@@ -150,6 +159,19 @@ func (c *Config) HasVerifier() bool {
 	return ok
 }
 
+// VerifierPerTask reports whether the verifier runs inside every fix loop.
+func (c *Config) VerifierPerTask() bool {
+	r, ok := c.Roles["verifier"]
+	return ok && (r.Mode == "per_task" || r.Mode == "both")
+}
+
+// VerifierPerCycle reports whether the verifier runs once at the end of each
+// review cycle, feeding its report to the reviewer. This is the default mode.
+func (c *Config) VerifierPerCycle() bool {
+	r, ok := c.Roles["verifier"]
+	return ok && (r.Mode == "" || r.Mode == "per_cycle" || r.Mode == "both")
+}
+
 func (c *Config) Validate() error {
 	if len(c.Agents) == 0 {
 		return fmt.Errorf("no agents declared")
@@ -175,6 +197,11 @@ func (c *Config) Validate() error {
 		}
 		if r.TimeoutSeconds <= 0 {
 			return fmt.Errorf("role %q timeout_seconds must be > 0", rname)
+		}
+		switch r.Mode {
+		case "", "per_task", "per_cycle", "both":
+		default:
+			return fmt.Errorf("role %q mode %q invalid (per_task|per_cycle|both)", rname, r.Mode)
 		}
 	}
 	// Second pass: validate agent invocation shape.
@@ -260,6 +287,8 @@ func resolveRoleSpec(name string, role Role, agents map[string]AgentSpec) (RoleS
 		Timeout:          time.Duration(role.TimeoutSeconds) * time.Second,
 		EscalationLadder: escalationSpecs,
 		DecomposePrompt:  role.DecomposePrompt,
+		Mode:             role.Mode,
+		CyclePrompt:      role.CyclePrompt,
 	}, nil
 }
 

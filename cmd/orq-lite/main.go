@@ -48,9 +48,14 @@ func main() {
 	case "run":
 		fs := flag.NewFlagSet("run", flag.ExitOnError)
 		logFormat := fs.String("log-format", "auto", "stdout log format: auto|verbose|human")
+		serve := fs.Bool("serve", false, "also host the web dashboard while running")
+		addr := fs.String("addr", "127.0.0.1:4173", "dashboard address (with --serve)")
 		_ = fs.Parse(args)
+		runCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
+		defer stop()
+		startDashboard(runCtx, *serve, *addr)
 		teamPath := "team.json"
-		exit(commands.Run(ctx, commands.RunOptions{
+		exit(commands.Run(runCtx, commands.RunOptions{
 			ProjectDir: ".",
 			TeamPath:   teamPath,
 			LogFormat:  eventlog.Format(*logFormat),
@@ -61,6 +66,8 @@ func main() {
 		force := fs.Bool("force", false, "replace an existing unfinished queue")
 		statusOnly := fs.Bool("status", false, "print the factory queue and exit")
 		logFormat := fs.String("log-format", "auto", "stdout log format: auto|verbose|human")
+		serve := fs.Bool("serve", false, "also host the web dashboard while running")
+		addr := fs.String("addr", "127.0.0.1:4173", "dashboard address (with --serve)")
 		_ = fs.Parse(args)
 		featuresPath := ""
 		if fs.NArg() > 0 {
@@ -68,6 +75,7 @@ func main() {
 		}
 		runCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
 		defer stop()
+		startDashboard(runCtx, *serve && !*statusOnly, *addr)
 		exit(commands.Factory(runCtx, commands.FactoryOptions{
 			ProjectDir:   ".",
 			FeaturesPath: featuresPath,
@@ -135,6 +143,22 @@ func main() {
 	}
 }
 
+// startDashboard hosts the web dashboard in the background while a run or
+// factory command drives the loops in the foreground — the "one command"
+// mode. It dies with the process; errors (e.g. port already in use) are
+// reported but never abort the run.
+func startDashboard(ctx context.Context, enabled bool, addr string) {
+	if !enabled {
+		return
+	}
+	fmt.Printf("orquestalite dashboard: http://%s\n", addr)
+	go func() {
+		if err := web.Serve(ctx, addr, "."); err != nil {
+			fmt.Fprintln(os.Stderr, "dashboard:", err)
+		}
+	}()
+}
+
 func usage() {
 	fmt.Fprintln(os.Stderr, `Usage: orq-lite <command> [args]
 
@@ -142,7 +166,7 @@ Commands:
   init [--lang L] [dir] scaffold .orquestalite, team.json, prompts/ (--lang: python|node|go|auto)
   plan <plan.md>        invoke parser, write tasks.json (--append to add)
   run [--log-format F]  run review/task/fix loops over existing tasks.json (--log-format: auto|verbose|human)
-  factory <features.md> develop each feature on its own branch, sequentially (no args: resume; --status; --force)
+  factory <features.md> develop each feature on its own branch, sequentially (no args: resume; --status; --force; --serve)
   status [--watch]      print tasks table (--watch refreshes until Ctrl+C)
   serve [--addr A]      web dashboard with live events (default 127.0.0.1:4173)
   log [--role R]        replay .orquestalite/run.log (--event T, --expand N, --full)

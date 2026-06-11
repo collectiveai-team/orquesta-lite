@@ -472,3 +472,60 @@ func TestLimits_TesterVerificationDefaultsOn(t *testing.T) {
 		t.Error("explicit false should disable verification")
 	}
 }
+
+func TestConfig_VerifierModes(t *testing.T) {
+	load := func(mode string) *Config {
+		modeField := ""
+		if mode != "" {
+			modeField = `"mode": "` + mode + `",`
+		}
+		p := writeTeamJSON(t, `{
+			"agents": {"a1": {"provider": "claude"}},
+			"roles": {`+fiveRolesJSON()+`,
+				"verifier": {"agents": ["a1"], `+modeField+` "prompt": "prompts/verifier.md", "result_path": ".orquestalite/results/verifier.json", "timeout_seconds": 600}
+			},
+			"limits": {"max_review_cycles": 1, "max_fix_iterations": 1},
+			"rate_limit_backoff": {"initial_seconds": 1, "factor": 2, "max_seconds": 2, "default_pattern": "x"},
+			"full_test_command": "true"
+		}`)
+		cfg, err := Load(p)
+		if err != nil {
+			t.Fatalf("mode %q: %v", mode, err)
+		}
+		return cfg
+	}
+
+	cases := []struct {
+		mode            string
+		perTask, perCyc bool
+	}{
+		{"", false, true}, // default: end of cycle
+		{"per_cycle", false, true},
+		{"per_task", true, false},
+		{"both", true, true},
+	}
+	for _, c := range cases {
+		cfg := load(c.mode)
+		if got := cfg.VerifierPerTask(); got != c.perTask {
+			t.Errorf("mode %q: VerifierPerTask = %v, want %v", c.mode, got, c.perTask)
+		}
+		if got := cfg.VerifierPerCycle(); got != c.perCyc {
+			t.Errorf("mode %q: VerifierPerCycle = %v, want %v", c.mode, got, c.perCyc)
+		}
+	}
+}
+
+func TestConfig_InvalidVerifierModeFails(t *testing.T) {
+	p := writeTeamJSON(t, `{
+		"agents": {"a1": {"provider": "claude"}},
+		"roles": {`+fiveRolesJSON()+`,
+			"verifier": {"agents": ["a1"], "mode": "sometimes", "prompt": "p.md", "result_path": "r.json", "timeout_seconds": 60}
+		},
+		"limits": {"max_review_cycles": 1, "max_fix_iterations": 1},
+		"rate_limit_backoff": {"initial_seconds": 1, "factor": 2, "max_seconds": 2, "default_pattern": "x"},
+		"full_test_command": "true"
+	}`)
+	if _, err := Load(p); err == nil || !strings.Contains(err.Error(), "mode") {
+		t.Fatalf("expected mode validation error, got %v", err)
+	}
+}
