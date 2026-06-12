@@ -90,6 +90,7 @@ type fakeDeps struct {
 	bases     int
 	runs      []string
 	runResult func(f Feature) (Summary, error)
+	publish   func(f Feature) (string, error)
 	saves     int
 }
 
@@ -105,13 +106,19 @@ func (d *fakeDeps) RunFeature(ctx context.Context, f Feature) (Summary, error) {
 	}
 	return Summary{TasksDone: 1}, nil
 }
+func (d *fakeDeps) PublishFeature(ctx context.Context, f Feature, base string) (string, error) {
+	if d.publish != nil {
+		return d.publish(f)
+	}
+	return "", nil
+}
 func (d *fakeDeps) SaveState(q *Queue) error { d.saves++; return nil }
 func (d *fakeDeps) Logf(string, ...any)      {}
 
 func TestEngineRun_DrainsQueue(t *testing.T) {
 	q := &Queue{BaseBranch: "main", Features: ParseFeatures("## A\n\nbody\n\n## B\n\nbody\n")}
 	d := &fakeDeps{}
-	if err := Run(context.Background(), q, d); err != nil {
+	if err := Run(context.Background(), q, Config{}, d); err != nil {
 		t.Fatal(err)
 	}
 	if len(d.runs) != 2 || d.bases != 2 {
@@ -135,7 +142,7 @@ func TestEngineRun_FeatureFailureContinues(t *testing.T) {
 		}
 		return Summary{TasksDone: 2}, nil
 	}}
-	if err := Run(context.Background(), q, d); err != nil {
+	if err := Run(context.Background(), q, Config{}, d); err != nil {
 		t.Fatal(err)
 	}
 	if q.Features[0].Status != StatusFailed || q.Features[0].Error == "" {
@@ -151,7 +158,7 @@ func TestEngineRun_AllTasksFailedMarksFeatureFailed(t *testing.T) {
 	d := &fakeDeps{runResult: func(Feature) (Summary, error) {
 		return Summary{TasksFailed: 3}, nil
 	}}
-	if err := Run(context.Background(), q, d); err != nil {
+	if err := Run(context.Background(), q, Config{}, d); err != nil {
 		t.Fatal(err)
 	}
 	if q.Features[0].Status != StatusFailed {
@@ -167,10 +174,44 @@ func TestEngineRun_ResumesInProgressFirst(t *testing.T) {
 		order = append(order, f.ID)
 		return Summary{TasksDone: 1}, nil
 	}}
-	if err := Run(context.Background(), q, d); err != nil {
+	if err := Run(context.Background(), q, Config{}, d); err != nil {
 		t.Fatal(err)
 	}
 	if fmt.Sprint(order) != "[F002 F001]" {
 		t.Errorf("order = %v, want F002 first (resume in_progress)", order)
+	}
+}
+
+func TestEngineRun_BudgetStopsQueue(t *testing.T) {
+	q := &Queue{BaseBranch: "main", Features: ParseFeatures("## A\n\nbody\n\n## B\n\nbody\n\n## C\n\nbody\n")}
+	d := &fakeDeps{runResult: func(Feature) (Summary, error) {
+		return Summary{TasksDone: 1, CostUSD: 6.0}, nil
+	}}
+	if err := Run(context.Background(), q, Config{BudgetUSD: 10}, d); err != nil {
+		t.Fatal(err)
+	}
+	// F001 spends $6 (under budget, runs), F002 spends $6 (total $12 >= $10
+	// checked before F003) — so exactly two features run.
+	if len(d.runs) != 2 {
+		t.Fatalf("runs = %v, want 2 features before budget stop", d.runs)
+	}
+	if q.Features[2].Status != StatusPending {
+		t.Errorf("F003 = %q, want pending (resumable)", q.Features[2].Status)
+	}
+	if got := SpentUSD(q); got != 12.0 {
+		t.Errorf("SpentUSD = %v", got)
+	}
+}
+
+func TestEngineRun_PublishesDoneFeatures(t *testing.T) {
+	q := &Queue{BaseBranch: "main", Features: ParseFeatures("## A\n\nbody\n")}
+	d := &fakeDeps{publish: func(f Feature) (string, error) {
+		return "https://github.com/x/y/pull/1", nil
+	}}
+	if err := Run(context.Background(), q, Config{}, d); err != nil {
+		t.Fatal(err)
+	}
+	if q.Features[0].PRURL != "https://github.com/x/y/pull/1" {
+		t.Errorf("PRURL = %q", q.Features[0].PRURL)
 	}
 }

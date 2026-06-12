@@ -13,7 +13,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
+
+	"github.com/lionelchamorro/orquestalite/internal/cost"
 )
 
 //go:embed static
@@ -22,6 +25,10 @@ var staticFS embed.FS
 // Server exposes the project's orchestration state over HTTP.
 type Server struct {
 	Dir string // project directory containing .orquestalite/
+
+	costMu      sync.Mutex
+	costCached  []byte
+	costFetched time.Time
 }
 
 func (s *Server) statePath(name string) string {
@@ -34,6 +41,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/tasks", s.handleTasks)
 	mux.HandleFunc("GET /api/factory", s.handleFactory)
 	mux.HandleFunc("GET /api/events", s.handleEvents)
+	mux.HandleFunc("GET /api/cost", s.handleCost)
 
 	static, err := fs.Sub(staticFS, "static")
 	if err != nil {
@@ -71,6 +79,48 @@ func (s *Server) serveJSONFile(w http.ResponseWriter, path, fallback string) {
 		_, _ = w.Write([]byte(fallback))
 		return
 	}
+	_, _ = w.Write(raw)
+}
+
+// handleCost serves the per-task spend rollup (run.log joined against agtop).
+// agtop invocations are expensive, so the result is cached for a minute;
+// when agtop is unavailable the endpoint reports {"available": false}.
+func (s *Server) handleCost(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+
+	s.costMu.Lock()
+	defer s.costMu.Unlock()
+	if time.Since(s.costFetched) < time.Minute && s.costCached != nil {
+		_, _ = w.Write(s.costCached)
+		return
+	}
+
+	payload := func() any {
+		runs, err := cost.RunsFromLog(s.statePath("run.log"))
+		if err != nil || len(runs) == 0 {
+			return map[string]any{"available": false}
+		}
+		sessions, err := cost.Collect(r.Context())
+		if err != nil {
+			return map[string]any{"available": false, "reason": err.Error()}
+		}
+		rep := cost.Rollup(runs, sessions)
+		return map[string]any{
+			"available": true,
+			"total_usd": rep.TotalUSD,
+			"runs":      rep.Runs,
+			"priced":    rep.Priced,
+		}
+	}()
+
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.costCached = raw
+	s.costFetched = time.Now()
 	_, _ = w.Write(raw)
 }
 

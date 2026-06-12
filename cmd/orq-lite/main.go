@@ -65,6 +65,7 @@ func main() {
 		fs := flag.NewFlagSet("factory", flag.ExitOnError)
 		force := fs.Bool("force", false, "replace an existing unfinished queue")
 		statusOnly := fs.Bool("status", false, "print the factory queue and exit")
+		createPR := fs.Bool("pr", false, "push each finished feature branch and open a PR via gh")
 		logFormat := fs.String("log-format", "auto", "stdout log format: auto|verbose|human")
 		serve := fs.Bool("serve", false, "also host the web dashboard while running")
 		addr := fs.String("addr", "127.0.0.1:4173", "dashboard address (with --serve)")
@@ -81,9 +82,13 @@ func main() {
 			FeaturesPath: featuresPath,
 			Force:        *force,
 			StatusOnly:   *statusOnly,
+			CreatePR:     *createPR,
 			LogFormat:    eventlog.Format(*logFormat),
 			Out:          os.Stdout,
 		}))
+
+	case "cost":
+		exit(commands.Cost(ctx, ".", os.Stdout))
 
 	case "status":
 		fs := flag.NewFlagSet("status", flag.ExitOnError)
@@ -166,7 +171,8 @@ Commands:
   init [--lang L] [dir] scaffold .orquestalite, team.json, prompts/ (--lang: python|node|go|auto)
   plan <plan.md>        invoke parser, write tasks.json (--append to add)
   run [--log-format F]  run review/task/fix loops over existing tasks.json (--log-format: auto|verbose|human)
-  factory <features.md> develop each feature on its own branch, sequentially (no args: resume; --status; --force; --serve)
+  factory <features.md> develop each feature on its own branch (no args: resume; --status; --force; --serve; --pr)
+  cost                  per-task spend rollup (run.log sessions priced via agtop)
   status [--watch]      print tasks table (--watch refreshes until Ctrl+C)
   serve [--addr A]      web dashboard with live events (default 127.0.0.1:4173)
   log [--role R]        replay .orquestalite/run.log (--event T, --expand N, --full)

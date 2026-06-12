@@ -6,9 +6,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/lionelchamorro/orquestalite/internal/config"
+	"github.com/lionelchamorro/orquestalite/internal/cost"
 	"github.com/lionelchamorro/orquestalite/internal/eventlog"
 	"github.com/lionelchamorro/orquestalite/internal/factory"
 	"github.com/lionelchamorro/orquestalite/internal/gitx"
@@ -21,6 +25,7 @@ type FactoryOptions struct {
 	FeaturesPath string // path to the features markdown; "" resumes the existing queue
 	Force        bool   // replace an existing unfinished queue
 	StatusOnly   bool   // print the queue and exit
+	CreatePR     bool   // push each finished feature branch and open a PR via gh
 	LogFormat    eventlog.Format
 	Out          io.Writer
 }
@@ -53,8 +58,15 @@ func Factory(ctx context.Context, opts FactoryOptions) error {
 		return err
 	}
 
-	deps := &liveFactoryDeps{dir: opts.ProjectDir, logFormat: opts.LogFormat, out: opts.Out}
-	return factory.Run(ctx, q, deps)
+	// Budget is optional and read from team.json; a missing or invalid
+	// team.json surfaces later (and more precisely) when the run starts.
+	fcfg := factory.Config{}
+	if cfg, cfgErr := config.Load(filepath.Join(opts.ProjectDir, "team.json")); cfgErr == nil {
+		fcfg.BudgetUSD = cfg.Limits.FactoryBudgetUSD
+	}
+
+	deps := &liveFactoryDeps{dir: opts.ProjectDir, logFormat: opts.LogFormat, out: opts.Out, createPR: opts.CreatePR}
+	return factory.Run(ctx, q, fcfg, deps)
 }
 
 func loadOrCreateQueue(opts FactoryOptions) (*factory.Queue, error) {
@@ -102,11 +114,15 @@ func factoryStatus(dir string, out io.Writer) error {
 		}
 		return err
 	}
-	fmt.Fprintf(out, "base branch: %s   %s\n", q.BaseBranch, factory.Counts(q))
-	fmt.Fprintf(out, "%-5s %-12s %-32s %5s %6s  %s\n", "ID", "STATUS", "BRANCH", "DONE", "FAILED", "TITLE")
+	fmt.Fprintf(out, "base branch: %s   %s   spent: $%.2f\n", q.BaseBranch, factory.Counts(q), factory.SpentUSD(q))
+	fmt.Fprintf(out, "%-5s %-12s %-32s %5s %6s %8s  %s\n", "ID", "STATUS", "BRANCH", "DONE", "FAILED", "COST", "TITLE")
 	for _, f := range q.Features {
-		fmt.Fprintf(out, "%-5s %-12s %-32s %5d %6d  %s\n",
-			f.ID, f.Status, f.Branch, f.TasksDone, f.TasksFailed, f.Title)
+		title := f.Title
+		if f.PRURL != "" {
+			title += "  (" + f.PRURL + ")"
+		}
+		fmt.Fprintf(out, "%-5s %-12s %-32s %5d %6d %8.2f  %s\n",
+			f.ID, f.Status, f.Branch, f.TasksDone, f.TasksFailed, f.CostUSD, title)
 	}
 	return nil
 }
@@ -116,6 +132,7 @@ type liveFactoryDeps struct {
 	dir       string
 	logFormat eventlog.Format
 	out       io.Writer
+	createPR  bool
 }
 
 func (d *liveFactoryDeps) CheckoutFeatureBranch(branch, base string) error {
@@ -150,6 +167,11 @@ func (d *liveFactoryDeps) RunFeature(ctx context.Context, f factory.Feature) (fa
 		return factory.Summary{}, err
 	}
 
+	start := time.Now().UTC()
+	if f.StartedAt != nil {
+		start = *f.StartedAt
+	}
+
 	if err := PlanWithLiveCaller(ctx, d.dir, planPath, false); err != nil {
 		return factory.Summary{}, fmt.Errorf("plan: %w", err)
 	}
@@ -161,7 +183,56 @@ func (d *liveFactoryDeps) RunFeature(ctx context.Context, f factory.Feature) (fa
 	})
 
 	sum := d.summarizeTasks()
+	sum.CostUSD = d.featureSpend(ctx, start)
 	return sum, runErr
+}
+
+// featureSpend prices the agent sessions this feature consumed (runs logged
+// at or after the feature's start) via agtop. Cost tracking is best-effort:
+// a missing agtop or a pricing failure yields 0, never an error.
+func (d *liveFactoryDeps) featureSpend(ctx context.Context, since time.Time) float64 {
+	runs, err := cost.RunsFromLog(filepath.Join(d.dir, ".orquestalite", "run.log"))
+	if err != nil || len(runs) == 0 {
+		return 0
+	}
+	sessions, err := cost.Collect(ctx)
+	if err != nil {
+		d.Logf("factory: cost tracking skipped: %v", err)
+		return 0
+	}
+	return cost.SpendSince(runs, sessions, since)
+}
+
+// PublishFeature pushes the feature branch and opens a PR via the gh CLI.
+// Disabled unless the factory was started with --pr.
+func (d *liveFactoryDeps) PublishFeature(ctx context.Context, f factory.Feature, base string) (string, error) {
+	if !d.createPR {
+		return "", nil
+	}
+	if _, err := exec.LookPath("gh"); err != nil {
+		return "", errors.New("gh CLI not found on PATH")
+	}
+
+	push := exec.CommandContext(ctx, "git", "push", "-u", "origin", f.Branch)
+	push.Dir = d.dir
+	if out, err := push.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("push %s: %w\n%s", f.Branch, err, out)
+	}
+
+	body := fmt.Sprintf("## %s\n\n%s\n\n---\n%d task(s) completed, %d failed.\n\nCreated by orquestalite factory.\n",
+		f.Title, f.Plan, f.TasksDone, f.TasksFailed)
+	pr := exec.CommandContext(ctx, "gh", "pr", "create",
+		"--base", base,
+		"--head", f.Branch,
+		"--title", fmt.Sprintf("feat(%s): %s", f.ID, f.Title),
+		"--body", body,
+	)
+	pr.Dir = d.dir
+	out, err := pr.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("gh pr create: %w\n%s", err, out)
+	}
+	return strings.TrimSpace(string(out)), nil
 }
 
 func (d *liveFactoryDeps) archiveStaleTasks() error {

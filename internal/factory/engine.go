@@ -11,6 +11,16 @@ type Summary struct {
 	TasksDone   int
 	TasksFailed int
 	TasksOther  int
+	CostUSD     float64
+}
+
+// Config holds factory-level knobs.
+type Config struct {
+	// BudgetUSD stops the queue before starting the next feature once the
+	// recorded spend of finished features reaches it. 0 = unlimited. The
+	// queue state is preserved, so raising the budget and resuming continues
+	// where it stopped.
+	BudgetUSD float64
 }
 
 // Deps abstracts everything the engine needs from the outside world so the
@@ -23,6 +33,10 @@ type Deps interface {
 	CheckoutBase(base string) error
 	// RunFeature plans and runs one feature on the current branch.
 	RunFeature(ctx context.Context, f Feature) (Summary, error)
+	// PublishFeature optionally opens a pull request for a finished feature
+	// branch. Return "" (no error) when publishing is disabled. Errors are
+	// logged and never fail the feature — the branch still exists locally.
+	PublishFeature(ctx context.Context, f Feature, base string) (prURL string, err error)
 	// SaveState persists the queue after every transition.
 	SaveState(q *Queue) error
 	// Logf reports human-readable progress.
@@ -34,10 +48,16 @@ type Deps interface {
 // moves on; only infrastructure errors (git checkout, state persistence)
 // abort the whole factory run. The work tree is returned to the base branch
 // after every feature.
-func Run(ctx context.Context, q *Queue, d Deps) error {
+func Run(ctx context.Context, q *Queue, cfg Config, d Deps) error {
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		if cfg.BudgetUSD > 0 {
+			if spent := SpentUSD(q); spent >= cfg.BudgetUSD {
+				d.Logf("factory: budget exhausted ($%.2f of $%.2f) — stopping; raise limits.factory_budget_usd and resume with `orq-lite factory`", spent, cfg.BudgetUSD)
+				return nil
+			}
 		}
 		f := q.NextRunnable()
 		if f == nil {
@@ -61,6 +81,7 @@ func Run(ctx context.Context, q *Queue, d Deps) error {
 
 		sum, runErr := d.RunFeature(ctx, *f)
 		f.TasksDone, f.TasksFailed, f.TasksOther = sum.TasksDone, sum.TasksFailed, sum.TasksOther
+		f.CostUSD = sum.CostUSD
 		end := time.Now().UTC()
 		f.FinishedAt = &end
 		if runErr != nil {
@@ -73,7 +94,13 @@ func Run(ctx context.Context, q *Queue, d Deps) error {
 			d.Logf("factory: %s failed: no task completed", f.ID)
 		} else {
 			f.Status = StatusDone
-			d.Logf("factory: %s done (%d tasks done, %d failed)", f.ID, sum.TasksDone, sum.TasksFailed)
+			d.Logf("factory: %s done (%d tasks done, %d failed, $%.2f)", f.ID, sum.TasksDone, sum.TasksFailed, sum.CostUSD)
+			if url, err := d.PublishFeature(ctx, *f, q.BaseBranch); err != nil {
+				d.Logf("factory: %s PR not created: %v", f.ID, err)
+			} else if url != "" {
+				f.PRURL = url
+				d.Logf("factory: %s PR %s", f.ID, url)
+			}
 		}
 
 		if err := d.CheckoutBase(q.BaseBranch); err != nil {
@@ -90,6 +117,17 @@ func Run(ctx context.Context, q *Queue, d Deps) error {
 			return ctx.Err()
 		}
 	}
+}
+
+// SpentUSD sums the recorded cost of features that finished (done or failed).
+func SpentUSD(q *Queue) float64 {
+	total := 0.0
+	for _, f := range q.Features {
+		if f.Status == StatusDone || f.Status == StatusFailed {
+			total += f.CostUSD
+		}
+	}
+	return total
 }
 
 // Counts renders a short "3 done, 1 failed, 2 pending" summary.

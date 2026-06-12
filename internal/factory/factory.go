@@ -39,6 +39,12 @@ type Feature struct {
 	TasksFailed int    `json:"tasks_failed"`
 	TasksOther  int    `json:"tasks_other"`
 	Error       string `json:"error,omitempty"`
+	// CostUSD is the agent spend attributed to this feature (sessions whose
+	// agent runs started inside the feature's time window, priced via agtop).
+	// Zero when cost tracking is unavailable.
+	CostUSD float64 `json:"cost_usd,omitempty"`
+	// PRURL is the pull request created for the feature branch (--pr).
+	PRURL string `json:"pr_url,omitempty"`
 }
 
 type Queue struct {

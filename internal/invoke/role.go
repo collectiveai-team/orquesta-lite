@@ -90,7 +90,7 @@ func Role[T MemoryNoting](
 	prompt := prompts.Interpolate(tmpl, roleVars)
 	resultAbs := absPath(inv.Dir, resultPath)
 
-	if err := inv.run(ctx, roleName, spec, call.AgentOverride, prompt, resultPath, resultAbs); err != nil {
+	if err := inv.run(ctx, roleName, spec, call.AgentOverride, prompt, resultPath, resultAbs, rc); err != nil {
 		return nil, err
 	}
 
@@ -129,7 +129,7 @@ func (call RoleCall) templateVars() map[string]string {
 	return out
 }
 
-func (inv *RoleInvoker) run(ctx context.Context, roleName string, role config.RoleSpec, agentOverride, prompt, relResultPath, absResultPath string) error {
+func (inv *RoleInvoker) run(ctx context.Context, roleName string, role config.RoleSpec, agentOverride, prompt, relResultPath, absResultPath string, rc RunContext) error {
 	agents, err := selectAgents(role, agentOverride)
 	if err != nil {
 		return err
@@ -194,7 +194,7 @@ func (inv *RoleInvoker) run(ctx context.Context, roleName string, role config.Ro
 		if !shouldFallback && inv.OnAgentSuccess != nil {
 			inv.OnAgentSuccess(roleName, agentName)
 		}
-		inv.logAgentRun(roleName, agentName, ag, spec, r, fallbackReason)
+		inv.logAgentRun(roleName, agentName, ag, spec, r, fallbackReason, rc)
 
 		return fallback.Outcome{
 			RateLimited:    r.RateLimited,
@@ -249,13 +249,16 @@ func (inv *RoleInvoker) recordHealth(roleName, agentName string, shouldFallback 
 	}
 }
 
-func (inv *RoleInvoker) logAgentRun(roleName, agentName string, ag config.AgentSpec, spec runner.Spec, r *runner.Result, fallbackReason string) {
+func (inv *RoleInvoker) logAgentRun(roleName, agentName string, ag config.AgentSpec, spec runner.Spec, r *runner.Result, fallbackReason string, rc RunContext) {
 	if inv.Log == nil {
 		return
 	}
 	fields := map[string]any{
 		"role":             roleName,
 		"agent":            agentName,
+		"task_id":          rc.TaskID,
+		"cycle":            rc.Cycle,
+		"attempt":          rc.Attempt,
 		"provider":         ag.Provider,
 		"model":            ag.Model,
 		"duration_s":       int(r.Duration.Seconds()),

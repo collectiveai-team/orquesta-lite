@@ -26,6 +26,7 @@
   #conn { width: 9px; height: 9px; border-radius: 50%; background: var(--err); }
   #conn.live { background: var(--ok); }
   #summary { color: var(--muted); margin-left: auto; }
+  #cost { color: var(--warn); padding-left: 14px; }
   main {
     display: grid; gap: 16px; padding: 16px 20px; max-width: 1400px; margin: 0 auto;
     grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
@@ -78,12 +79,13 @@
   <div id="conn" title="event stream"></div>
   <h1>orquesta<span>lite</span></h1>
   <div id="summary"></div>
+  <div id="cost" class="muted" title="spend priced via agtop"></div>
 </header>
 <main>
   <section id="factory-section">
     <h2>Factory queue</h2>
     <table>
-      <thead><tr><th>ID</th><th>Status</th><th>Branch</th><th>Done</th><th>Failed</th><th>Title</th></tr></thead>
+      <thead><tr><th>ID</th><th>Status</th><th>Branch</th><th>Done</th><th>Failed</th><th>Cost</th><th>Title</th></tr></thead>
       <tbody id="factory-body"></tbody>
     </table>
   </section>
@@ -140,7 +142,8 @@ async function refreshFactory() {
       <td class="muted">${esc(f.branch)}</td>
       <td>${f.tasks_done ?? 0}</td>
       <td>${f.tasks_failed ?? 0}</td>
-      <td class="title">${esc(f.title)}</td>
+      <td>${f.cost_usd ? "$" + f.cost_usd.toFixed(2) : ""}</td>
+      <td class="title">${esc(f.title)}${f.pr_url ? ` <a href="${esc(f.pr_url)}" style="color:var(--accent)">PR</a>` : ""}</td>
     </tr>`).join("");
   } catch { /* retry on next poll */ }
 }
@@ -186,9 +189,18 @@ function connectEvents() {
   };
 }
 
-refreshTasks(); refreshFactory(); connectEvents();
+async function refreshCost() {
+  try {
+    const res = await fetch("/api/cost");
+    const c = await res.json();
+    $("cost").textContent = c.available ? `$${c.total_usd.toFixed(2)}` : "";
+  } catch { /* retry on next poll */ }
+}
+
+refreshTasks(); refreshFactory(); connectEvents(); refreshCost();
 setInterval(refreshTasks, 2000);
 setInterval(refreshFactory, 3000);
+setInterval(refreshCost, 60000);
 </script>
 </body>
 </html>

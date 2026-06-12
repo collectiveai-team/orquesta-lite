@@ -71,6 +71,10 @@ type Limits struct {
 	// true (nil = enabled) because a tester claiming pass on a failing command
 	// is the root cause of "tests pass but manual testing fails" runs.
 	VerifyTesterCommand *bool `json:"verify_tester_command,omitempty"`
+	// FactoryBudgetUSD stops the factory queue before starting the next
+	// feature once the recorded spend (priced via agtop) reaches this amount.
+	// 0 = unlimited.
+	FactoryBudgetUSD float64 `json:"factory_budget_usd,omitempty"`
 }
 
 // TesterVerificationEnabled reports whether the orchestrator should re-run the
