@@ -52,6 +52,18 @@ docker compose up dashboard
 The dashboard is read-only (it tails `.orquestalite/` state), so it can run
 alongside a `factory` run against the same project mount.
 
+## Browser-real verification (web apps)
+
+The verifier role prefers a real headless browser over `curl` for web apps.
+Bake chromium + playwright into the image (≈400MB extra):
+
+```bash
+docker compose build --build-arg INSTALL_PLAYWRIGHT=1
+```
+
+Without it, the verifier falls back to HTML fetching and marks the
+limitation in its check evidence.
+
 ## Notes
 
 - The container runs as uid 1000 (`node`). If your host user has a different

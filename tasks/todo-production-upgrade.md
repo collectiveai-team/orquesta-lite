@@ -76,6 +76,27 @@ credentials, multi-feature factory mode, and an embedded web dashboard.
 - [x] One-command mode: `orq-lite run --serve` / `orq-lite factory f.md --serve`
       host the dashboard alongside the loops.
 
+## Iteration 3 (user-selected follow-ups)
+- [x] **Per-feature PRs** (`factory --pr`): push branch + `gh pr create` per
+      done feature; URL in factory.json, --status, dashboard. Failures are
+      logged, never fail the feature.
+- [x] **Cost/budget via agtop**: internal/cost joins run.log agent runs
+      (agent_run events now carry task_id/cycle/attempt) with `agtop --json`
+      per-session pricing. `orq-lite cost` table; per-feature cost_usd;
+      `limits.factory_budget_usd` queue cap (resumable); dashboard total
+      (/api/cost, 60s cache). Verified live: $32.45 priced from this repo's
+      own run history.
+- [x] **orq-lite doctor**: git state, team.json load+resolve, prompt files,
+      provider CLIs on PATH, credentials (~/.claude.json, ~/.codex/auth.json,
+      ~/.gemini/oauth_creds.json or API-key envs), full_test_command binary,
+      agtop/gh availability. FAIL exits 1. Verified live (caught the real
+      gemini auth gap on this machine).
+- [x] **Browser-real verification**: verifier prompts prefer headless
+      chromium via playwright for web apps (fail on console errors), with
+      explicit curl-fallback disclosure; Dockerfile INSTALL_PLAYWRIGHT=1
+      build arg.
+- Skipped per user: parallel worktree workers, notifications.
+
 ## Review
 
 Six commits on `feat/production-factory`:

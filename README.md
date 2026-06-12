@@ -149,8 +149,10 @@ orq-lite plan <plan.md>        invoke parser, write tasks.json
 orq-lite plan <plan.md> --append
 orq-lite run                   run review/task/fix loops
 orq-lite factory <features.md> develop each '## ' feature on its own branch
-orq-lite factory               resume an interrupted queue (--status, --force)
+orq-lite factory               resume an interrupted queue (--status, --force, --pr, --serve)
 orq-lite serve [--addr A]      web dashboard with live SSE event stream
+orq-lite doctor                preflight git/team.json/CLIs/credentials before spending
+orq-lite cost                  per-task spend rollup (sessions priced via agtop)
 orq-lite status [--watch]      print task status
 orq-lite log [--role R]        replay run.log
 orq-lite reset                 remove .orquestalite state
@@ -195,7 +197,9 @@ will always report itself as outdated).
 - prompt paths and expected result paths
 - loop limits and rate-limit backoff settings, including
   `verify_tester_command` (the orchestrator re-runs the tester's reported
-  command and overrides a false "pass"; on by default)
+  command and overrides a false "pass"; on by default) and
+  `factory_budget_usd` (stop the queue once recorded spend reaches the
+  budget; priced via the `agtop` CLI when installed)
 - the full-suite test command
 
 Prompts live in `prompts/` and use `{{VAR}}` interpolation markers.

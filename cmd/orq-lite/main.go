@@ -90,6 +90,9 @@ func main() {
 	case "cost":
 		exit(commands.Cost(ctx, ".", os.Stdout))
 
+	case "doctor":
+		exit(commands.Doctor(".", os.Stdout))
+
 	case "status":
 		fs := flag.NewFlagSet("status", flag.ExitOnError)
 		watch := fs.Bool("watch", false, "refresh status every interval until Ctrl+C")
@@ -173,6 +176,7 @@ Commands:
   run [--log-format F]  run review/task/fix loops over existing tasks.json (--log-format: auto|verbose|human)
   factory <features.md> develop each feature on its own branch (no args: resume; --status; --force; --serve; --pr)
   cost                  per-task spend rollup (run.log sessions priced via agtop)
+  doctor                preflight the setup (git, team.json, CLIs, credentials) before spending
   status [--watch]      print tasks table (--watch refreshes until Ctrl+C)
   serve [--addr A]      web dashboard with live events (default 127.0.0.1:4173)
   log [--role R]        replay .orquestalite/run.log (--event T, --expand N, --full)

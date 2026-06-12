@@ -24,8 +24,13 @@ Exercise the whole increment end-to-end, black-box, like a user:
   boot), then walk the user-facing flows the completed tasks promise with
   `curl`. Check status codes AND response bodies. Include at least one
   invalid-input case. Kill the server when done.
-- **Web app**: start the dev server, fetch the affected pages, check the
-  rendered HTML contains what the features promise. Run the production
+- **Web app**: start the dev server, then verify with a **real browser**
+  when possible: if playwright is available (a project dependency, a
+  playwright MCP tool, or `npx playwright`), load the affected pages in
+  headless chromium, assert the visible text/elements the features
+  promise, and fail on any console error or uncaught exception. Only when
+  no browser tooling exists, fall back to fetching pages and checking the
+  HTML — and say so in the check's `actual` field. Run the production
   build if one exists and confirm it succeeds.
 - **CLI / library**: run the actual binary/entry point through the flows the
   tasks describe. For a library, write a throwaway script in /tmp that

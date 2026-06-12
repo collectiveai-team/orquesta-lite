@@ -1,9 +1,9 @@
 // Package cost rolls up token spend per task and per run by joining the
 // orchestrator's own run.log (which records the session_id of every agent
-// invocation) against agtop's per-session cost analysis. agtop
-// (https://github.com/...) already discovers each agent CLI's local session
-// files and prices them against live pricing tables, so orq-lite delegates
-// instead of re-implementing pricing.
+// invocation) against agtop's per-session cost analysis. agtop already
+// discovers each agent CLI's local session files and prices them against
+// live pricing tables, so orq-lite delegates instead of re-implementing
+// pricing.
 package cost
 
 import (
@@ -20,7 +20,7 @@ import (
 
 // ErrAgtopUnavailable is returned when the agtop binary is not on PATH.
 // Cost tracking is an optional capability: callers degrade gracefully.
-var ErrAgtopUnavailable = errors.New("cost tracking unavailable: agtop not found on PATH (https://github.com/raine/agtop)")
+var ErrAgtopUnavailable = errors.New("cost tracking unavailable: agtop not found on PATH")
 
 // Session is the slice of agtop's per-session analysis that orq-lite uses.
 type Session struct {

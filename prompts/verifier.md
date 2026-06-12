@@ -26,9 +26,15 @@ Exercise the change end-to-end, black-box, like a user:
   boot), then hit the real endpoints with `curl`. Check status codes AND
   response bodies against the acceptance criteria. Try one invalid input.
   Kill the server when done.
-- **Web app**: start the dev server, fetch the affected pages, check the
-  rendered HTML contains what the task promised. If a build step exists,
-  run it and confirm it succeeds.
+- **Web app**: start the dev server, then verify with a **real browser**
+  when possible: if playwright is available (a project dependency, a
+  playwright MCP tool, or `npx playwright`), load the affected pages in
+  headless chromium, assert the visible text/elements the task promises,
+  and fail on any console error or uncaught exception. Only when no
+  browser tooling exists, fall back to fetching the pages and checking
+  the HTML — and say so in the check's `actual` field, since curl cannot
+  see client-side rendering or JS errors. If a build step exists, run it
+  and confirm it succeeds.
 - **CLI / library**: run the actual binary/entry point with realistic
   arguments. For a library, write a throwaway script in /tmp that imports
   and exercises the public API, run it, then delete it.

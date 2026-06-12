@@ -28,6 +28,16 @@ RUN npm install -g --omit=dev \
       @google/gemini-cli@${GEMINI_CLI_VERSION} \
  && npm cache clean --force
 
+# Optional: headless chromium for browser-real verification of web apps
+# (the verifier role drives it via playwright). Adds ~400MB; enable with
+#   docker compose build --build-arg INSTALL_PLAYWRIGHT=1
+ARG INSTALL_PLAYWRIGHT=0
+RUN if [ "$INSTALL_PLAYWRIGHT" = "1" ]; then \
+      npm install -g playwright \
+      && playwright install --with-deps chromium \
+      && npm cache clean --force; \
+    fi
+
 COPY --from=build /out/orq-lite /usr/local/bin/orq-lite
 
 # Non-root: reuse the node base image's uid-1000 user (matches the common
