@@ -217,8 +217,11 @@ logging, and idioms instead of generic AI defaults:
 ```
 
 When unset, the agents are told to infer the house style from the surrounding
-code and mirror it. `docs/conventions/collectiveai-python.md` is a worked
-example distilled from a real team's repos. The default prompts already fold in
+code and mirror it. `docs/conventions/collectiveai-python.md` (general Python
+house style, including the `prek` pre-commit quality gate) and
+`docs/conventions/collectiveai-prefect.md` (Prefect workflow patterns) are
+worked examples distilled from a real team's repos — point `conventions_file`
+at the one that fits the project, or concatenate them. The default prompts already fold in
 language-agnostic engineering discipline (explicit signatures, dependency
 injection, test-through-the-interface, mock only at boundaries, deletion test
 before adding an abstraction, two-axis Standards/Spec review) drawn from Matt

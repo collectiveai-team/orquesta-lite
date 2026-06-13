@@ -1,12 +1,16 @@
 # Collective AI — Python house style
 
-Conventions distilled from the team's existing repos (qxo, asr-websocket-server,
-edge-ai-poc, llm-tools, websocket-asr). Mirror these so generated code looks
-like the team wrote it. Point `conventions_file` in `team.json` at this file to
-inject it into the coder/critic/reviewer prompts.
+Conventions distilled from the team's repos (qxo, asr-websocket-server,
+edge-ai-poc, llm-tools, websocket-asr, catalyst, contract-aiment). Mirror these
+so generated code looks like the team wrote it. Point `conventions_file` in
+`team.json` at this file to inject it into the coder/critic/reviewer prompts.
+For Prefect workflow code, also see `collectiveai-prefect.md`.
 
 When a rule below conflicts with what the specific repo you are editing already
-does, follow the repo — these are the defaults, not overrides.
+does, follow the repo — these are the defaults, not overrides. The team has
+been migrating (poetry→uv, `Optional`→`X | None`, `os.getenv`→pydantic-settings,
+black/flake8→ruff+pyrefly); where old and new differ, the **new** convention
+below is the target for new code.
 
 ## Package layout
 
@@ -90,15 +94,30 @@ does, follow the repo — these are the defaults, not overrides.
 - `class Foo(str, Enum)` for finite string sets — never bare string literals in
   comparisons.
 
-## Config & constants
+## Config (pydantic-settings, not os.getenv)
 
-- Read config at module import time as `UPPER_SNAKE` constants with inline
-  defaults, not via a settings class:
-  ```python
-  WEAVIATE_HOST = os.getenv("WEAVIATE_HOST", "localhost")
-  WEAVIATE_PORT = int(os.getenv("WEAVIATE_PORT", "8080"))
-  ```
-- Secrets live in `.secrets/.env`, never committed. Dev defaults in `.env`.
+Centralize configuration in a typed `pydantic_settings.BaseSettings` class —
+`os.getenv`/`os.environ` scattered through the code gives no validation, no type
+coercion, and no `.env` support, and is a flagged anti-pattern. (Older repos
+still use module-level `os.getenv` constants; do not add new ones.)
+
+```python
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+class Settings(BaseSettings):
+    database_url: str
+    debug: bool = False
+    max_connections: int = 10
+
+    model_config = SettingsConfigDict(env_file=".env")
+
+settings = Settings()
+```
+
+- One module-level `settings = Settings()` singleton. Use `SecretStr` for
+  secrets, a `@model_validator(mode="after")` for cross-field defaults.
+- Secrets live in `.env` (`.secrets/.env` in container repos), never committed;
+  commit a `.env.example` template.
 
 ## Imports
 
@@ -125,22 +144,68 @@ does, follow the repo — these are the defaults, not overrides.
   websocket handlers). Annotate their return types. Offload blocking work with
   `asyncio.to_thread` / threads; gather concurrency with `asyncio.gather`.
 
-## Docstrings & comments
+## Comments (minimal) & docstrings
 
-- Sparse, single-line plain-English docstrings on classes and non-trivial
-  methods (`"""stop the asr process"""`). No NumPy/Google parameter blocks.
-- Inline comments are fine for section headers (`# Silero specific parameters`)
-  and unit clarifications.
+- **Avoid comments; write self-documenting code.** Comment only what genuinely
+  needs explaining — a non-obvious workaround, an external constraint, a
+  performance trade-off. Never restate what the code already says, and never
+  leave commented-out code (the linter eradicates it):
+  ```python
+  # Bad
+  counter += 1  # increment counter by one
 
-## Tooling
+  # Good — the comment explains a non-obvious external constraint
+  page = requested_page - 1  # external API uses 1-based page indexing
+  ```
+- Docstrings: Google convention (enforced by ruff pydocstyle). Short, plain,
+  imperative first line ending in a period.
+- Organize long files with **one** consistent separator style — light
+  `# --- Validation ---` (80 wide), bold `###...` blocks, or `# MARK: ...`
+  for IDE navigation. Do not mix styles within a file.
 
-- **uv** for new repos (`[project]` PEP 621, `uv.lock` committed); poetry in
-  older ones. Always commit the lockfile.
-- **ruff** line-length 100, rules `["E", "F", "I", "UP", "B"]`, plus **mypy**
-  for new repos. (Legacy repos: black line-length 88 + isort + flake8 — match
-  the repo.)
-- **pytest**, `testpaths = ["test"]` (singular). Dev deps always include
-  `pytest`, `python-dotenv`.
-- Every repo has a `Makefile` and `docker-compose.yml`; prefer existing `make`
-  targets (`core-build`, `build-<service>`, `start-<service>`, `jupyter-run`)
-  over ad-hoc commands.
+## Dependencies & build
+
+- **uv** for new repos (`[project]` PEP 621, `uv.lock` committed,
+  `hatchling`/`setuptools` build backend); poetry in older ones. Always commit
+  the lockfile. Pin `requires-python` (newest repos pin a single minor, e.g.
+  `>=3.12,<3.13` / `==3.13.*`).
+- **pytest** with `testpaths` pointed at the repo's test dir
+  (`["test"]`/`["backend/tests"]`), `asyncio_mode = "auto"` for async repos.
+
+## Quality gate (prek pre-commit) — run before every commit
+
+New repos enforce quality with **prek** (a fast pre-commit runner). This is the
+expected setup; wire new repos the same way and never commit code that fails it.
+
+```bash
+make tools-install   # uv tool install prek ruff pyrefly ast-grep-cli
+make prek-setup      # uvx prek install   (installs the git hooks)
+make quality-gate    # format -> lint -> typecheck -> scan -> test
+```
+
+`prek.toml` (same schema as `.pre-commit-config.yaml`) runs, in order:
+`uv-lock`; the standard `pre-commit-hooks` (`check-merge-conflict`,
+`check-added-large-files --maxkb=750`, `check-toml`, `check-yaml --unsafe`,
+`end-of-file-fixer`, `trailing-whitespace`); `validate-pyproject`;
+`ruff-format`; `ruff --fix --exit-non-zero-on-fix`; `pyrefly check`;
+`ast-grep scan`.
+
+- **ruff**, line-length **100**, broad rule set — beyond `E,F,B,I,UP` the team
+  enables `SIM,RET,C4,DTZ,PTH,LOG,G,S,C90,RUF,FAST,ERA001` and the `D`
+  pydocstyle rules with `convention = "google"`; `mccabe.max-complexity = 10`;
+  per-file-ignore `S101` (asserts) in tests. `ERA001` means **no commented-out
+  code**.
+- **pyrefly** is the type checker for new repos (mypy in slightly older ones,
+  black/isort/flake8 line-88 in the legacy ones — match the repo you are in).
+- **ast-grep** runs structural lint rules from `ast-rules/` (configured by
+  `sgconfig.yml`). Add a rule here when a pattern must be enforced structurally.
+- Makefiles also carry the docker/run targets — prefer existing `make` targets
+  (`core-build`, `build-<service>`, `start-<service>`, `jupyter-run`,
+  `quality-gate`) over ad-hoc commands.
+
+## Third-party integrations
+
+Wrap external services (Prefect, vector DBs, LLM providers) in a dedicated
+`<pkg>/core/integrations/<service>.py` (or `<pkg>/integrations/`) module rather
+than calling their SDKs directly from business logic. See
+`collectiveai-prefect.md` for the Prefect workflow conventions.
