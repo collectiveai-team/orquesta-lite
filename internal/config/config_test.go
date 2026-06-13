@@ -529,3 +529,21 @@ func TestConfig_InvalidVerifierModeFails(t *testing.T) {
 		t.Fatalf("expected mode validation error, got %v", err)
 	}
 }
+
+func TestConfig_ConventionsFileRoundTrips(t *testing.T) {
+	p := writeTeamJSON(t, `{
+		"agents": {"a1": {"provider": "claude"}},
+		"roles": {`+fiveRolesJSON()+`},
+		"limits": {"max_review_cycles": 1, "max_fix_iterations": 1},
+		"rate_limit_backoff": {"initial_seconds": 1, "factor": 2, "max_seconds": 2, "default_pattern": "x"},
+		"full_test_command": "true",
+		"conventions_file": "docs/CONVENTIONS.md"
+	}`)
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ConventionsFile != "docs/CONVENTIONS.md" {
+		t.Errorf("ConventionsFile = %q", cfg.ConventionsFile)
+	}
+}

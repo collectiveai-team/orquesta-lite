@@ -121,6 +121,15 @@ func runDoctorChecks(dir string) []check {
 		}
 	}
 
+	// conventions_file (optional house-style injection)
+	if cfg.ConventionsFile != "" {
+		if _, err := os.Stat(filepath.Join(dir, cfg.ConventionsFile)); errors.Is(err, os.ErrNotExist) {
+			add(checkWarn, "conventions_file", cfg.ConventionsFile+" not found — agents will infer style from the codebase instead")
+		} else {
+			add(checkPass, "conventions_file", cfg.ConventionsFile)
+		}
+	}
+
 	// full_test_command
 	if cfg.FullTestCommand == "" {
 		add(checkWarn, "full_test_command", "empty — no full-suite gate before commits")

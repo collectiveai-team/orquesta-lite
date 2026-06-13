@@ -201,8 +201,28 @@ will always report itself as outdated).
   `factory_budget_usd` (stop the queue once recorded spend reaches the
   budget; priced via the `agtop` CLI when installed)
 - the full-suite test command
+- `conventions_file` — optional path to a house-style document (see below)
 
 Prompts live in `prompts/` and use `{{VAR}}` interpolation markers.
+
+### Matching your team's style
+
+Set `conventions_file` in `team.json` to a markdown house-style document and
+its contents are injected into the coder, critic, and reviewer prompts as
+`{{CONVENTIONS}}`, so generated code matches your team's structure, naming,
+logging, and idioms instead of generic AI defaults:
+
+```json
+{ "conventions_file": "docs/CONVENTIONS.md" }
+```
+
+When unset, the agents are told to infer the house style from the surrounding
+code and mirror it. `docs/conventions/collectiveai-python.md` is a worked
+example distilled from a real team's repos. The default prompts already fold in
+language-agnostic engineering discipline (explicit signatures, dependency
+injection, test-through-the-interface, mock only at boundaries, deletion test
+before adding an abstraction, two-axis Standards/Spec review) drawn from Matt
+Pocock's [skills collection](https://github.com/mattpocock/skills).
 
 Runtime state lives in `.orquestalite/`, including:
 

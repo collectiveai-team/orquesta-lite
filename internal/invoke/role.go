@@ -40,6 +40,10 @@ type RoleInvoker struct {
 	DefaultRateLimitPattern string
 	AgentHealthThreshold    int
 	OnAgentSuccess          func(role, agent string)
+	// ConventionsPath is a project-relative path to a house-style document.
+	// When set and readable, its contents are injected into every role prompt
+	// as {{CONVENTIONS}}. Read fresh per call so edits take effect mid-run.
+	ConventionsPath string
 }
 
 type RoleCall struct {
@@ -82,6 +86,7 @@ func Role[T MemoryNoting](
 
 	mem, _ := memory.ReadAll(inv.MemPath)
 	roleVars["MEMORY"] = mem
+	roleVars["CONVENTIONS"] = inv.readConventions()
 
 	tmpl, err := prompts.Load(absPath(inv.Dir, promptPath))
 	if err != nil {
@@ -119,6 +124,24 @@ func Role[T MemoryNoting](
 		})
 	}
 	return parsed, nil
+}
+
+// readConventions returns the house-style document injected as {{CONVENTIONS}},
+// or a placeholder telling the agent to infer conventions from the codebase
+// when none is configured or the file is missing/empty.
+func (inv *RoleInvoker) readConventions() string {
+	const fallback = "(no project conventions file configured — infer the house style from the surrounding code and mirror it)"
+	if inv.ConventionsPath == "" {
+		return fallback
+	}
+	raw, err := os.ReadFile(absPath(inv.Dir, inv.ConventionsPath))
+	if err != nil {
+		return fallback
+	}
+	if text := strings.TrimSpace(string(raw)); text != "" {
+		return text
+	}
+	return fallback
 }
 
 func (call RoleCall) templateVars() map[string]string {

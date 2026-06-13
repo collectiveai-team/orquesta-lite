@@ -144,6 +144,7 @@ func newLiveDeps(opts liveDepsOptions) (*liveDeps, func() error, error) {
 		Runner:                  invoke.ExecRunner{},
 		DefaultRateLimitPattern: cfg.RateLimitBackoff.DefaultPattern,
 		AgentHealthThreshold:    agentHealthThreshold,
+		ConventionsPath:         cfg.ConventionsFile,
 		OnAgentSuccess: func(role, agent string) {
 			if role == "coder" && deps.currentTask != nil {
 				deps.currentTask.LastAgent = agent

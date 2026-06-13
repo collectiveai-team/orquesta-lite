@@ -189,6 +189,10 @@ collisions with the curly braces commonly present in prompt content
 
 Standard interpolation variables passed by the orchestrator:
 
+- `{{CONVENTIONS}}` — the house-style document at `team.json.conventions_file`
+  (project-relative), injected into the coder/critic/reviewer prompts so output
+  matches the team's conventions. Read fresh per call. When unset or missing,
+  a placeholder instructs the agent to infer the style from the codebase.
 - `{{TASK_TITLE}}`, `{{TASK_DESCRIPTION}}` — current task
 - `{{ATTEMPT_NUMBER}}` — fix loop iteration count
 - `{{TESTER_FEEDBACK}}`, `{{CRITIC_FEEDBACK}}`, `{{VERIFIER_FEEDBACK}}` — populated on iteration > 1

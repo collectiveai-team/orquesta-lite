@@ -96,6 +96,12 @@ type Config struct {
 	Limits           Limits           `json:"limits"`
 	RateLimitBackoff RateLimitBackoff `json:"rate_limit_backoff"`
 	FullTestCommand  string           `json:"full_test_command"`
+	// ConventionsFile is a project-relative path to a house-style document
+	// (coding conventions, structure, idioms). When set and present, its
+	// contents are injected into the coder/tester/critic/reviewer/verifier
+	// prompts as {{CONVENTIONS}} so agent output matches the team's style.
+	// Empty = agents infer conventions from the existing codebase instead.
+	ConventionsFile string `json:"conventions_file,omitempty"`
 }
 
 func Load(path string) (*Config, error) {

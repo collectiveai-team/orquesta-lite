@@ -26,6 +26,19 @@ report what actually happened. Do not modify source code.
   Do not invent a passing result.
 - Status is "pass" only if the command exited zero and every test passed.
 
+## What good coverage looks like
+
+When you judge whether the change is adequately tested, hold the tests to
+this bar (and fail, with the reason, when they fall short):
+
+- Tests must verify **behavior through the public interface**, not
+  implementation details. A test that breaks on a rename but not on a
+  behavior change is noise — flag it.
+- Mocks belong only at **system boundaries** (external APIs, the clock,
+  randomness, the network, sometimes the filesystem/DB). Tests that mock the
+  code's own internal collaborators are testing the mocks, not the code —
+  flag that as insufficient coverage.
+
 ## Output contract
 
 Run the tests, then write `.orquestalite/results/tester.json`:
