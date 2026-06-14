@@ -40,6 +40,10 @@ type RoleInvoker struct {
 	DefaultRateLimitPattern string
 	AgentHealthThreshold    int
 	OnAgentSuccess          func(role, agent string)
+	// ConventionsPath is a project-relative path to a house-style document.
+	// When set and readable, its contents are injected into every role prompt
+	// as {{CONVENTIONS}}. Read fresh per call so edits take effect mid-run.
+	ConventionsPath string
 }
 
 type RoleCall struct {
@@ -82,6 +86,7 @@ func Role[T MemoryNoting](
 
 	mem, _ := memory.ReadAll(inv.MemPath)
 	roleVars["MEMORY"] = mem
+	roleVars["CONVENTIONS"] = inv.readConventions()
 
 	tmpl, err := prompts.Load(absPath(inv.Dir, promptPath))
 	if err != nil {
@@ -90,7 +95,7 @@ func Role[T MemoryNoting](
 	prompt := prompts.Interpolate(tmpl, roleVars)
 	resultAbs := absPath(inv.Dir, resultPath)
 
-	if err := inv.run(ctx, roleName, spec, call.AgentOverride, prompt, resultPath, resultAbs); err != nil {
+	if err := inv.run(ctx, roleName, spec, call.AgentOverride, prompt, resultPath, resultAbs, rc); err != nil {
 		return nil, err
 	}
 
@@ -121,6 +126,24 @@ func Role[T MemoryNoting](
 	return parsed, nil
 }
 
+// readConventions returns the house-style document injected as {{CONVENTIONS}},
+// or a placeholder telling the agent to infer conventions from the codebase
+// when none is configured or the file is missing/empty.
+func (inv *RoleInvoker) readConventions() string {
+	const fallback = "(no project conventions file configured — infer the house style from the surrounding code and mirror it)"
+	if inv.ConventionsPath == "" {
+		return fallback
+	}
+	raw, err := os.ReadFile(absPath(inv.Dir, inv.ConventionsPath))
+	if err != nil {
+		return fallback
+	}
+	if text := strings.TrimSpace(string(raw)); text != "" {
+		return text
+	}
+	return fallback
+}
+
 func (call RoleCall) templateVars() map[string]string {
 	out := make(map[string]string, len(call.Vars)+1)
 	for k, v := range call.Vars {
@@ -129,7 +152,7 @@ func (call RoleCall) templateVars() map[string]string {
 	return out
 }
 
-func (inv *RoleInvoker) run(ctx context.Context, roleName string, role config.RoleSpec, agentOverride, prompt, relResultPath, absResultPath string) error {
+func (inv *RoleInvoker) run(ctx context.Context, roleName string, role config.RoleSpec, agentOverride, prompt, relResultPath, absResultPath string, rc RunContext) error {
 	agents, err := selectAgents(role, agentOverride)
 	if err != nil {
 		return err
@@ -194,7 +217,7 @@ func (inv *RoleInvoker) run(ctx context.Context, roleName string, role config.Ro
 		if !shouldFallback && inv.OnAgentSuccess != nil {
 			inv.OnAgentSuccess(roleName, agentName)
 		}
-		inv.logAgentRun(roleName, agentName, ag, spec, r, fallbackReason)
+		inv.logAgentRun(roleName, agentName, ag, spec, r, fallbackReason, rc)
 
 		return fallback.Outcome{
 			RateLimited:    r.RateLimited,
@@ -249,13 +272,16 @@ func (inv *RoleInvoker) recordHealth(roleName, agentName string, shouldFallback 
 	}
 }
 
-func (inv *RoleInvoker) logAgentRun(roleName, agentName string, ag config.AgentSpec, spec runner.Spec, r *runner.Result, fallbackReason string) {
+func (inv *RoleInvoker) logAgentRun(roleName, agentName string, ag config.AgentSpec, spec runner.Spec, r *runner.Result, fallbackReason string, rc RunContext) {
 	if inv.Log == nil {
 		return
 	}
 	fields := map[string]any{
 		"role":             roleName,
 		"agent":            agentName,
+		"task_id":          rc.TaskID,
+		"cycle":            rc.Cycle,
+		"attempt":          rc.Attempt,
 		"provider":         ag.Provider,
 		"model":            ag.Model,
 		"duration_s":       int(r.Duration.Seconds()),

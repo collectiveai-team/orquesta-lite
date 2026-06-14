@@ -12,6 +12,10 @@ import (
 
 var orchestratedRoles = []string{"parser", "coder", "tester", "critic", "reviewer"}
 
+// optionalRoles are resolved when declared in team.json but are not required.
+// "verifier" black-box-verifies the change after the critic approves.
+var optionalRoles = []string{"verifier"}
+
 type Agent struct {
 	Cmd                        []string `json:"cmd,omitempty"`
 	Provider                   string   `json:"provider,omitempty"`
@@ -38,6 +42,13 @@ type Role struct {
 	TimeoutSeconds   int      `json:"timeout_seconds"`
 	EscalationLadder []string `json:"escalation_ladder,omitempty"`
 	DecomposePrompt  string   `json:"decompose_prompt,omitempty"`
+	// Mode applies to the verifier role only: "per_cycle" (default) verifies
+	// the whole increment once per review cycle and feeds the report to the
+	// reviewer; "per_task" verifies inside every fix loop; "both" does both.
+	Mode string `json:"mode,omitempty"`
+	// CyclePrompt is the prompt used for the per-cycle verification pass
+	// (verifier role only). Falls back to Prompt when unset.
+	CyclePrompt string `json:"cycle_prompt,omitempty"`
 }
 
 type RoleSpec struct {
@@ -47,12 +58,29 @@ type RoleSpec struct {
 	Timeout          time.Duration
 	EscalationLadder []AgentSpec
 	DecomposePrompt  string
+	Mode             string
+	CyclePrompt      string
 }
 
 type Limits struct {
 	MaxReviewCycles  int  `json:"max_review_cycles"`
 	MaxFixIterations int  `json:"max_fix_iterations"`
 	PreflightEnabled bool `json:"preflight_enabled,omitempty"`
+	// VerifyTesterCommand re-runs the tester's command_run in the orchestrator
+	// after a reported pass; a non-zero exit overrides the pass. Defaults to
+	// true (nil = enabled) because a tester claiming pass on a failing command
+	// is the root cause of "tests pass but manual testing fails" runs.
+	VerifyTesterCommand *bool `json:"verify_tester_command,omitempty"`
+	// FactoryBudgetUSD stops the factory queue before starting the next
+	// feature once the recorded spend (priced via agtop) reaches this amount.
+	// 0 = unlimited.
+	FactoryBudgetUSD float64 `json:"factory_budget_usd,omitempty"`
+}
+
+// TesterVerificationEnabled reports whether the orchestrator should re-run the
+// tester's command itself. Enabled unless explicitly set to false.
+func (l Limits) TesterVerificationEnabled() bool {
+	return l.VerifyTesterCommand == nil || *l.VerifyTesterCommand
 }
 
 type RateLimitBackoff struct {
@@ -68,6 +96,12 @@ type Config struct {
 	Limits           Limits           `json:"limits"`
 	RateLimitBackoff RateLimitBackoff `json:"rate_limit_backoff"`
 	FullTestCommand  string           `json:"full_test_command"`
+	// ConventionsFile is a project-relative path to a house-style document
+	// (coding conventions, structure, idioms). When set and present, its
+	// contents are injected into the coder/tester/critic/reviewer/verifier
+	// prompts as {{CONVENTIONS}} so agent output matches the team's style.
+	// Empty = agents infer conventions from the existing codebase instead.
+	ConventionsFile string `json:"conventions_file,omitempty"`
 }
 
 func Load(path string) (*Config, error) {
@@ -102,7 +136,7 @@ func (c *Config) Resolve() (map[string]RoleSpec, error) {
 		resolvedAgents[name] = spec
 	}
 
-	roles := make(map[string]RoleSpec, len(orchestratedRoles))
+	roles := make(map[string]RoleSpec, len(orchestratedRoles)+len(optionalRoles))
 	for _, roleName := range orchestratedRoles {
 		role, ok := c.Roles[roleName]
 		if !ok {
@@ -114,8 +148,38 @@ func (c *Config) Resolve() (map[string]RoleSpec, error) {
 		}
 		roles[roleName] = spec
 	}
+	for _, roleName := range optionalRoles {
+		role, ok := c.Roles[roleName]
+		if !ok {
+			continue
+		}
+		spec, err := resolveRoleSpec(roleName, role, resolvedAgents)
+		if err != nil {
+			return nil, err
+		}
+		roles[roleName] = spec
+	}
 
 	return roles, nil
+}
+
+// HasVerifier reports whether the optional verifier role is configured.
+func (c *Config) HasVerifier() bool {
+	_, ok := c.Roles["verifier"]
+	return ok
+}
+
+// VerifierPerTask reports whether the verifier runs inside every fix loop.
+func (c *Config) VerifierPerTask() bool {
+	r, ok := c.Roles["verifier"]
+	return ok && (r.Mode == "per_task" || r.Mode == "both")
+}
+
+// VerifierPerCycle reports whether the verifier runs once at the end of each
+// review cycle, feeding its report to the reviewer. This is the default mode.
+func (c *Config) VerifierPerCycle() bool {
+	r, ok := c.Roles["verifier"]
+	return ok && (r.Mode == "" || r.Mode == "per_cycle" || r.Mode == "both")
 }
 
 func (c *Config) Validate() error {
@@ -143,6 +207,11 @@ func (c *Config) Validate() error {
 		}
 		if r.TimeoutSeconds <= 0 {
 			return fmt.Errorf("role %q timeout_seconds must be > 0", rname)
+		}
+		switch r.Mode {
+		case "", "per_task", "per_cycle", "both":
+		default:
+			return fmt.Errorf("role %q mode %q invalid (per_task|per_cycle|both)", rname, r.Mode)
 		}
 	}
 	// Second pass: validate agent invocation shape.
@@ -228,6 +297,8 @@ func resolveRoleSpec(name string, role Role, agents map[string]AgentSpec) (RoleS
 		Timeout:          time.Duration(role.TimeoutSeconds) * time.Second,
 		EscalationLadder: escalationSpecs,
 		DecomposePrompt:  role.DecomposePrompt,
+		Mode:             role.Mode,
+		CyclePrompt:      role.CyclePrompt,
 	}, nil
 }
 

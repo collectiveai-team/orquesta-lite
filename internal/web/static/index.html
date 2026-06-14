@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>orquestalite</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --border: #30363d;
+    --fg: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
+    --ok: #3fb950; --warn: #d29922; --err: #f85149; --run: #a371f7;
+    font-size: 14px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 20px; border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; background: var(--bg); z-index: 2;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  header h1 span { color: var(--accent); }
+  #conn { width: 9px; height: 9px; border-radius: 50%; background: var(--err); }
+  #conn.live { background: var(--ok); }
+  #summary { color: var(--muted); margin-left: auto; }
+  #cost { color: var(--warn); padding-left: 14px; }
+  main {
+    display: grid; gap: 16px; padding: 16px 20px; max-width: 1400px; margin: 0 auto;
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  }
+  @media (max-width: 980px) { main { grid-template-columns: 1fr; } }
+  section {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; overflow: hidden;
+  }
+  section > h2 {
+    font-size: 12px; text-transform: uppercase; letter-spacing: .08em;
+    color: var(--muted); margin: 0; padding: 10px 14px;
+    border-bottom: 1px solid var(--border); font-weight: 600;
+  }
+  #factory-section { grid-column: 1 / -1; display: none; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 7px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  tr:last-child td { border-bottom: 0; }
+  td.title { color: var(--fg); }
+  .badge {
+    display: inline-block; padding: 1px 8px; border-radius: 10px;
+    font-size: 12px; border: 1px solid var(--border); color: var(--muted);
+    white-space: nowrap;
+  }
+  .badge.done, .badge.pass, .badge.commit_ok, .badge.tests_pass { color: var(--ok); border-color: var(--ok); }
+  .badge.failed, .badge.needs_human, .badge.error, .badge.commit_rejected, .badge.tests_fail { color: var(--err); border-color: var(--err); }
+  .badge.in_progress { color: var(--run); border-color: var(--run); }
+  .badge.pending, .badge.decomposed, .badge.needs_clarification, .badge.commit_skipped { color: var(--warn); border-color: var(--warn); }
+  #events {
+    list-style: none; margin: 0; padding: 8px 0; max-height: 70vh; overflow-y: auto;
+  }
+  #events li {
+    padding: 3px 14px; display: flex; gap: 10px; align-items: baseline;
+    border-left: 2px solid transparent;
+  }
+  #events li .ts { color: var(--muted); font-size: 12px; flex-shrink: 0; }
+  #events li .body { word-break: break-word; }
+  #events li.agent_run { border-left-color: var(--accent); }
+  #events li.task_done { border-left-color: var(--ok); }
+  #events li.task_failed, #events li.full_suite_failed, #events li.tester_verification_failed { border-left-color: var(--err); }
+  #events li.cycle_start, #events li.cycle_end { border-left-color: var(--run); }
+  .role { color: var(--accent); }
+  .muted { color: var(--muted); }
+  #empty-tasks { padding: 18px 14px; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <div id="conn" title="event stream"></div>
+  <h1>orquesta<span>lite</span></h1>
+  <div id="summary"></div>
+  <div id="cost" class="muted" title="spend priced via agtop"></div>
+</header>
+<main>
+  <section id="factory-section">
+    <h2>Factory queue</h2>
+    <table>
+      <thead><tr><th>ID</th><th>Status</th><th>Branch</th><th>Done</th><th>Failed</th><th>Cost</th><th>Title</th></tr></thead>
+      <tbody id="factory-body"></tbody>
+    </table>
+  </section>
+  <section>
+    <h2>Tasks</h2>
+    <div id="empty-tasks">No tasks yet — run <b>orq-lite plan</b> or <b>orq-lite factory</b>.</div>
+    <table id="tasks-table" style="display:none">
+      <thead><tr><th>ID</th><th>Work</th><th>Verify</th><th>Att</th><th>Agent</th><th>Title</th></tr></thead>
+      <tbody id="tasks-body"></tbody>
+    </table>
+  </section>
+  <section>
+    <h2>Live events</h2>
+    <ul id="events"></ul>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const badge = (s) => s ? `<span class="badge ${esc(s)}">${esc(s)}</span>` : "";
+
+async function refreshTasks() {
+  try {
+    const res = await fetch("/api/tasks");
+    const data = await res.json();
+    const tasks = data.tasks || [];
+    $("empty-tasks").style.display = tasks.length ? "none" : "block";
+    $("tasks-table").style.display = tasks.length ? "table" : "none";
+    $("tasks-body").innerHTML = tasks.map(t => `<tr>
+      <td>${esc(t.id)}</td>
+      <td>${badge(t.status)}</td>
+      <td>${badge(t.verify_state)}</td>
+      <td>${t.attempts ?? 0}</td>
+      <td class="muted">${esc(t.last_agent || "")}</td>
+      <td class="title">${esc(t.title)}${t.failure_reason ? ` <span class="muted">(${esc(t.failure_reason)})</span>` : ""}</td>
+    </tr>`).join("");
+    const counts = {};
+    for (const t of tasks) counts[t.status] = (counts[t.status] || 0) + 1;
+    $("summary").textContent = tasks.length
+      ? Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(" · ")
+      : "";
+  } catch { /* server briefly unavailable; next poll retries */ }
+}
+
+async function refreshFactory() {
+  try {
+    const res = await fetch("/api/factory");
+    const q = await res.json();
+    if (!q || !q.features) { $("factory-section").style.display = "none"; return; }
+    $("factory-section").style.display = "block";
+    $("factory-body").innerHTML = q.features.map(f => `<tr>
+      <td>${esc(f.id)}</td>
+      <td>${badge(f.status)}</td>
+      <td class="muted">${esc(f.branch)}</td>
+      <td>${f.tasks_done ?? 0}</td>
+      <td>${f.tasks_failed ?? 0}</td>
+      <td>${f.cost_usd ? "$" + f.cost_usd.toFixed(2) : ""}</td>
+      <td class="title">${esc(f.title)}${f.pr_url ? ` <a href="${esc(f.pr_url)}" style="color:var(--accent)">PR</a>` : ""}</td>
+    </tr>`).join("");
+  } catch { /* retry on next poll */ }
+}
+
+function describe(ev) {
+  const f = ev; // events are flat JSON objects from run.log
+  switch (f.event) {
+    case "agent_run":
+      return `<span class="role">${esc(f.role)}</span> ${esc(f.agent || "")} ` +
+             `${badge(f.status)} <span class="muted">${esc(f.task_id || "")} ${f.duration_s ? Math.round(f.duration_s) + "s" : ""}</span>`;
+    case "task_start":  return `task <b>${esc(f.task_id)}</b> started`;
+    case "task_done":   return `task <b>${esc(f.task_id)}</b> ${badge("done")} <span class="muted">${esc((f.commit_sha || "").slice(0, 8))}</span>`;
+    case "task_failed": return `task <b>${esc(f.task_id)}</b> ${badge("failed")} <span class="muted">${esc(f.reason || "")}</span>`;
+    case "cycle_start": return `— review cycle ${esc(f.cycle)} —`;
+    case "cycle_end":   return `cycle ${esc(f.cycle)} ended <span class="muted">new tasks: ${esc(f.new_tasks_proposed ?? "0")}</span>`;
+    case "tester_verification_failed":
+      return `tester claimed pass but <code>${esc(f.command)}</code> failed ${badge("error")}`;
+    default: {
+      const extra = Object.entries(f)
+        .filter(([k]) => !["ts", "event"].includes(k))
+        .map(([k, v]) => `${k}=${typeof v === "object" ? JSON.stringify(v) : v}`)
+        .join(" ");
+      return `${esc(f.event)} <span class="muted">${esc(extra.slice(0, 200))}</span>`;
+    }
+  }
+}
+
+function connectEvents() {
+  const es = new EventSource("/api/events");
+  es.onopen = () => $("conn").classList.add("live");
+  es.onerror = () => $("conn").classList.remove("live");
+  es.onmessage = (m) => {
+    let ev; try { ev = JSON.parse(m.data); } catch { return; }
+    const li = document.createElement("li");
+    li.className = esc(ev.event || "");
+    const ts = (ev.ts || "").replace(/^.*T/, "").replace(/(\.\d+)?(Z|[+-].*)$/, "");
+    li.innerHTML = `<span class="ts">${esc(ts)}</span><span class="body">${describe(ev)}</span>`;
+    const list = $("events");
+    const atBottom = list.scrollTop + list.clientHeight >= list.scrollHeight - 30;
+    list.appendChild(li);
+    while (list.children.length > 500) list.removeChild(list.firstChild);
+    if (atBottom) list.scrollTop = list.scrollHeight;
+  };
+}
+
+async function refreshCost() {
+  try {
+    const res = await fetch("/api/cost");
+    const c = await res.json();
+    $("cost").textContent = c.available ? `$${c.total_usd.toFixed(2)}` : "";
+  } catch { /* retry on next poll */ }
+}
+
+refreshTasks(); refreshFactory(); connectEvents(); refreshCost();
+setInterval(refreshTasks, 2000);
+setInterval(refreshFactory, 3000);
+setInterval(refreshCost, 60000);
+</script>
+</body>
+</html>

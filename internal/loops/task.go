@@ -12,6 +12,12 @@ import (
 
 var ErrFullSuiteFailed = errors.New("full test suite failed")
 
+// MaxDecompositionDepth caps recursive decomposition: a subtask produced by
+// two decomposition generations does not decompose again — it hands off to a
+// human instead. Without a cap, a structurally impossible task could spawn
+// subtasks forever.
+const MaxDecompositionDepth = 2
+
 // ErrNoDecomposer is returned by Decompose implementations that do not support
 // decomposition (e.g. decompose_prompt not configured). The task loop falls
 // through to the normal failed path when it sees this error.
@@ -100,7 +106,12 @@ func RunTaskLoopWithContext(ctx context.Context, tl *tasks.TaskList, d TaskDeps,
 				if decomposeRC.Attempt == 0 {
 					decomposeRC.Attempt = 1
 				}
-				subtasks, decompErr := d.Decompose(ctx, t, fx, fx.FilesChangedSoFar, decomposeRC)
+				subtasks, decompErr := []tasks.Task(nil), error(ErrNoDecomposer)
+				if t.DecompositionDepth < MaxDecompositionDepth {
+					subtasks, decompErr = d.Decompose(ctx, t, fx, fx.FilesChangedSoFar, decomposeRC)
+				} else {
+					decomposeFailureNote = fmt.Sprintf("decomposition depth %d reached cap %d", t.DecompositionDepth, MaxDecompositionDepth)
+				}
 				if decompErr == nil && len(subtasks) > 0 {
 					added := tl.Append(subtasks, t.CreatedInReviewCycle)
 					ids := make([]string, len(added))
@@ -134,13 +145,17 @@ func RunTaskLoopWithContext(ctx context.Context, tl *tasks.TaskList, d TaskDeps,
 					LastStderrTail: decomposeFailureNote,
 				}
 				t.FailureDetails = fd
+				// Rollback BEFORE writing the handoff: Rollback removes untracked
+				// files created since the task started, which would include a
+				// freshly written handoff document. The handoff only needs the
+				// task state, not the (discarded) work tree.
+				_ = d.Rollback(ctx)
 				handoffPath, _ := d.Handoff(ctx, t)
 				t.FailureDetails.HandoffPath = handoffPath
 				t.Status = tasks.StatusNeedsHuman
 				r := tasks.ReasonAgentRepeatedFail
 				t.FailureReason = &r
 				t.LastFeedback = strPtr(fx.LastFeedback)
-				_ = d.Rollback(ctx)
 				_ = d.SaveTasks(ctx, tl)
 				continue
 			}

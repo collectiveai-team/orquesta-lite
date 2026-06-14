@@ -13,9 +13,11 @@ import (
 type stubReviewDeps struct {
 	taskDeps     TaskDeps
 	cycleBaseSHA func() (string, error)
+	verification func(cycle int) string
 	reviewer     func(cycle int) results.ReviewerResult
 	cycles       []int
 	bases        []string
+	reports      []string
 }
 
 func (s *stubReviewDeps) RunFix(ctx context.Context, id string, rc invoke.RunContext) (*FixResult, error) {
@@ -45,9 +47,16 @@ func (s *stubReviewDeps) CycleBaseSHA(ctx context.Context) (string, error) {
 	}
 	return "", nil
 }
-func (s *stubReviewDeps) RunReviewer(ctx context.Context, rc invoke.RunContext) (results.ReviewerResult, error) {
+func (s *stubReviewDeps) CycleVerification(ctx context.Context, rc invoke.RunContext) (string, error) {
+	if s.verification != nil {
+		return s.verification(rc.Cycle), nil
+	}
+	return "", nil
+}
+func (s *stubReviewDeps) RunReviewer(ctx context.Context, rc invoke.RunContext, report string) (results.ReviewerResult, error) {
 	s.cycles = append(s.cycles, rc.Cycle)
 	s.bases = append(s.bases, rc.CycleBaseSHA)
+	s.reports = append(s.reports, report)
 	return s.reviewer(rc.Cycle), nil
 }
 
@@ -150,5 +159,30 @@ func TestReview_PassesCycleBaseSHAToReviewer(t *testing.T) {
 	}
 	if d.bases[0] != base {
 		t.Fatalf("CycleBaseSHA = %q, want %q", d.bases[0], base)
+	}
+}
+
+// TestReview_PassesVerificationReportToReviewer asserts the end-of-cycle
+// verification report is produced after the task loop and handed to the
+// reviewer in the same cycle.
+func TestReview_PassesVerificationReportToReviewer(t *testing.T) {
+	tl := &tasks.TaskList{Tasks: []tasks.Task{{ID: "T001", Status: tasks.StatusPending, Priority: 1}}}
+	td := &stubTaskDeps{
+		fix:       func(string) *FixResult { return &FixResult{Status: FixDone, Iterations: 1} },
+		fullSuite: func() error { return nil },
+		commit:    func(string) (string, error) { return "x", nil },
+		rollback:  func() error { return nil },
+		saveTasks: func(*tasks.TaskList) error { return nil },
+	}
+	d := &stubReviewDeps{
+		taskDeps:     td,
+		verification: func(cycle int) string { return "FAIL: /healthz returned 500" },
+		reviewer:     func(int) results.ReviewerResult { return results.ReviewerResult{ShouldStop: boolPtr(true)} },
+	}
+	if err := RunReviewLoop(context.Background(), tl, ReviewConfig{MaxCycles: 1}, d); err != nil {
+		t.Fatal(err)
+	}
+	if len(d.reports) != 1 || d.reports[0] != "FAIL: /healthz returned 500" {
+		t.Fatalf("reports = %v", d.reports)
 	}
 }

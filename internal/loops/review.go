@@ -8,11 +8,19 @@ import (
 	"github.com/lionelchamorro/orquestalite/internal/tasks"
 )
 
-// ReviewDeps extends TaskDeps with the reviewer agent call.
+// ReviewDeps extends TaskDeps with the end-of-cycle analysis calls: the
+// verifier (does the shipped increment actually work?) and the reviewer
+// (is the code sound, what should the next cycle do?).
 type ReviewDeps interface {
 	TaskDeps
 	CycleBaseSHA(ctx context.Context) (string, error)
-	RunReviewer(ctx context.Context, rc invoke.RunContext) (results.ReviewerResult, error)
+	// CycleVerification black-box-verifies the cycle's shipped work and
+	// returns a human-readable report for the reviewer. Returns "" when
+	// per-cycle verification is not configured. Implementations should fold
+	// verifier-agent failures into the report rather than erroring, so a
+	// flaky verifier cannot kill the run.
+	CycleVerification(ctx context.Context, rc invoke.RunContext) (string, error)
+	RunReviewer(ctx context.Context, rc invoke.RunContext, verificationReport string) (results.ReviewerResult, error)
 }
 
 // ReviewConfig holds configuration for the review loop.
@@ -22,10 +30,11 @@ type ReviewConfig struct {
 
 // RunReviewLoop runs up to cfg.MaxCycles iterations of:
 //  1. Drain all pending tasks via RunTaskLoop.
-//  2. Call RunReviewer for the current cycle.
-//  3. Convert rev.NewTasks → tasks.Task and append them (assigns IDs + CreatedInReviewCycle).
-//  4. SaveTasks.
-//  5. Return nil early if reviewer signals stop or there is nothing left to do.
+//  2. Run the end-of-cycle verification (when configured) over the increment.
+//  3. Call RunReviewer for the current cycle with the verification report.
+//  4. Convert rev.NewTasks → tasks.Task and append them (assigns IDs + CreatedInReviewCycle).
+//  5. SaveTasks.
+//  6. Return nil early if reviewer signals stop or there is nothing left to do.
 func RunReviewLoop(ctx context.Context, tl *tasks.TaskList, cfg ReviewConfig, d ReviewDeps) error {
 	for cycle := 1; cycle <= cfg.MaxCycles; cycle++ {
 		cycleBaseSHA, err := d.CycleBaseSHA(ctx)
@@ -37,7 +46,12 @@ func RunReviewLoop(ctx context.Context, tl *tasks.TaskList, cfg ReviewConfig, d 
 			return err
 		}
 
-		rev, err := d.RunReviewer(ctx, rc)
+		verification, err := d.CycleVerification(ctx, rc)
+		if err != nil {
+			return err
+		}
+
+		rev, err := d.RunReviewer(ctx, rc, verification)
 		if err != nil {
 			return err
 		}

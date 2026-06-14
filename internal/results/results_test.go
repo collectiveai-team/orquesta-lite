@@ -50,6 +50,38 @@ func TestParseReviewer_ShouldStopMissing(t *testing.T) {
 	}
 }
 
+func TestParseVerifier_PassWithChecks(t *testing.T) {
+	p := write(t, `{"status":"pass","checks":[{"name":"health","action":"curl localhost:8000/healthz","expected":"200","actual":"200","passed":true}],"notes_for_memory":null}`)
+	r, err := ParseVerifier(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Status != "pass" || len(r.Checks) != 1 {
+		t.Errorf("got %+v", r)
+	}
+}
+
+func TestParseVerifier_RequiresChecks(t *testing.T) {
+	p := write(t, `{"status":"pass","checks":[]}`)
+	if _, err := ParseVerifier(p); err == nil {
+		t.Fatal("expected error: checks required")
+	}
+}
+
+func TestParseVerifier_FailRequiresFailedCheck(t *testing.T) {
+	p := write(t, `{"status":"fail","checks":[{"name":"x","action":"a","expected":"e","actual":"e","passed":true}]}`)
+	if _, err := ParseVerifier(p); err == nil {
+		t.Fatal("expected error: fail status must include a failed check")
+	}
+}
+
+func TestParseVerifier_InvalidStatus(t *testing.T) {
+	p := write(t, `{"status":"maybe","checks":[{"name":"x","action":"a","expected":"e","actual":"a","passed":false}]}`)
+	if _, err := ParseVerifier(p); err == nil {
+		t.Fatal("expected error: invalid status")
+	}
+}
+
 func TestParseParser_ZeroTasksOK(t *testing.T) {
 	p := write(t, `{"tasks":[],"notes_for_memory":null}`)
 	r, err := ParseParser(p)

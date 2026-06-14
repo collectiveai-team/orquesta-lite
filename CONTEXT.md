@@ -21,7 +21,25 @@ plan.
 - **task** — atomic unit of work extracted from a plan. Sized for one focused
   change. Lives in `.orquestalite/tasks.json`.
 - **role** — function performed in the team: `parser`, `coder`, `tester`,
-  `critic`, `reviewer`. Roles are abstract; agents are concrete.
+  `critic`, `reviewer`, plus the optional `verifier`. Roles are abstract;
+  agents are concrete.
+- **verifier** — optional sixth role. It exercises the running software
+  black-box (start the app, curl endpoints, run the CLI) and reports
+  evidence-backed checks. It exists because a green test suite does not
+  prove the application works; this closes the "tests pass but manual
+  testing fails" gap. Enabled by declaring `roles.verifier` in team.json;
+  `mode` selects where it runs: `per_cycle` (default — once after all tasks
+  drain, report fed to the reviewer, uses `cycle_prompt`), `per_task`
+  (inside every fix loop after critic approval), or `both`.
+- **end-of-cycle analysis** — the pair of roles that runs when a cycle's
+  tasks are drained: the verifier answers "does the increment actually
+  work?" and the reviewer answers "is the code sound, and what should the
+  next cycle do?". The reviewer receives the verification report as
+  `{{VERIFICATION_REPORT}}` and must convert each FAIL check into a
+  priority-1 task; it may not set `should_stop` while failures remain.
+- **factory** — a queue of features (one per `## ` heading in a markdown
+  file) processed sequentially, each on its own `factory/NNN-slug` git branch
+  via a full plan+run cycle. State lives in `.orquestalite/factory.json`.
 - **agent** — concrete binding of a role to a CLI tool + model
   (e.g. `coder → claude --model sonnet`). Defined in `team.json`.
 - **review loop** — outermost loop. Runs `N` review cycles. After each cycle,
@@ -102,18 +120,25 @@ result path, timeout).
       "provider": "codex",
       "model": "gpt-5",
       "effort": "medium"
+    },
+    "gemini_pro": {
+      "provider": "gemini",
+      "model": "gemini-2.5-pro",
+      "dangerously_skip_permissions": true
     }
   },
   "roles": {
     "parser":   { "agents": ["claude_opus"],                                 "prompt": "prompts/parser.md",   "result_path": ".orquestalite/results/parser.json",   "timeout_seconds": 300 },
     "coder":    { "agents": ["claude_sonnet", "codex_gpt5", "claude_opus"],  "prompt": "prompts/coder.md",    "result_path": ".orquestalite/results/coder.json",    "timeout_seconds": 900 },
-    "tester":   { "agents": ["claude_sonnet", "codex_gpt5"],                 "prompt": "prompts/tester.md",   "result_path": ".orquestalite/results/tester.json",   "timeout_seconds": 600 },
+    "tester":   { "agents": ["claude_sonnet", "codex_gpt5", "gemini_pro"],   "prompt": "prompts/tester.md",   "result_path": ".orquestalite/results/tester.json",   "timeout_seconds": 600 },
     "critic":   { "agents": ["claude_opus", "claude_sonnet"],                "prompt": "prompts/critic.md",   "result_path": ".orquestalite/results/critic.json",   "timeout_seconds": 300 },
+    "verifier": { "agents": ["claude_sonnet"],                               "prompt": "prompts/verifier.md", "result_path": ".orquestalite/results/verifier.json", "timeout_seconds": 600, "mode": "per_cycle", "cycle_prompt": "prompts/verifier-cycle.md" },
     "reviewer": { "agents": ["claude_opus"],                                 "prompt": "prompts/reviewer.md", "result_path": ".orquestalite/results/reviewer.json", "timeout_seconds": 600 }
   },
   "limits": {
     "max_review_cycles": 3,
-    "max_fix_iterations": 5
+    "max_fix_iterations": 5,
+    "verify_tester_command": true
   },
   "rate_limit_backoff": {
     "initial_seconds": 30,
@@ -164,9 +189,13 @@ collisions with the curly braces commonly present in prompt content
 
 Standard interpolation variables passed by the orchestrator:
 
+- `{{CONVENTIONS}}` — the house-style document at `team.json.conventions_file`
+  (project-relative), injected into the coder/critic/reviewer prompts so output
+  matches the team's conventions. Read fresh per call. When unset or missing,
+  a placeholder instructs the agent to infer the style from the codebase.
 - `{{TASK_TITLE}}`, `{{TASK_DESCRIPTION}}` — current task
 - `{{ATTEMPT_NUMBER}}` — fix loop iteration count
-- `{{TESTER_FEEDBACK}}`, `{{CRITIC_FEEDBACK}}` — populated on iteration > 1
+- `{{TESTER_FEEDBACK}}`, `{{CRITIC_FEEDBACK}}`, `{{VERIFIER_FEEDBACK}}` — populated on iteration > 1
 - `{{REVIEW_CYCLE}}` — outer loop counter
 
 ## State between iterations
@@ -252,6 +281,20 @@ The critic **only vetoes and provides feedback for the coder**. It does not
 generate new tasks. Issues outside the current task's scope are written to
 `notes_for_memory` so the reviewer can see them at end-of-cycle.
 
+### `verifier.json` (optional role)
+```json
+{
+  "status": "pass" | "fail",
+  "checks": [
+    { "name": "create order returns 201", "action": "curl -X POST ...",
+      "expected": "201 + id", "actual": "201 {\"id\":\"o-1\"}", "passed": true }
+  ],
+  "notes_for_memory": null
+}
+```
+At least one check is required; a `fail` must contain a check with
+`passed: false`. The orchestrator feeds failed checks back to the coder.
+
 ### `reviewer.json`
 ```json
 {
@@ -268,9 +311,22 @@ generate new tasks. Issues outside the current task's scope are written to
 
 - **Inside the fix loop**: the coder declares which test files are relevant
   in its prompt instructions; the tester runs only those. Fast iteration.
+- **Trust-but-verify**: when the tester reports `pass`, the orchestrator
+  re-runs the tester's exact `command_run` itself (`sh -c`, project dir,
+  tester timeout). A non-zero exit overrides the pass: the task goes back to
+  the coder with the real output as feedback and a `tester_verification_failed`
+  event is logged. Controlled by `limits.verify_tester_command` (default on).
+- **Verifier (optional)**: black-box verification against the running
+  software. In `per_cycle` mode (default) it runs once after the cycle's
+  tasks drain and its report drives the reviewer's new tasks; in `per_task`
+  mode it runs inside the fix loop after critic approval and a fail loops
+  back to the coder like a critic rejection.
 - **Before commit**: the orchestrator runs the **full test suite**
   (`team.json.full_test_command`). If it fails, the task is marked `failed`
-  and no commit is made. This catches regressions across tasks.
+  and no commit is made. This catches regressions across tasks. Exception:
+  pytest exit code 5 ("no tests collected") is treated as pass-with-warning
+  (`full_suite_empty` event) so scaffolding tasks that predate the first
+  test do not all fail.
 
 ## Outer review loop stop conditions
 
@@ -289,6 +345,9 @@ orq-lite init                # scaffold team.json + prompts/ + .orquestalite/
 orq-lite plan plan.md        # run parser, write tasks.json, do NOT start loops
 orq-lite run                 # run loops over existing tasks.json
 orq-lite run plan.md         # plan + run in one call (AFK mode)
+orq-lite factory features.md # queue features, one branch + plan + run each
+orq-lite factory             # resume queue (--status to inspect, --force to replace)
+orq-lite serve               # web dashboard (tasks, factory queue, SSE events)
 orq-lite status              # print current tasks.json with statuses
 orq-lite reset               # wipe .orquestalite/ state
 ```
@@ -343,7 +402,10 @@ For each task, the orchestrator runs the fix loop:
    skip `critic` and jump back to coder with the tester feedback. If tester
    passes, run `critic`.
 2. **AND condition for completion**: the loop closes only when
-   `tester.status == "pass" AND critic.status == "approved"`.
+   `tester.status == "pass" AND critic.status == "approved"` — and, when the
+   verifier role is configured, `verifier.status == "pass"` as well. A
+   verifier fail re-enters the loop with `{{VERIFIER_FEEDBACK}}` for the
+   coder.
 3. **On `max_iterations` reached**: mark the task as `failed`, persist
    `last_feedback`, and continue with the next task. The reviewer in the
    outer loop is responsible for deciding what to do with failed tasks

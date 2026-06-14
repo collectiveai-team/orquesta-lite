@@ -1,0 +1,170 @@
+// Package factory turns orquestalite into a feature factory: a queue of
+// features parsed from a single markdown file, each developed on its own git
+// branch by a full plan+run cycle, processed sequentially until the queue is
+// drained. State persists in .orquestalite/factory.json so an interrupted
+// queue resumes where it left off.
+package factory
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"time"
+)
+
+type Status string
+
+const (
+	StatusPending    Status = "pending"
+	StatusInProgress Status = "in_progress"
+	StatusDone       Status = "done"
+	StatusFailed     Status = "failed"
+)
+
+// Feature is one queued unit of work: a feature description that becomes a
+// plan, a branch, and a full review-loop run.
+type Feature struct {
+	ID         string     `json:"id"` // "F001"
+	Title      string     `json:"title"`
+	Plan       string     `json:"plan"` // full markdown section fed to the parser
+	Branch     string     `json:"branch"`
+	Status     Status     `json:"status"`
+	StartedAt  *time.Time `json:"started_at,omitempty"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
+	// Task counts copied from tasks.json after the run finishes.
+	TasksDone   int    `json:"tasks_done"`
+	TasksFailed int    `json:"tasks_failed"`
+	TasksOther  int    `json:"tasks_other"`
+	Error       string `json:"error,omitempty"`
+	// CostUSD is the agent spend attributed to this feature (sessions whose
+	// agent runs started inside the feature's time window, priced via agtop).
+	// Zero when cost tracking is unavailable.
+	CostUSD float64 `json:"cost_usd,omitempty"`
+	// PRURL is the pull request created for the feature branch (--pr).
+	PRURL string `json:"pr_url,omitempty"`
+}
+
+type Queue struct {
+	BaseBranch string    `json:"base_branch"`
+	Features   []Feature `json:"features"`
+}
+
+// NextRunnable returns the first feature that still needs work: an
+// in_progress one (interrupted run) takes priority over pending ones.
+func (q *Queue) NextRunnable() *Feature {
+	for i := range q.Features {
+		if q.Features[i].Status == StatusInProgress {
+			return &q.Features[i]
+		}
+	}
+	for i := range q.Features {
+		if q.Features[i].Status == StatusPending {
+			return &q.Features[i]
+		}
+	}
+	return nil
+}
+
+func StatePath(projectDir string) string {
+	return filepath.Join(projectDir, ".orquestalite", "factory.json")
+}
+
+func Load(projectDir string) (*Queue, error) {
+	raw, err := os.ReadFile(StatePath(projectDir))
+	if err != nil {
+		return nil, err
+	}
+	var q Queue
+	if err := json.Unmarshal(raw, &q); err != nil {
+		return nil, fmt.Errorf("parse factory.json: %w", err)
+	}
+	return &q, nil
+}
+
+func Save(projectDir string, q *Queue) error {
+	path := StatePath(projectDir)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	raw, err := json.MarshalIndent(q, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(raw, '\n'), 0o644)
+}
+
+// ParseFeatures splits a markdown features file into one Feature per level-2
+// heading ("## Title"). Text before the first heading is ignored (treated as
+// preamble). A file without any level-2 heading becomes a single feature
+// titled after its first non-empty line.
+func ParseFeatures(markdown string) []Feature {
+	lines := strings.Split(markdown, "\n")
+	var feats []Feature
+	var cur *Feature
+
+	flush := func() {
+		if cur != nil {
+			cur.Plan = strings.TrimSpace(cur.Plan)
+			if cur.Plan != "" {
+				feats = append(feats, *cur)
+			}
+			cur = nil
+		}
+	}
+
+	for _, line := range lines {
+		if title, ok := strings.CutPrefix(line, "## "); ok {
+			flush()
+			cur = &Feature{Title: strings.TrimSpace(title), Plan: line + "\n"}
+			continue
+		}
+		if cur != nil {
+			cur.Plan += line + "\n"
+		}
+	}
+	flush()
+
+	if len(feats) == 0 {
+		body := strings.TrimSpace(markdown)
+		if body == "" {
+			return nil
+		}
+		title := firstNonEmptyLine(body)
+		feats = []Feature{{Title: title, Plan: body}}
+	}
+
+	for i := range feats {
+		feats[i].ID = fmt.Sprintf("F%03d", i+1)
+		feats[i].Status = StatusPending
+		feats[i].Branch = fmt.Sprintf("factory/%03d-%s", i+1, Slug(feats[i].Title))
+	}
+	return feats
+}
+
+func firstNonEmptyLine(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(strings.TrimLeft(line, "# "))
+		if line != "" {
+			return line
+		}
+	}
+	return "feature"
+}
+
+var nonSlug = regexp.MustCompile(`[^a-z0-9]+`)
+
+// Slug converts a title to a short branch-safe identifier.
+func Slug(title string) string {
+	s := nonSlug.ReplaceAllString(strings.ToLower(title), "-")
+	s = strings.Trim(s, "-")
+	if len(s) > 40 {
+		s = strings.Trim(s[:40], "-")
+	}
+	if s == "" {
+		return "feature"
+	}
+	return s
+}

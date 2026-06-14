@@ -35,7 +35,7 @@ import (
 // in a row almost always means a stale model, wrong auth, or missing CLI.
 const agentHealthThreshold = 2
 
-var staticRunPreflightRoles = []string{"parser", "coder", "tester", "critic", "reviewer"}
+var staticRunPreflightRoles = []string{"parser", "coder", "tester", "critic", "reviewer", "verifier"}
 
 // RunOptions holds the parameters for the run command.
 type RunOptions struct {
@@ -144,6 +144,7 @@ func newLiveDeps(opts liveDepsOptions) (*liveDeps, func() error, error) {
 		Runner:                  invoke.ExecRunner{},
 		DefaultRateLimitPattern: cfg.RateLimitBackoff.DefaultPattern,
 		AgentHealthThreshold:    agentHealthThreshold,
+		ConventionsPath:         cfg.ConventionsFile,
 		OnAgentSuccess: func(role, agent string) {
 			if role == "coder" && deps.currentTask != nil {
 				deps.currentTask.LastAgent = agent
@@ -209,10 +210,9 @@ func runStaticAgentPreflight(cfg *config.Config, tracker *agenthealth.Tracker, l
 		}
 		var binary string
 		switch {
-		case ag.Provider == "claude":
-			binary = "claude"
-		case ag.Provider == "codex":
-			binary = "codex"
+		case ag.Provider != "":
+			// Provider name matches the CLI binary name (claude, codex, gemini).
+			binary = ag.Provider
 		case len(ag.Cmd) > 0:
 			binary = ag.Cmd[0]
 		default:
@@ -295,6 +295,7 @@ func (d *liveDeps) RunFix(ctx context.Context, taskID string, rc invoke.RunConte
 	return loops.RunFix(ctx, loops.FixConfig{
 		MaxIterations:    d.cfg.Limits.MaxFixIterations,
 		EscalationLadder: escalationLadder,
+		VerifierEnabled:  d.cfg.VerifierPerTask(),
 	}, rr, rc)
 }
 
@@ -308,12 +309,30 @@ func (d *liveDeps) FullSuite(ctx context.Context) error {
 	c.Dir = d.dir
 	out, err := c.CombinedOutput()
 	if err != nil {
+		// pytest exits 5 when no tests were collected. Early scaffolding tasks
+		// legitimately run before any test exists; treat that as a pass with a
+		// warning instead of failing every task until the first test lands.
+		if exitCode(err) == 5 && strings.Contains(d.cfg.FullTestCommand, "pytest") {
+			d.log.Log(eventlog.Event{Type: "full_suite_empty", Fields: map[string]any{
+				"command": d.cfg.FullTestCommand,
+			}})
+			return nil
+		}
 		d.log.Log(eventlog.Event{Type: "full_suite_failed", Fields: map[string]any{
 			"output_tail": runner.TailString(string(out), 1024),
 		}})
 		return loops.ErrFullSuiteFailed
 	}
 	return nil
+}
+
+// exitCode extracts the process exit code from an exec error, or -1.
+func exitCode(err error) int {
+	var ee *exec.ExitError
+	if errors.As(err, &ee) {
+		return ee.ExitCode()
+	}
+	return -1
 }
 
 // Commit stages all changes and commits them with the given message. If the
@@ -383,8 +402,75 @@ func (d *liveDeps) RunParser(ctx context.Context, plan string) (*results.ParserR
 	return invoke.Role(ctx, d.inv, "parser", invoke.RoleCall{Vars: map[string]string{"PLAN": plan}}, invoke.RunContext{TaskID: "_plan", Attempt: 1}, results.ParseParser)
 }
 
+// CycleVerification runs the verifier role once over the whole increment
+// shipped this cycle (per-cycle mode). The report — passed and failed checks
+// alike — is handed to the reviewer, which turns failures into next-cycle
+// tasks. Verifier-agent failures are folded into the report instead of
+// erroring so a flaky verifier cannot kill the run.
+func (d *liveDeps) CycleVerification(ctx context.Context, rc invoke.RunContext) (string, error) {
+	if !d.cfg.VerifierPerCycle() {
+		return "", nil
+	}
+
+	gitLog := ""
+	if rc.CycleBaseSHA != "" {
+		gitLog, _ = gitx.LogStat(d.dir, rc.CycleBaseSHA)
+	}
+	var doneTitles []string
+	for _, t := range d.tl.Tasks {
+		if t.Status == tasks.StatusDone {
+			doneTitles = append(doneTitles, fmt.Sprintf("- %s: %s", t.ID, t.Title))
+		}
+	}
+
+	call := invoke.RoleCall{
+		ArchiveRole: "verifier-cycle",
+		Vars: map[string]string{
+			"TASK_ID":          "_cycle",
+			"TASK_TITLE":       fmt.Sprintf("End-of-cycle verification (cycle %d)", rc.Cycle),
+			"TASK_DESCRIPTION": "Verify the increment shipped this cycle works end to end.\n\nTasks completed:\n" + strings.Join(doneTitles, "\n"),
+			"ATTEMPT_NUMBER":   "1",
+			"FILES_CHANGED":    gitLog,
+			"REVIEW_CYCLE":     fmt.Sprintf("%d", rc.Cycle),
+		},
+	}
+	if cp := d.inv.Specs["verifier"].CyclePrompt; cp != "" {
+		call.PromptPath = cp
+	}
+
+	cycleRC := rc
+	cycleRC.TaskID = "_cycle"
+	r, err := invoke.Role(ctx, d.inv, "verifier", call, cycleRC, results.ParseVerifier)
+	if err != nil {
+		d.log.Log(eventlog.Event{Type: "cycle_verification_error", Fields: map[string]any{
+			"cycle": rc.Cycle,
+			"error": err.Error(),
+		}})
+		return fmt.Sprintf("(cycle verification could not run: %v)", err), nil
+	}
+
+	failed := 0
+	var b strings.Builder
+	fmt.Fprintf(&b, "Overall: %s\n", r.Status)
+	for _, c := range r.Checks {
+		mark := "PASS"
+		if !c.Passed {
+			mark = "FAIL"
+			failed++
+		}
+		fmt.Fprintf(&b, "[%s] %s — %s; expected: %s; actual: %s\n", mark, c.Name, c.Action, c.Expected, c.Actual)
+	}
+	d.log.Log(eventlog.Event{Type: "cycle_verification", Fields: map[string]any{
+		"cycle":         rc.Cycle,
+		"status":        r.Status,
+		"checks":        len(r.Checks),
+		"failed_checks": failed,
+	}})
+	return b.String(), nil
+}
+
 // RunReviewer invokes the reviewer role and returns its parsed result.
-func (d *liveDeps) RunReviewer(ctx context.Context, rc invoke.RunContext) (results.ReviewerResult, error) {
+func (d *liveDeps) RunReviewer(ctx context.Context, rc invoke.RunContext, verificationReport string) (results.ReviewerResult, error) {
 	d.currentCycle = rc.Cycle
 	tasksRaw, _ := os.ReadFile(d.tasksPath)
 
@@ -392,12 +478,16 @@ func (d *liveDeps) RunReviewer(ctx context.Context, rc invoke.RunContext) (resul
 	if rc.CycleBaseSHA != "" {
 		gitLog, _ = gitx.LogStat(d.dir, rc.CycleBaseSHA)
 	}
+	if verificationReport == "" {
+		verificationReport = "(no end-of-cycle verification configured)"
+	}
 
 	r, err := invoke.Role(ctx, d.inv, "reviewer", invoke.RoleCall{Vars: map[string]string{
-		"REVIEW_CYCLE":   fmt.Sprintf("%d", rc.Cycle),
-		"CYCLE_BASE_SHA": rc.CycleBaseSHA,
-		"TASKS_JSON":     string(tasksRaw),
-		"GIT_LOG":        gitLog,
+		"REVIEW_CYCLE":        fmt.Sprintf("%d", rc.Cycle),
+		"CYCLE_BASE_SHA":      rc.CycleBaseSHA,
+		"TASKS_JSON":          string(tasksRaw),
+		"GIT_LOG":             gitLog,
+		"VERIFICATION_REPORT": verificationReport,
 	}}, rc, results.ParseReviewer)
 	if err != nil {
 		return results.ReviewerResult{}, err
@@ -486,9 +576,10 @@ func (d *liveDeps) Decompose(ctx context.Context, t *tasks.Task, fx *loops.FixRe
 	subtasks := make([]tasks.Task, 0, len(pr.Tasks))
 	for _, pt := range pr.Tasks {
 		subtasks = append(subtasks, tasks.Task{
-			Title:       pt.Title,
-			Description: pt.Description,
-			Priority:    pt.Priority,
+			Title:              pt.Title,
+			Description:        pt.Description,
+			Priority:           pt.Priority,
+			DecompositionDepth: t.DecompositionDepth + 1,
 		})
 	}
 	return subtasks, nil
@@ -499,6 +590,26 @@ func sha256OfFailures(fs []results.TestFailure) string {
 	raw, _ := json.Marshal(fs)
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
+}
+
+func sha256Of(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
+}
+
+// runShell executes a shell command line in the project directory with a
+// timeout, returning combined output. Used to independently verify the
+// tester's reported command.
+func (d *liveDeps) runShell(ctx context.Context, command string, timeout time.Duration) (string, error) {
+	if timeout <= 0 {
+		timeout = 10 * time.Minute
+	}
+	cctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	c := exec.CommandContext(cctx, "sh", "-c", command)
+	c.Dir = d.dir
+	out, err := c.CombinedOutput()
+	return string(out), err
 }
 
 // liveRoleRunner implements loops.RoleRunner using real subprocess agents.
@@ -519,6 +630,7 @@ func (rr *liveRoleRunner) RunCoder(ctx context.Context, rc invoke.RunContext, fb
 			"ATTEMPT_NUMBER":           strconv.Itoa(rc.Attempt),
 			"TESTER_FEEDBACK":          fb.TesterFeedback,
 			"CRITIC_FEEDBACK":          fb.CriticFeedback,
+			"VERIFIER_FEEDBACK":        fb.VerifierFeedback,
 			"PREVIOUS_ATTEMPT_SUMMARY": fb.PreviousAttemptSummary,
 			"FILES_CHANGED_SO_FAR":     strings.Join(fb.FilesChangedSoFar, "\n"),
 		}}, rc, results.ParseCoder)
@@ -551,11 +663,57 @@ func (rr *liveRoleRunner) RunTester(ctx context.Context, rc invoke.RunContext) (
 		fb.WriteString(fmt.Sprintf("- %s: %s (hint: %s)\n", f.Test, f.Message, f.Hint))
 	}
 
+	// Trust-but-verify: a tester claiming "pass" on a command that actually
+	// fails is the root cause of "tests pass but manual testing fails" runs.
+	// Re-run the reported command ourselves; a non-zero exit overrides the pass.
+	if r.Status == "pass" && d.cfg.Limits.TesterVerificationEnabled() {
+		if out, err := d.runShell(ctx, r.CommandRun, d.inv.Specs["tester"].Timeout); err != nil {
+			tail := runner.TailString(out, 1024)
+			d.log.Log(eventlog.Event{Type: "tester_verification_failed", Fields: map[string]any{
+				"task_id":     rc.TaskID,
+				"command":     r.CommandRun,
+				"output_tail": tail,
+			}})
+			feedback := fmt.Sprintf(
+				"Tester reported pass, but the orchestrator re-ran %q and it failed:\n%s\n", r.CommandRun, tail)
+			return loops.TesterOutcome{
+				Status:       "fail",
+				Feedback:     feedback,
+				FailuresHash: sha256Of("verify:" + tail),
+			}, nil
+		}
+	}
+
 	return loops.TesterOutcome{
 		Status:       r.Status,
 		Feedback:     fb.String(),
 		FailuresHash: sha256OfFailures(r.Failures),
 	}, nil
+}
+
+// RunVerifier invokes the optional verifier role after the critic approves.
+func (rr *liveRoleRunner) RunVerifier(ctx context.Context, rc invoke.RunContext) (loops.VerifierOutcome, error) {
+	d := rr.deps
+	r, err := invoke.Role(ctx, d.inv, "verifier", invoke.RoleCall{Vars: map[string]string{
+		"TASK_ID":          rc.TaskID,
+		"TASK_TITLE":       d.currentTaskTitle(),
+		"TASK_DESCRIPTION": d.currentTaskDescription(),
+		"ATTEMPT_NUMBER":   strconv.Itoa(rc.Attempt),
+		"FILES_CHANGED":    strings.Join(rr.filesChanged, "\n"),
+	}}, rc, results.ParseVerifier)
+	if err != nil {
+		return loops.VerifierOutcome{}, err
+	}
+
+	var fb strings.Builder
+	for _, c := range r.Checks {
+		if c.Passed {
+			continue
+		}
+		fb.WriteString(fmt.Sprintf("- %s: did %s; expected %s, got %s\n", c.Name, c.Action, c.Expected, c.Actual))
+	}
+
+	return loops.VerifierOutcome{Status: r.Status, Feedback: fb.String()}, nil
 }
 
 // RunCritic invokes the critic role after the tester passes.

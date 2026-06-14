@@ -112,6 +112,35 @@ Reset local orchestration state:
 ./orq-lite reset
 ```
 
+Run a whole backlog of features, each on its own branch (factory mode):
+
+```bash
+cat > features.md <<'EOF'
+## Add login endpoint
+
+POST /login issuing a JWT; reject bad credentials with 401.
+
+## Add health check
+
+GET /healthz returns 200 with build info.
+EOF
+
+./orq-lite factory features.md
+./orq-lite factory --status
+```
+
+Or do it all with one command — queue, loops, and live dashboard together:
+
+```bash
+./orq-lite factory features.md --serve   # work + http://127.0.0.1:4173
+```
+
+The dashboard can also run standalone (e.g. pointed at a container's mount):
+
+```bash
+./orq-lite serve   # http://127.0.0.1:4173
+```
+
 ## Commands
 
 ```text
@@ -119,11 +148,31 @@ orq-lite init [dir]            scaffold .orquestalite, team.json, prompts/
 orq-lite plan <plan.md>        invoke parser, write tasks.json
 orq-lite plan <plan.md> --append
 orq-lite run                   run review/task/fix loops
+orq-lite factory <features.md> develop each '## ' feature on its own branch
+orq-lite factory               resume an interrupted queue (--status, --force, --pr, --serve)
+orq-lite serve [--addr A]      web dashboard with live SSE event stream
+orq-lite doctor                preflight git/team.json/CLIs/credentials before spending
+orq-lite cost                  per-task spend rollup (sessions priced via agtop)
 orq-lite status [--watch]      print task status
+orq-lite log [--role R]        replay run.log
 orq-lite reset                 remove .orquestalite state
 orq-lite update [--check]      install the latest release from GitHub
 orq-lite version               print the binary version
 ```
+
+## Docker
+
+Run the whole factory (orq-lite + claude/codex/gemini CLIs) in a container,
+with credentials mounted from your host logins:
+
+```bash
+docker compose build
+export TARGET_PROJECT=$HOME/code/my-app
+docker compose run --rm factory factory features.md
+docker compose up dashboard   # http://localhost:4173
+```
+
+See [docs/docker.md](./docs/docker.md).
 
 ### Updating
 
@@ -141,13 +190,42 @@ will always report itself as outdated).
 
 `team.json` defines:
 
-- an agent pool with provider configs or legacy CLI commands, models, and optional rate-limit patterns
-- role bindings for `parser`, `coder`, `tester`, `critic`, and `reviewer`
+- an agent pool with provider configs (`claude`, `codex`, `gemini`) or legacy
+  CLI commands, models, and optional rate-limit patterns
+- role bindings for `parser`, `coder`, `tester`, `critic`, `reviewer`, and the
+  optional `verifier` (black-box manual verification after critic approval)
 - prompt paths and expected result paths
-- loop limits and rate-limit backoff settings
+- loop limits and rate-limit backoff settings, including
+  `verify_tester_command` (the orchestrator re-runs the tester's reported
+  command and overrides a false "pass"; on by default) and
+  `factory_budget_usd` (stop the queue once recorded spend reaches the
+  budget; priced via the `agtop` CLI when installed)
 - the full-suite test command
+- `conventions_file` — optional path to a house-style document (see below)
 
 Prompts live in `prompts/` and use `{{VAR}}` interpolation markers.
+
+### Matching your team's style
+
+Set `conventions_file` in `team.json` to a markdown house-style document and
+its contents are injected into the coder, critic, and reviewer prompts as
+`{{CONVENTIONS}}`, so generated code matches your team's structure, naming,
+logging, and idioms instead of generic AI defaults:
+
+```json
+{ "conventions_file": "docs/CONVENTIONS.md" }
+```
+
+When unset, the agents are told to infer the house style from the surrounding
+code and mirror it. `docs/conventions/collectiveai-python.md` (general Python
+house style, including the `prek` pre-commit quality gate) and
+`docs/conventions/collectiveai-prefect.md` (Prefect workflow patterns) are
+worked examples distilled from a real team's repos — point `conventions_file`
+at the one that fits the project, or concatenate them. The default prompts already fold in
+language-agnostic engineering discipline (explicit signatures, dependency
+injection, test-through-the-interface, mock only at boundaries, deletion test
+before adding an abstraction, two-axis Standards/Spec review) drawn from Matt
+Pocock's [skills collection](https://github.com/mattpocock/skills).
 
 Runtime state lives in `.orquestalite/`, including:
 
@@ -162,8 +240,15 @@ The main loop is intentionally small:
 
 1. `parser` turns a plan into atomic tasks.
 2. `coder`, `tester`, and `critic` iterate on one task until it passes or fails.
-3. `reviewer` inspects completed work and can append follow-up tasks.
+   The orchestrator independently re-runs the tester's command — a tester
+   cannot close a task by claiming "pass" on a failing command.
+3. End-of-cycle analysis: the optional `verifier` role exercises the running
+   software black-box (start the app, hit endpoints, run the CLI) and its
+   report feeds the `reviewer`, which converts every failed check into a
+   next-cycle task — closing the "tests pass but manual testing fails" gap.
+   (`mode: per_task` moves verification inside the fix loop instead.)
 4. Successful tasks are committed one at a time.
+5. Factory mode wraps all of the above per feature, on per-feature branches.
 
 See [CONTEXT.md](./CONTEXT.md) for the full domain model and
 [docs/adr/](./docs/adr/) for architecture decisions.

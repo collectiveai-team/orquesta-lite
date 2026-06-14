@@ -230,7 +230,7 @@ func TestRunReviewerPassesCycleBaseSHAToPrompt(t *testing.T) {
 	if len(base) != 40 {
 		t.Fatalf("CycleBaseSHA = %q, want full git SHA", base)
 	}
-	if _, err := d.RunReviewer(context.Background(), invoke.RunContext{Cycle: 1, Attempt: 1, CycleBaseSHA: base}); err != nil {
+	if _, err := d.RunReviewer(context.Background(), invoke.RunContext{Cycle: 1, Attempt: 1, CycleBaseSHA: base}, ""); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(runner.prompt, "base="+base) {
