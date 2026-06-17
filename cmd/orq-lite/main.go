@@ -67,8 +67,8 @@ func main() {
 		statusOnly := fs.Bool("status", false, "print the factory queue and exit")
 		createPR := fs.Bool("pr", false, "push each finished feature branch and open a PR via gh")
 		logFormat := fs.String("log-format", "auto", "stdout log format: auto|verbose|human")
-		serve := fs.Bool("serve", false, "also host the web dashboard while running")
-		addr := fs.String("addr", "127.0.0.1:4173", "dashboard address (with --serve)")
+		serve := fs.Bool("serve", true, "host the web dashboard while running (on by default)")
+		addr := fs.String("addr", "127.0.0.1:4173", "dashboard address")
 		_ = fs.Parse(args)
 		featuresPath := ""
 		if fs.NArg() > 0 {
@@ -76,6 +76,9 @@ func main() {
 		}
 		runCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
 		defer stop()
+		// The dashboard is on by default for factory runs so the operator
+		// always sees its URL and can tell the run is live; --serve=false and
+		// --status both suppress it.
 		startDashboard(runCtx, *serve && !*statusOnly, *addr)
 		exit(commands.Factory(runCtx, commands.FactoryOptions{
 			ProjectDir:   ".",

@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -81,6 +82,38 @@ func TestFactory_ResumeWithoutQueueFails(t *testing.T) {
 	_, err := loadOrCreateQueue(FactoryOptions{ProjectDir: dir})
 	if err == nil {
 		t.Fatal("expected error when resuming without a queue")
+	}
+}
+
+func TestFactory_AutoDiscoversFeatureFile(t *testing.T) {
+	dir := initTestRepo(t)
+	// Drop a feature.md in the root; no FeaturesPath, no existing queue.
+	if err := os.WriteFile(filepath.Join(dir, "feature.md"),
+		[]byte("## Build the thing\n\nmake it work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	q, err := loadOrCreateQueue(FactoryOptions{ProjectDir: dir, Out: io.Discard})
+	if err != nil {
+		t.Fatalf("expected auto-discovery to succeed, got %v", err)
+	}
+	if len(q.Features) != 1 || q.Features[0].Title != "Build the thing" {
+		t.Fatalf("queue = %+v", q)
+	}
+}
+
+func TestDiscoverFeaturesFile(t *testing.T) {
+	if got := discoverFeaturesFile(t.TempDir()); got != "" {
+		t.Fatalf("empty dir should yield no file, got %q", got)
+	}
+	// Use "goal.md" specifically: it sits in its own pair, so a case-insensitive
+	// filesystem (macOS) can't satisfy an earlier candidate and skew the result.
+	dir := t.TempDir()
+	want := filepath.Join(dir, "goal.md")
+	if err := os.WriteFile(want, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := discoverFeaturesFile(dir); got != want {
+		t.Fatalf("discoverFeaturesFile = %q, want %q", got, want)
 	}
 }
 

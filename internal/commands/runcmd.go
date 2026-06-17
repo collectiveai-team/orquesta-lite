@@ -122,6 +122,21 @@ func newLiveDeps(opts liveDepsOptions) (*liveDeps, func() error, error) {
 		}
 	}()
 
+	// If the full-suite command is unset (e.g. init couldn't detect the repo's
+	// language, or this is a fresh factory checkout) try to fill it from the
+	// project layout so the verification gate isn't silently skipped. Empty
+	// stays a no-op; detection is best-effort and never aborts the run.
+	if cfg.FullTestCommand == "" {
+		if cmd := detectTestCommand(opts.ProjectDir); cmd != "" {
+			cfg.FullTestCommand = cmd
+			persisted := persistTestCommand(opts.TeamPath, cmd) == nil
+			logger.Log(eventlog.Event{Type: "test_command_detected", Fields: map[string]any{
+				"command":   cmd,
+				"persisted": persisted,
+			}})
+		}
+	}
+
 	memPath := filepath.Join(opts.ProjectDir, ".orquestalite", "memory.md")
 
 	fc := fallback.NewCaller(fallback.Config{

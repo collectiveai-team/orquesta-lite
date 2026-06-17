@@ -195,9 +195,10 @@ func applyTestCommand(team []byte, lang string) []byte {
 	case "go":
 		return team
 	default:
-		// Ambiguous language: keep the Go default, but rely on config.Validate
-		// allowing the user to clear it later.
-		return team
+		// Ambiguous language: clear the command rather than keep the Go default,
+		// which would fail every full-suite gate in a non-Go repo. Empty is a
+		// no-op (see config.Validate); the run-time detector fills it in later.
+		newCmd = ""
 	}
 	replacement := []byte(fmt.Sprintf(`"full_test_command": %q`, newCmd))
 	return bytes.Replace(team, defaultLine, replacement, 1)

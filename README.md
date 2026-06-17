@@ -129,10 +129,15 @@ EOF
 ./orq-lite factory --status
 ```
 
-Or do it all with one command — queue, loops, and live dashboard together:
+Factory mode hosts the live dashboard by default and prints its URL on
+startup (`orquestalite dashboard: http://127.0.0.1:4173`), so you can always
+tell the run is live. Pass `--serve=false` to suppress it, or `--addr` to
+change the bind address. With no path argument and no in-progress queue,
+factory also auto-discovers a `feature.md`/`FEATURE.md`/`goal.md` in the
+project root:
 
 ```bash
-./orq-lite factory features.md --serve   # work + http://127.0.0.1:4173
+./orq-lite factory          # uses ./feature.md if present, dashboard on
 ```
 
 The dashboard can also run standalone (e.g. pointed at a container's mount):
@@ -200,7 +205,13 @@ will always report itself as outdated).
   command and overrides a false "pass"; on by default) and
   `factory_budget_usd` (stop the queue once recorded spend reaches the
   budget; priced via the `agtop` CLI when installed)
-- the full-suite test command
+- the full-suite test command (`full_test_command`) — the gate run after each
+  task. `orq-lite init` sets a language-appropriate default; for an
+  unrecognized repo it is left **empty** (a no-op) rather than a wrong default
+  that would fail every task. When empty at run start, orq-lite detects a
+  command from the repo layout (Makefile `test:` target, `pyproject.toml`,
+  `package.json`, `go.mod`, `Cargo.toml`, …), uses it, and writes it back to
+  `team.json`. Leave it empty to skip the gate entirely.
 - `conventions_file` — optional path to a house-style document (see below)
 
 Prompts live in `prompts/` and use `{{VAR}}` interpolation markers.

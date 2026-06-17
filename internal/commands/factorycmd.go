@@ -76,10 +76,21 @@ func loadOrCreateQueue(opts FactoryOptions) (*factory.Queue, error) {
 	}
 
 	if opts.FeaturesPath == "" {
+		// Resume an in-progress queue if one exists; otherwise fall back to
+		// auto-discovering a feature file in the project root so `orq-lite
+		// factory` (no args) works when a feature.md is simply dropped in.
 		if existing == nil {
-			return nil, errors.New("no factory queue found: run `orq-lite factory <features.md>` first")
+			if discovered := discoverFeaturesFile(opts.ProjectDir); discovered != "" {
+				opts.FeaturesPath = discovered
+				if opts.Out != nil {
+					fmt.Fprintf(opts.Out, "factory: using auto-discovered feature file %s\n", discovered)
+				}
+			} else {
+				return nil, errors.New("no factory queue and no feature file found: drop a feature.md in the project root or run `orq-lite factory <features.md>`")
+			}
+		} else {
+			return existing, nil
 		}
-		return existing, nil
 	}
 
 	if existing != nil && existing.NextRunnable() != nil && !opts.Force {
@@ -103,6 +114,24 @@ func loadOrCreateQueue(opts FactoryOptions) (*factory.Queue, error) {
 		return nil, err
 	}
 	return q, nil
+}
+
+// discoverFeaturesFile looks for a feature/goal markdown in the project root
+// when `orq-lite factory` is run with no path argument and no existing queue.
+// Returns the first match's full path, or "" if none of the candidates exist.
+func discoverFeaturesFile(dir string) string {
+	candidates := []string{
+		"feature.md", "FEATURE.md",
+		"features.md", "FEATURES.md",
+		"goal.md", "GOAL.md",
+	}
+	for _, name := range candidates {
+		p := filepath.Join(dir, name)
+		if info, err := os.Stat(p); err == nil && !info.IsDir() {
+			return p
+		}
+	}
+	return ""
 }
 
 func factoryStatus(dir string, out io.Writer) error {
