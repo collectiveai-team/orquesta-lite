@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -1219,27 +1218,34 @@ func newLintGateDeps(t *testing.T, lintCmd string) *liveDeps {
 	}
 }
 
-func TestFullSuite_LintGateBlocksOnViolation(t *testing.T) {
+func TestLintGate_BlocksOnViolation(t *testing.T) {
 	d := newLintGateDeps(t, "false") // `false` exits 1 = lint found problems
-	err := d.FullSuite(context.Background())
-	if err == nil {
-		t.Fatal("expected lint failure to block the gate")
+	ok, fb := d.lintGateOutcome(context.Background())
+	if ok {
+		t.Fatal("expected lint violation to fail the gate")
 	}
-	if !errors.Is(err, loops.ErrFullSuiteFailed) {
-		t.Fatalf("lint failure should map to ErrFullSuiteFailed, got %v", err)
+	if fb == "" {
+		t.Fatal("a lint failure must return feedback for the coder")
 	}
 }
 
-func TestFullSuite_LintGateSkipsWhenBinaryMissing(t *testing.T) {
+func TestLintGate_SkipsWhenBinaryMissing(t *testing.T) {
 	d := newLintGateDeps(t, "orq-lite-no-such-linter-9f3a check .")
-	if err := d.FullSuite(context.Background()); err != nil {
-		t.Fatalf("a missing lint binary must be skipped, not block, got %v", err)
+	if ok, _ := d.lintGateOutcome(context.Background()); !ok {
+		t.Fatal("a missing lint binary must be skipped (ok=true), not block")
 	}
 }
 
-func TestFullSuite_LintGatePassesThrough(t *testing.T) {
+func TestLintGate_PassesWhenClean(t *testing.T) {
 	d := newLintGateDeps(t, "true") // `true` exits 0 = clean
-	if err := d.FullSuite(context.Background()); err != nil {
-		t.Fatalf("clean lint + no test command should pass, got %v", err)
+	if ok, fb := d.lintGateOutcome(context.Background()); !ok || fb != "" {
+		t.Fatalf("clean lint should pass with no feedback, got ok=%v fb=%q", ok, fb)
+	}
+}
+
+func TestLintGate_NoCommandIsNoop(t *testing.T) {
+	d := newLintGateDeps(t, "")
+	if ok, fb := d.lintGateOutcome(context.Background()); !ok || fb != "" {
+		t.Fatalf("empty lint command should be a no-op, got ok=%v fb=%q", ok, fb)
 	}
 }

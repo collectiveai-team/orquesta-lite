@@ -321,17 +321,14 @@ func (d *liveDeps) RunFix(ctx context.Context, taskID string, rc invoke.RunConte
 		MaxIterations:    d.cfg.Limits.MaxFixIterations,
 		EscalationLadder: escalationLadder,
 		VerifierEnabled:  d.cfg.VerifierPerTask(),
+		LintGate:         d.lintGateOutcome,
 	}, rr, rc)
 }
 
-// FullSuite runs the quality gate after a task: the lint command (if any)
-// first, then the full test command. A non-zero exit from either rolls the
-// change back, so neither lint violations nor test failures can ship.
+// FullSuite runs the full test command specified in team.json after a task.
+// (Lint runs inside the fix loop via lintGateOutcome, so a violation is fixed
+// in-loop rather than only blocking here.)
 func (d *liveDeps) FullSuite(ctx context.Context) error {
-	if err := d.lintGate(ctx); err != nil {
-		return err
-	}
-
 	parts := strings.Fields(d.cfg.FullTestCommand)
 	if len(parts) == 0 {
 		return nil
@@ -357,20 +354,21 @@ func (d *liveDeps) FullSuite(ctx context.Context) error {
 	return nil
 }
 
-// lintGate runs the configured lint command as a blocking quality gate. A
-// missing lint binary (the command cannot start) is logged and tolerated as a
-// skip — an unconfigured linter must never fail every task — while a linter
-// that runs and reports violations (non-zero exit) blocks the commit.
-func (d *liveDeps) lintGate(ctx context.Context) error {
+// lintGateOutcome runs the configured lint command as a deterministic quality
+// gate inside the fix loop. It returns ok=true when there is no linter, the
+// linter is clean, or the lint binary is missing (a missing/unconfigured
+// linter must never block every task — that is logged as a skip). On a real
+// violation it returns ok=false with the linter's output as coder feedback.
+func (d *liveDeps) lintGateOutcome(ctx context.Context) (bool, string) {
 	parts := strings.Fields(d.cfg.LintCommand)
 	if len(parts) == 0 {
-		return nil
+		return true, ""
 	}
 	c := exec.CommandContext(ctx, parts[0], parts[1:]...)
 	c.Dir = d.dir
 	out, err := c.CombinedOutput()
 	if err == nil {
-		return nil
+		return true, ""
 	}
 	if exitCode(err) < 0 {
 		// Binary not found / failed to spawn: skip the gate, do not block.
@@ -378,13 +376,14 @@ func (d *liveDeps) lintGate(ctx context.Context) error {
 			"command": d.cfg.LintCommand,
 			"reason":  err.Error(),
 		}})
-		return nil
+		return true, ""
 	}
+	tail := runner.TailString(string(out), 1024)
 	d.log.Log(eventlog.Event{Type: "lint_failed", Fields: map[string]any{
 		"command":     d.cfg.LintCommand,
-		"output_tail": runner.TailString(string(out), 1024),
+		"output_tail": tail,
 	}})
-	return fmt.Errorf("%w: lint failed: %s", loops.ErrFullSuiteFailed, runner.TailString(string(out), 512))
+	return false, fmt.Sprintf("Lint gate failed (`%s`). Fix these before re-running:\n%s", d.cfg.LintCommand, tail)
 }
 
 // exitCode extracts the process exit code from an exec error, or -1.
@@ -692,6 +691,7 @@ func (rr *liveRoleRunner) RunCoder(ctx context.Context, rc invoke.RunContext, fb
 			"TESTER_FEEDBACK":          fb.TesterFeedback,
 			"CRITIC_FEEDBACK":          fb.CriticFeedback,
 			"VERIFIER_FEEDBACK":        fb.VerifierFeedback,
+			"LINT_FEEDBACK":            fb.LintFeedback,
 			"PREVIOUS_ATTEMPT_SUMMARY": fb.PreviousAttemptSummary,
 			"FILES_CHANGED_SO_FAR":     strings.Join(fb.FilesChangedSoFar, "\n"),
 		}}, rc, results.ParseCoder)

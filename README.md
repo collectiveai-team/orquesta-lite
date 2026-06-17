@@ -212,12 +212,15 @@ will always report itself as outdated).
   command from the repo layout (Makefile `test:` target, `pyproject.toml`,
   `package.json`, `go.mod`, `Cargo.toml`, …), uses it, and writes it back to
   `team.json`. Leave it empty to skip the gate entirely.
-- an optional lint/quality gate (`lint_command`) run before the tests after
-  each task; a non-zero exit rolls the change back, so lint/format violations
-  can't ship. Auto-filled when empty only when a linter is clearly configured
-  (a `ruff` config → `ruff check .`, an ESLint config → `eslint`, `go.mod` →
-  `go vet ./...`). A missing lint binary is skipped, never a hard failure, so
-  an unconfigured tool won't block every task. Empty = no lint gate.
+- an optional lint/quality gate (`lint_command`) run inside the fix loop after
+  each coder attempt, before the tester. A violation is fed back to the coder
+  as feedback and the attempt retries, so lint/format issues are fixed in-loop;
+  only if the coder can't get it clean within the iteration budget does the
+  task fail (`lint_failed`). Auto-filled when empty only when a linter is
+  clearly configured (a `ruff` config → `ruff check .`, an ESLint config →
+  `eslint`, `go.mod` → `go vet ./...`). A missing lint binary is skipped, never
+  a hard failure, so an unconfigured tool won't block every task. Empty = no
+  lint gate.
 - `conventions_file` — optional path to a house-style document (see below)
 
 Prompts live in `prompts/` and use `{{VAR}}` interpolation markers.

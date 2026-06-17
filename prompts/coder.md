@@ -51,6 +51,8 @@ If `.gitignore` is missing entries for the project's language, add them before c
 
 ## Attempt {{ATTEMPT_NUMBER}}
 
+{{LINT_FEEDBACK}}
+
 {{TESTER_FEEDBACK}}
 
 {{CRITIC_FEEDBACK}}

@@ -40,6 +40,7 @@ type CoderFeedback struct {
 	TesterFeedback         string
 	CriticFeedback         string
 	VerifierFeedback       string
+	LintFeedback           string
 	AgentOverride          string // empty = use default chain; non-empty = use this specific agent
 }
 
@@ -62,6 +63,12 @@ type FixConfig struct {
 	MaxIterations    int
 	EscalationLadder []string // tried in order when stuck detected
 	VerifierEnabled  bool     // run the verifier role after critic approval
+	// LintGate, when non-nil, runs as a deterministic quality gate after each
+	// coder attempt and before the tester. It returns ok=true when the change
+	// is clean (or there is no linter); on ok=false the feedback is injected
+	// back to the coder and the attempt retries — so lint violations are fixed
+	// in-loop rather than only blocking the commit. nil = no lint gate.
+	LintGate func(ctx context.Context) (ok bool, feedback string)
 }
 
 type FixResult struct {
@@ -110,6 +117,33 @@ func RunFix(ctx context.Context, cfg FixConfig, r RoleRunner, baseRC invoke.RunC
 		// Capture enriched feedback for next attempt.
 		previousAttemptSummary = coder.Summary
 		filesChangedSoFar = appendUnique(filesChangedSoFar, coder.FilesChanged)
+
+		// Lint gate: a deterministic quality check before the (slower) tester.
+		// A failure feeds the linter output back to the coder and retries, so
+		// lint/format violations are fixed in-loop instead of only blocking the
+		// commit. A missing linter returns ok=true (see liveDeps.lintGateOutcome).
+		if cfg.LintGate != nil {
+			if ok, lintFB := cfg.LintGate(ctx); !ok {
+				if attempt >= cfg.MaxIterations {
+					return &FixResult{
+						Status:            FixFailed,
+						Reason:            "lint_failed",
+						Iterations:        cfg.MaxIterations,
+						LastFeedback:      lintFB,
+						FilesChangedSoFar: filesChangedSoFar,
+					}, nil
+				}
+				fb.LintFeedback = lintFB
+				fb.TesterFeedback = ""
+				fb.CriticFeedback = ""
+				fb.VerifierFeedback = ""
+				fb.AgentOverride = ""
+				prevHash = ""
+				sameHashCount = 0
+				continue
+			}
+		}
+		fb.LintFeedback = ""
 
 		t, err := r.RunTester(ctx, rc)
 		if err != nil {
