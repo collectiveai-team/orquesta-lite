@@ -122,15 +122,25 @@ func newLiveDeps(opts liveDepsOptions) (*liveDeps, func() error, error) {
 		}
 	}()
 
-	// If the full-suite command is unset (e.g. init couldn't detect the repo's
-	// language, or this is a fresh factory checkout) try to fill it from the
-	// project layout so the verification gate isn't silently skipped. Empty
-	// stays a no-op; detection is best-effort and never aborts the run.
+	// If the verification commands are unset (e.g. init couldn't detect the
+	// repo's language, or this is a fresh factory checkout) try to fill them
+	// from the project layout so the gates aren't silently skipped. Empty stays
+	// a no-op; detection is best-effort and never aborts the run.
 	if cfg.FullTestCommand == "" {
 		if cmd := detectTestCommand(opts.ProjectDir); cmd != "" {
 			cfg.FullTestCommand = cmd
-			persisted := persistTestCommand(opts.TeamPath, cmd) == nil
+			persisted := persistConfigString(opts.TeamPath, "full_test_command", cmd) == nil
 			logger.Log(eventlog.Event{Type: "test_command_detected", Fields: map[string]any{
+				"command":   cmd,
+				"persisted": persisted,
+			}})
+		}
+	}
+	if cfg.LintCommand == "" {
+		if cmd := detectLintCommand(opts.ProjectDir); cmd != "" {
+			cfg.LintCommand = cmd
+			persisted := persistConfigString(opts.TeamPath, "lint_command", cmd) == nil
+			logger.Log(eventlog.Event{Type: "lint_command_detected", Fields: map[string]any{
 				"command":   cmd,
 				"persisted": persisted,
 			}})
@@ -314,8 +324,14 @@ func (d *liveDeps) RunFix(ctx context.Context, taskID string, rc invoke.RunConte
 	}, rr, rc)
 }
 
-// FullSuite runs the full test command specified in team.json.
+// FullSuite runs the quality gate after a task: the lint command (if any)
+// first, then the full test command. A non-zero exit from either rolls the
+// change back, so neither lint violations nor test failures can ship.
 func (d *liveDeps) FullSuite(ctx context.Context) error {
+	if err := d.lintGate(ctx); err != nil {
+		return err
+	}
+
 	parts := strings.Fields(d.cfg.FullTestCommand)
 	if len(parts) == 0 {
 		return nil
@@ -339,6 +355,36 @@ func (d *liveDeps) FullSuite(ctx context.Context) error {
 		return loops.ErrFullSuiteFailed
 	}
 	return nil
+}
+
+// lintGate runs the configured lint command as a blocking quality gate. A
+// missing lint binary (the command cannot start) is logged and tolerated as a
+// skip — an unconfigured linter must never fail every task — while a linter
+// that runs and reports violations (non-zero exit) blocks the commit.
+func (d *liveDeps) lintGate(ctx context.Context) error {
+	parts := strings.Fields(d.cfg.LintCommand)
+	if len(parts) == 0 {
+		return nil
+	}
+	c := exec.CommandContext(ctx, parts[0], parts[1:]...)
+	c.Dir = d.dir
+	out, err := c.CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	if exitCode(err) < 0 {
+		// Binary not found / failed to spawn: skip the gate, do not block.
+		d.log.Log(eventlog.Event{Type: "lint_skipped", Fields: map[string]any{
+			"command": d.cfg.LintCommand,
+			"reason":  err.Error(),
+		}})
+		return nil
+	}
+	d.log.Log(eventlog.Event{Type: "lint_failed", Fields: map[string]any{
+		"command":     d.cfg.LintCommand,
+		"output_tail": runner.TailString(string(out), 1024),
+	}})
+	return fmt.Errorf("%w: lint failed: %s", loops.ErrFullSuiteFailed, runner.TailString(string(out), 512))
 }
 
 // exitCode extracts the process exit code from an exec error, or -1.

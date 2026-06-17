@@ -53,6 +53,43 @@ func detectTestCommand(dir string) string {
 	return ""
 }
 
+// detectLintCommand returns a lint/quality command for the repo, or "" when no
+// linter is clearly configured. It is deliberately more conservative than
+// detectTestCommand: it only proposes a tool when the repo carries that tool's
+// own config (so an unconfigured/uninstalled linter never becomes a gate that
+// fails every task). `go vet` is the exception — it ships with the toolchain,
+// so any module gets it. A missing binary is still tolerated at run time (see
+// liveDeps.FullSuite), this just avoids proposing tools the repo never adopted.
+func detectLintCommand(dir string) string {
+	exists := func(name string) bool {
+		_, err := os.Stat(filepath.Join(dir, name))
+		return err == nil
+	}
+
+	switch {
+	case exists("ruff.toml"), exists(".ruff.toml"), fileContains(dir, "pyproject.toml", "[tool.ruff"):
+		return "ruff check ."
+	case exists(".eslintrc"), exists(".eslintrc.js"), exists(".eslintrc.cjs"),
+		exists(".eslintrc.json"), exists(".eslintrc.yml"), exists("eslint.config.js"),
+		exists("eslint.config.mjs"), fileContains(dir, "package.json", "\"eslint\""):
+		return "npx --no-install eslint ."
+	case exists("go.mod"):
+		return "go vet ./..."
+	case exists("Cargo.toml"):
+		return "cargo clippy"
+	}
+	return ""
+}
+
+// fileContains reports whether the named file in dir exists and contains needle.
+func fileContains(dir, name, needle string) bool {
+	raw, err := os.ReadFile(filepath.Join(dir, name))
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(raw), needle)
+}
+
 // hasMakeTarget reports whether any Makefile in dir declares the given target
 // (a line whose first non-whitespace token is "<target>:").
 func hasMakeTarget(dir, target string) bool {
@@ -71,19 +108,20 @@ func hasMakeTarget(dir, target string) bool {
 	return false
 }
 
-// persistTestCommand writes a detected command back into team.json by replacing
-// the empty full_test_command line, preserving the file's hand-authored layout
-// (a literal replace, like applyTestCommand at init time). It is best-effort: a
-// missing file, an already-populated command, or a write error is not fatal.
-func persistTestCommand(teamPath, cmd string) error {
+// persistConfigString writes a detected value back into team.json by replacing
+// the empty `"key": ""` line, preserving the file's hand-authored layout (a
+// literal replace, like applyTestCommand at init time). It is best-effort: a
+// missing file, an already-populated value, or a write error is not fatal, and
+// a key that is absent or already set is left untouched.
+func persistConfigString(teamPath, key, val string) error {
 	raw, err := os.ReadFile(teamPath)
 	if err != nil {
 		return err
 	}
-	old := []byte(`"full_test_command": ""`)
+	old := []byte(fmt.Sprintf(`"%s": ""`, key))
 	if !bytes.Contains(raw, old) {
-		return nil // already populated or formatted differently; leave it alone
+		return nil // already populated, absent, or formatted differently; leave it
 	}
-	replacement := []byte(fmt.Sprintf(`"full_test_command": %q`, cmd))
+	replacement := []byte(fmt.Sprintf(`"%s": %q`, key, val))
 	return os.WriteFile(teamPath, bytes.Replace(raw, old, replacement, 1), 0o644)
 }

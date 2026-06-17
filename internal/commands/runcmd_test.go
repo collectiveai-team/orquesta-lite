@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -1200,5 +1201,45 @@ exit 0
 	// fallback_reason must be "agent_crashed", NOT "result_missing".
 	if reason, _ := agentAEvent["fallback_reason"].(string); reason != "agent_crashed" {
 		t.Errorf("agent_a agent_run event: fallback_reason = %q, want \"agent_crashed\"", reason)
+	}
+}
+
+func newLintGateDeps(t *testing.T, lintCmd string) *liveDeps {
+	t.Helper()
+	dir := t.TempDir()
+	logger, err := eventlog.Open(filepath.Join(dir, "run.log"), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = logger.Close() })
+	return &liveDeps{
+		dir: dir,
+		cfg: &config.Config{LintCommand: lintCmd}, // no test command: isolates the lint gate
+		log: logger,
+	}
+}
+
+func TestFullSuite_LintGateBlocksOnViolation(t *testing.T) {
+	d := newLintGateDeps(t, "false") // `false` exits 1 = lint found problems
+	err := d.FullSuite(context.Background())
+	if err == nil {
+		t.Fatal("expected lint failure to block the gate")
+	}
+	if !errors.Is(err, loops.ErrFullSuiteFailed) {
+		t.Fatalf("lint failure should map to ErrFullSuiteFailed, got %v", err)
+	}
+}
+
+func TestFullSuite_LintGateSkipsWhenBinaryMissing(t *testing.T) {
+	d := newLintGateDeps(t, "orq-lite-no-such-linter-9f3a check .")
+	if err := d.FullSuite(context.Background()); err != nil {
+		t.Fatalf("a missing lint binary must be skipped, not block, got %v", err)
+	}
+}
+
+func TestFullSuite_LintGatePassesThrough(t *testing.T) {
+	d := newLintGateDeps(t, "true") // `true` exits 0 = clean
+	if err := d.FullSuite(context.Background()); err != nil {
+		t.Fatalf("clean lint + no test command should pass, got %v", err)
 	}
 }
