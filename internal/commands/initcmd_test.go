@@ -289,6 +289,27 @@ func TestInit_WritesPythonGitignore(t *testing.T) {
 	}
 }
 
+// TestInit_UnknownLangClearsTestCommand verifies that a directory with no
+// recognizable language manifest gets an empty full_test_command rather than
+// the embedded "go test ./..." default, which would fail every full-suite gate
+// in a non-Go repo. Empty is a no-op until the run-time detector fills it in.
+func TestInit_UnknownLangClearsTestCommand(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "README.txt"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Init(dir); err != nil {
+		t.Fatal(err)
+	}
+	team, _ := os.ReadFile(filepath.Join(dir, "team.json"))
+	if !strings.Contains(string(team), `"full_test_command": ""`) {
+		t.Errorf("unknown-language team.json should clear full_test_command, got:\n%s", team)
+	}
+	if strings.Contains(string(team), "go test ./...") {
+		t.Errorf("unknown-language team.json must not keep the go default:\n%s", team)
+	}
+}
+
 // TestInitWithOptions_LangOverride verifies that an explicit --lang argument
 // overrides autodetection even when the directory looks like a different
 // language.

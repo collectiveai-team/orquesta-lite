@@ -122,6 +122,31 @@ func newLiveDeps(opts liveDepsOptions) (*liveDeps, func() error, error) {
 		}
 	}()
 
+	// If the verification commands are unset (e.g. init couldn't detect the
+	// repo's language, or this is a fresh factory checkout) try to fill them
+	// from the project layout so the gates aren't silently skipped. Empty stays
+	// a no-op; detection is best-effort and never aborts the run.
+	if cfg.FullTestCommand == "" {
+		if cmd := detectTestCommand(opts.ProjectDir); cmd != "" {
+			cfg.FullTestCommand = cmd
+			persisted := persistConfigString(opts.TeamPath, "full_test_command", cmd) == nil
+			logger.Log(eventlog.Event{Type: "test_command_detected", Fields: map[string]any{
+				"command":   cmd,
+				"persisted": persisted,
+			}})
+		}
+	}
+	if cfg.LintCommand == "" {
+		if cmd := detectLintCommand(opts.ProjectDir); cmd != "" {
+			cfg.LintCommand = cmd
+			persisted := persistConfigString(opts.TeamPath, "lint_command", cmd) == nil
+			logger.Log(eventlog.Event{Type: "lint_command_detected", Fields: map[string]any{
+				"command":   cmd,
+				"persisted": persisted,
+			}})
+		}
+	}
+
 	memPath := filepath.Join(opts.ProjectDir, ".orquestalite", "memory.md")
 
 	fc := fallback.NewCaller(fallback.Config{
@@ -296,10 +321,13 @@ func (d *liveDeps) RunFix(ctx context.Context, taskID string, rc invoke.RunConte
 		MaxIterations:    d.cfg.Limits.MaxFixIterations,
 		EscalationLadder: escalationLadder,
 		VerifierEnabled:  d.cfg.VerifierPerTask(),
+		LintGate:         d.lintGateOutcome,
 	}, rr, rc)
 }
 
-// FullSuite runs the full test command specified in team.json.
+// FullSuite runs the full test command specified in team.json after a task.
+// (Lint runs inside the fix loop via lintGateOutcome, so a violation is fixed
+// in-loop rather than only blocking here.)
 func (d *liveDeps) FullSuite(ctx context.Context) error {
 	parts := strings.Fields(d.cfg.FullTestCommand)
 	if len(parts) == 0 {
@@ -324,6 +352,38 @@ func (d *liveDeps) FullSuite(ctx context.Context) error {
 		return loops.ErrFullSuiteFailed
 	}
 	return nil
+}
+
+// lintGateOutcome runs the configured lint command as a deterministic quality
+// gate inside the fix loop. It returns ok=true when there is no linter, the
+// linter is clean, or the lint binary is missing (a missing/unconfigured
+// linter must never block every task — that is logged as a skip). On a real
+// violation it returns ok=false with the linter's output as coder feedback.
+func (d *liveDeps) lintGateOutcome(ctx context.Context) (bool, string) {
+	parts := strings.Fields(d.cfg.LintCommand)
+	if len(parts) == 0 {
+		return true, ""
+	}
+	c := exec.CommandContext(ctx, parts[0], parts[1:]...)
+	c.Dir = d.dir
+	out, err := c.CombinedOutput()
+	if err == nil {
+		return true, ""
+	}
+	if exitCode(err) < 0 {
+		// Binary not found / failed to spawn: skip the gate, do not block.
+		d.log.Log(eventlog.Event{Type: "lint_skipped", Fields: map[string]any{
+			"command": d.cfg.LintCommand,
+			"reason":  err.Error(),
+		}})
+		return true, ""
+	}
+	tail := runner.TailString(string(out), 1024)
+	d.log.Log(eventlog.Event{Type: "lint_failed", Fields: map[string]any{
+		"command":     d.cfg.LintCommand,
+		"output_tail": tail,
+	}})
+	return false, fmt.Sprintf("Lint gate failed (`%s`). Fix these before re-running:\n%s", d.cfg.LintCommand, tail)
 }
 
 // exitCode extracts the process exit code from an exec error, or -1.
@@ -631,6 +691,7 @@ func (rr *liveRoleRunner) RunCoder(ctx context.Context, rc invoke.RunContext, fb
 			"TESTER_FEEDBACK":          fb.TesterFeedback,
 			"CRITIC_FEEDBACK":          fb.CriticFeedback,
 			"VERIFIER_FEEDBACK":        fb.VerifierFeedback,
+			"LINT_FEEDBACK":            fb.LintFeedback,
 			"PREVIOUS_ATTEMPT_SUMMARY": fb.PreviousAttemptSummary,
 			"FILES_CHANGED_SO_FAR":     strings.Join(fb.FilesChangedSoFar, "\n"),
 		}}, rc, results.ParseCoder)

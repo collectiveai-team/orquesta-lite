@@ -1202,3 +1202,50 @@ exit 0
 		t.Errorf("agent_a agent_run event: fallback_reason = %q, want \"agent_crashed\"", reason)
 	}
 }
+
+func newLintGateDeps(t *testing.T, lintCmd string) *liveDeps {
+	t.Helper()
+	dir := t.TempDir()
+	logger, err := eventlog.Open(filepath.Join(dir, "run.log"), io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = logger.Close() })
+	return &liveDeps{
+		dir: dir,
+		cfg: &config.Config{LintCommand: lintCmd}, // no test command: isolates the lint gate
+		log: logger,
+	}
+}
+
+func TestLintGate_BlocksOnViolation(t *testing.T) {
+	d := newLintGateDeps(t, "false") // `false` exits 1 = lint found problems
+	ok, fb := d.lintGateOutcome(context.Background())
+	if ok {
+		t.Fatal("expected lint violation to fail the gate")
+	}
+	if fb == "" {
+		t.Fatal("a lint failure must return feedback for the coder")
+	}
+}
+
+func TestLintGate_SkipsWhenBinaryMissing(t *testing.T) {
+	d := newLintGateDeps(t, "orq-lite-no-such-linter-9f3a check .")
+	if ok, _ := d.lintGateOutcome(context.Background()); !ok {
+		t.Fatal("a missing lint binary must be skipped (ok=true), not block")
+	}
+}
+
+func TestLintGate_PassesWhenClean(t *testing.T) {
+	d := newLintGateDeps(t, "true") // `true` exits 0 = clean
+	if ok, fb := d.lintGateOutcome(context.Background()); !ok || fb != "" {
+		t.Fatalf("clean lint should pass with no feedback, got ok=%v fb=%q", ok, fb)
+	}
+}
+
+func TestLintGate_NoCommandIsNoop(t *testing.T) {
+	d := newLintGateDeps(t, "")
+	if ok, fb := d.lintGateOutcome(context.Background()); !ok || fb != "" {
+		t.Fatalf("empty lint command should be a no-op, got ok=%v fb=%q", ok, fb)
+	}
+}

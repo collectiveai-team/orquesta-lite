@@ -94,5 +94,6 @@
     "max_seconds": 1800,
     "default_pattern": "rate_?limit|429|quota|too many requests"
   },
-  "full_test_command": "go test ./..."
+  "full_test_command": "go test ./...",
+  "lint_command": ""
 }

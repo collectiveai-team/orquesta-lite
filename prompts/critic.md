@@ -30,6 +30,21 @@ The task description is the contract. Verify scope deviation in both directions:
 
 Flag both. A clean diff that matches the contract exactly is the goal — additions outside the contract are still concerns to surface, not silently approve.
 
+## Stub check (unfinished work cannot satisfy behavior)
+
+A function body that does not do the work does not satisfy an acceptance
+criterion that asks for behavior. Treat as a **blocker** any change that, to
+meet a behavioral criterion, ships a placeholder instead of the behavior:
+
+- `raise NotImplementedError`, `panic("not implemented")`, `throw new Error("not implemented")`, a `TODO`/`FIXME` standing in for the required logic, a body that is only `pass`/`...`/`return None`, or a hard-coded constant faking a computed result.
+- A test that asserts only that the stub *exists* (it is importable, or that it raises) rather than that the behavior is correct. A passing test over a stub is not coverage.
+
+The only time a placeholder is acceptable is when the task's own description
+**explicitly** scopes the work to a signature/stub/interface (e.g. "add the
+method signature; wiring lands in T13"). When the description asks for behavior
+and the diff defers it with a stub, reject — do not approve on the promise of a
+follow-up task.
+
 ## Output contract
 
 Your final action MUST be to write `.orquestalite/results/critic.json`:

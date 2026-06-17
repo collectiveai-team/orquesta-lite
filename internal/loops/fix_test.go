@@ -374,3 +374,94 @@ func TestRunFix_VerifierFailExhaustsBudget(t *testing.T) {
 		t.Errorf("LastFeedback = %q", out.LastFeedback)
 	}
 }
+
+func TestFix_LintGateFeedsBackThenPasses(t *testing.T) {
+	var lintCalls, testerCalls int
+	var sawLintFB string
+	r := &stubRoles{
+		coder: func(a int, fb CoderFeedback) CoderOutcome {
+			if a == 2 {
+				sawLintFB = fb.LintFeedback
+			}
+			return CoderOutcome{Status: "completed"}
+		},
+		tester: func(int) TesterOutcome { testerCalls++; return TesterOutcome{Status: "pass"} },
+		critic: func(int) CriticOutcome { return CriticOutcome{Status: "approved"} },
+	}
+	lint := func(ctx context.Context) (bool, string) {
+		lintCalls++
+		if lintCalls == 1 {
+			return false, "ruff: E501 line too long"
+		}
+		return true, ""
+	}
+	out, err := RunFix(context.Background(), FixConfig{MaxIterations: 5, LintGate: lint}, r, invoke.RunContext{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Status != FixDone || out.Iterations != 2 {
+		t.Fatalf("got %+v", out)
+	}
+	if testerCalls != 1 {
+		t.Errorf("tester must not run on the lint-failed attempt; got %d calls", testerCalls)
+	}
+	if sawLintFB != "ruff: E501 line too long" {
+		t.Errorf("coder attempt 2 should receive lint feedback, got %q", sawLintFB)
+	}
+}
+
+func TestFix_LintFeedbackClearedAfterPass(t *testing.T) {
+	// Lint fails once (attempt 1), passes after; the tester then fails once so a
+	// 3rd coder attempt runs. That attempt must see tester feedback, NOT stale
+	// lint feedback.
+	var lintCalls int
+	var attempt3 CoderFeedback
+	r := &stubRoles{
+		coder: func(a int, fb CoderFeedback) CoderOutcome {
+			if a == 3 {
+				attempt3 = fb
+			}
+			return CoderOutcome{Status: "completed"}
+		},
+		tester: func(a int) TesterOutcome {
+			if a == 2 {
+				return TesterOutcome{Status: "fail", Feedback: "test X failed", FailuresHash: "h1"}
+			}
+			return TesterOutcome{Status: "pass"}
+		},
+		critic: func(int) CriticOutcome { return CriticOutcome{Status: "approved"} },
+	}
+	lint := func(ctx context.Context) (bool, string) {
+		lintCalls++
+		if lintCalls == 1 {
+			return false, "lint dirty"
+		}
+		return true, ""
+	}
+	out, _ := RunFix(context.Background(), FixConfig{MaxIterations: 5, LintGate: lint}, r, invoke.RunContext{})
+	if out.Status != FixDone {
+		t.Fatalf("got %+v", out)
+	}
+	if attempt3.LintFeedback != "" {
+		t.Errorf("stale lint feedback leaked into a tester-driven retry: %q", attempt3.LintFeedback)
+	}
+	if attempt3.TesterFeedback != "test X failed" {
+		t.Errorf("attempt 3 should carry tester feedback, got %q", attempt3.TesterFeedback)
+	}
+}
+
+func TestFix_LintGateMaxIterations(t *testing.T) {
+	r := &stubRoles{
+		coder:  func(int, CoderFeedback) CoderOutcome { return CoderOutcome{Status: "completed"} },
+		tester: func(int) TesterOutcome { return TesterOutcome{Status: "pass"} },
+		critic: func(int) CriticOutcome { return CriticOutcome{Status: "approved"} },
+	}
+	lint := func(ctx context.Context) (bool, string) { return false, "still dirty" }
+	out, _ := RunFix(context.Background(), FixConfig{MaxIterations: 3, LintGate: lint}, r, invoke.RunContext{})
+	if out.Status != FixFailed || out.Reason != "lint_failed" {
+		t.Fatalf("expected lint_failed after exhausting iterations, got %+v", out)
+	}
+	if out.LastFeedback != "still dirty" {
+		t.Errorf("LastFeedback should carry lint output, got %q", out.LastFeedback)
+	}
+}

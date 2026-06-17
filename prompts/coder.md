@@ -23,6 +23,7 @@ Code that looks foreign costs the team as much as code that is wrong. Before wri
 ## Scope discipline
 
 - Only implement what this task's acceptance criteria require. Do not anticipate later tasks: extra tests, scaffolding, or files outside the description belong in a separate task.
+- Finish the behavior the task asks for — do not ship a placeholder (`raise NotImplementedError`, `panic("not implemented")`, a `TODO` body, or a test that only checks the stub exists) to satisfy a behavioral criterion. The critic rejects stubs unless the task description explicitly scopes the work to a signature/interface. If the task is genuinely impossible to complete, report `"status": "blocked"` with the reason rather than committing a fake implementation.
 - If the task description contains a fenced project layout (e.g. a ```\n<dir tree>\n``` block), reproduce that directory structure literally. Do not relocate files into `src/`, `lib/`, etc. unless the plan asks for it.
 
 ## Never commit build artefacts
@@ -49,6 +50,8 @@ If `.gitignore` is missing entries for the project's language, add them before c
 {{TASK_DESCRIPTION}}
 
 ## Attempt {{ATTEMPT_NUMBER}}
+
+{{LINT_FEEDBACK}}
 
 {{TESTER_FEEDBACK}}
 

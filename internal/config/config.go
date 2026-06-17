@@ -96,6 +96,12 @@ type Config struct {
 	Limits           Limits           `json:"limits"`
 	RateLimitBackoff RateLimitBackoff `json:"rate_limit_backoff"`
 	FullTestCommand  string           `json:"full_test_command"`
+	// LintCommand is an optional quality gate run before the test suite after
+	// each task; a non-zero exit blocks the commit (the change is rolled back),
+	// so lint/format violations cannot ship. Empty = no lint gate. A missing
+	// lint binary is treated as a skip, not a failure, so an unconfigured tool
+	// never blocks every task.
+	LintCommand string `json:"lint_command,omitempty"`
 	// ConventionsFile is a project-relative path to a house-style document
 	// (coding conventions, structure, idioms). When set and present, its
 	// contents are injected into the coder/tester/critic/reviewer/verifier
