@@ -11,15 +11,15 @@ func classify(r *runner.Result) (shouldFallback bool, reason string) {
 	// Precedence: rate_limit -> timed_out (agent_crashed) -> (no result:
 	// auth_failed | result_missing) -> success.
 	//
-	// auth_failed is only considered when the agent produced NO result. If the
-	// agent wrote its result file it authenticated fine and succeeded — auth-ish
-	// text elsewhere in its output (e.g. a FastAPI 401 "Not authenticated" body,
-	// or a "login required" string in the code under edit) must NOT bench a
-	// working agent. TimedOut is checked before the no-result branch because a
-	// timed-out agent always lacks a result; checking that first would shadow the
-	// more-specific "agent_crashed" reason.
+	// Both rate_limit and auth_failed are only considered when the agent produced
+	// NO result. A written result file means the agent ran fine, so rate-limit or
+	// auth text elsewhere in its output (e.g. "usage limit" / "session limit" in
+	// the code it edited, or a FastAPI 401 "Not authenticated" body) must NOT
+	// bench a working agent. TimedOut is checked before the no-result branch
+	// because a timed-out agent always lacks a result; checking that first would
+	// shadow the more-specific "agent_crashed" reason.
 	switch {
-	case r.RateLimited:
+	case r.RateLimited && !r.ResultExists:
 		return true, "rate_limit"
 	case r.TimedOut:
 		return true, "agent_crashed"
@@ -30,6 +30,9 @@ func classify(r *runner.Result) (shouldFallback bool, reason string) {
 		return true, "result_missing"
 	// "invalid_contract" is reserved for Phase 3 contract validation.
 	default:
+		// A result was written: the agent ran fine. Rate-limit/auth text
+		// elsewhere in its output (e.g. "usage limit" in code it edited, or a
+		// 401 body) must not bench a successful agent.
 		return false, ""
 	}
 }

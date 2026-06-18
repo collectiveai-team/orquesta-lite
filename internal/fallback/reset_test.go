@@ -28,6 +28,18 @@ func TestParseResetTime(t *testing.T) {
 			wantUTC: time.Date(2026, 6, 16, 16, 5, 0, 0, time.Local),
 		},
 		{
+			name:    "claude session limit resets Npm (no 'at')",
+			text:    "You've hit your session limit · resets 7pm (America/Buenos_Aires)",
+			wantOK:  true,
+			wantUTC: time.Date(2026, 6, 16, 19, 0, 0, 0, time.Local),
+		},
+		{
+			name:    "resets at with space and am/pm",
+			text:    "quota exceeded; resets at 6 am",
+			wantOK:  true,
+			wantUTC: time.Date(2026, 6, 17, 6, 0, 0, 0, time.Local), // 6am already past 13:50 -> next day
+		},
+		{
 			name:    "clock already past rolls to next day",
 			text:    "try again at 9:00 AM",
 			wantOK:  true,

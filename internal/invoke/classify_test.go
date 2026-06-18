@@ -34,6 +34,17 @@ func TestClassifyFallbackDisposition(t *testing.T) {
 			wantReason:   "",
 		},
 		{
+			name: "rate-limit text but result written is success (no false wait)",
+			result: &runner.Result{
+				// e.g. the agent edited code containing "usage limit" but still
+				// wrote its result file.
+				RateLimited:  true,
+				ResultExists: true,
+			},
+			wantFallback: false,
+			wantReason:   "",
+		},
+		{
 			name: "rate limit beats auth even with no result",
 			result: &runner.Result{
 				RateLimited:  true,
