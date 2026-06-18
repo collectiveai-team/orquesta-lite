@@ -97,7 +97,7 @@ func TestResetHard_RevertsModificationAndRestoresDeletion(t *testing.T) {
 	_ = os.WriteFile(p, []byte("a"), 0o644)
 	base, _ := CommitAll(dir, "add a")
 	_ = os.WriteFile(p, []byte("DIRTY"), 0o644) // modify
-	_ = os.Remove(filepath.Join(dir, "a.txt")) // delete then re-modify scenario
+	_ = os.Remove(filepath.Join(dir, "a.txt"))  // delete then re-modify scenario
 	_ = os.WriteFile(filepath.Join(dir, "a.txt"), []byte("DIRTY"), 0o644)
 
 	if err := ResetHard(dir, base); err != nil {

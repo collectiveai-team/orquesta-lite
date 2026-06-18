@@ -151,6 +151,9 @@ func HumanLine(e Event) string {
 			fs(e.Fields["task_id"]), fs(e.Fields["path"]))
 	case "full_suite_failed":
 		return "full_suite_failed (see run.log for details)"
+	case "rate_limit_wait":
+		return fmt.Sprintf("rate_limit_wait %v → waiting until %v (~%vs) for it to recover",
+			fs(e.Fields["agent"]), fs(e.Fields["until"]), fs(e.Fields["seconds"]))
 	}
 	return fmt.Sprintf("%s %s", e.Type, summariseFields(e.Fields))
 }
@@ -172,6 +175,8 @@ func formatAgentRun(fs_ map[string]any) string {
 		outcome = "crashed"
 	case reason == "result_missing":
 		outcome = "no-result"
+	case reason == "auth_failed":
+		outcome = "auth-failed"
 	case reason != "":
 		outcome = reason
 	}

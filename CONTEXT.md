@@ -113,7 +113,7 @@ result path, timeout).
     },
     "claude_opus": {
       "provider": "claude",
-      "model": "claude-opus-4-7",
+      "model": "claude-opus-4-8",
       "dangerously_skip_permissions": true
     },
     "codex_gpt5": {

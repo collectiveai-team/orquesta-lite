@@ -16,6 +16,15 @@ const (
 	ReasonUnreachable      Reason = "unreachable"
 	ReasonResultMissing    Reason = "result_missing"
 	ReasonRepeatedFailures Reason = "repeated_failures"
+	// ReasonAuth marks an agent whose CLI tried to authenticate interactively
+	// (missing/expired headless credentials). Non-recoverable this session, so
+	// the agent is skipped on first occurrence rather than after the failure
+	// threshold.
+	ReasonAuth Reason = "auth"
+	// ReasonNoCredentials marks an agent skipped by static preflight because its
+	// provider has no usable non-interactive credential (no API-key env var and
+	// no cached login).
+	ReasonNoCredentials Reason = "no_credentials"
 )
 
 // Tracker is safe for concurrent use. Zero value is not usable — call New.

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/lionelchamorro/orquestalite/internal/agenthealth"
 	"github.com/lionelchamorro/orquestalite/internal/config"
@@ -180,6 +181,16 @@ func (inv *RoleInvoker) run(ctx context.Context, roleName string, role config.Ro
 	}
 
 	_, _, err = fc.Call(ctx, chain, func(ctx context.Context, agentName string) (fallback.Outcome, error) {
+		// An agent skipped earlier in this same Call (e.g. an auth failure marks
+		// it immediately) must not be re-spawned — fall straight through without
+		// burning another invocation. The chain is filtered only at Call start,
+		// so this guard catches skips that happen mid-loop.
+		if inv.Health != nil {
+			if reason, skipped := inv.Health.IsSkipped(agentName); skipped {
+				return fallback.Outcome{ShouldFallback: true, FallbackReason: string(reason)}, nil
+			}
+		}
+
 		ag := agentByName[agentName]
 		pattern := ag.RatePattern
 		if pattern == "" {
@@ -219,13 +230,22 @@ func (inv *RoleInvoker) run(ctx context.Context, roleName string, role config.Ro
 		}
 		inv.logAgentRun(roleName, agentName, ag, spec, r, fallbackReason, rc)
 
-		return fallback.Outcome{
+		out := fallback.Outcome{
 			RateLimited:    r.RateLimited,
 			ResultExists:   r.ResultExists,
 			TimedOut:       r.TimedOut,
 			ShouldFallback: shouldFallback,
 			FallbackReason: fallbackReason,
-		}, nil
+		}
+		// When rate-limited, mine the agent's output for a reset hint
+		// ("try again at 4:30 PM") so the fallback loop can wait until the real
+		// reset instead of guessing with exponential backoff.
+		if r.RateLimited {
+			if reset, ok := fallback.ParseResetTime(r.Stdout+"\n"+r.Stderr, time.Now()); ok {
+				out.ResetAt = reset
+			}
+		}
+		return out, nil
 	})
 
 	if errors.Is(err, fallback.ErrAllAgentsFailed) {
@@ -255,6 +275,20 @@ func (inv *RoleInvoker) recordHealth(roleName, agentName string, shouldFallback 
 	switch {
 	case !shouldFallback:
 		inv.Health.MarkSuccess(agentName)
+	case fallbackReason == "auth_failed":
+		// An interactive auth prompt will not fix itself this session — skip the
+		// agent immediately rather than burning the full failure threshold.
+		if _, already := inv.Health.IsSkipped(agentName); !already {
+			inv.Health.Skip(agentName, agenthealth.ReasonAuth)
+			if inv.Log != nil {
+				inv.Log.Log(eventlog.Event{Type: "agent_marked_skipped", Fields: map[string]any{
+					"agent":                agentName,
+					"role":                 roleName,
+					"reason":               "auth",
+					"last_fallback_reason": fallbackReason,
+				}})
+			}
+		}
 	case fallbackReason != "rate_limit":
 		if inv.Health.MarkFailure(agentName, agenthealth.ReasonResultMissing) && inv.Log != nil {
 			threshold := inv.AgentHealthThreshold

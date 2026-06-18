@@ -153,6 +153,16 @@ func newLiveDeps(opts liveDepsOptions) (*liveDeps, func() error, error) {
 		InitialBackoff: time.Duration(cfg.RateLimitBackoff.InitialSeconds) * time.Second,
 		Factor:         cfg.RateLimitBackoff.Factor,
 		MaxBackoff:     time.Duration(cfg.RateLimitBackoff.MaxSeconds) * time.Second,
+		// Surface the wait so a long sleep for a rate-limited agent is not
+		// silent — the loop waits for the agent to recover rather than failing.
+		OnWait: func(agent, reason string, until time.Time) {
+			logger.Log(eventlog.Event{Type: "rate_limit_wait", Fields: map[string]any{
+				"agent":   agent,
+				"reason":  reason,
+				"until":   until.Format("15:04:05"),
+				"seconds": int(time.Until(until).Seconds()),
+			}})
+		},
 	})
 
 	tracker := agenthealth.New(agentHealthThreshold)
@@ -249,6 +259,19 @@ func runStaticAgentPreflight(cfg *config.Config, tracker *agenthealth.Tracker, l
 				"agent":  name,
 				"binary": binary,
 				"reason": "binary_not_in_path",
+			}})
+			continue
+		}
+		// Skip provider agents with no usable headless credential up front, so
+		// the run never wastes an invocation discovering an interactive auth
+		// prompt mid-task (e.g. an un-logged-in gemini CLI).
+		if ag.Provider != "" && !providerHasUsableCredentials(ag.Provider) {
+			tracker.Skip(name, agenthealth.ReasonNoCredentials)
+			log.Log(eventlog.Event{Type: "preflight_skipped_agent", Fields: map[string]any{
+				"agent":    name,
+				"binary":   binary,
+				"provider": ag.Provider,
+				"reason":   "no_credentials",
 			}})
 		}
 	}

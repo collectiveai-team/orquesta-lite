@@ -200,6 +200,23 @@ will always report itself as outdated).
 - role bindings for `parser`, `coder`, `tester`, `critic`, `reviewer`, and the
   optional `verifier` (black-box manual verification after critic approval)
 - prompt paths and expected result paths
+- rate-limit handling (`rate_limit_backoff`): a rate-limited agent is first
+  routed around — the next healthy agent in the role's chain is used. Only when
+  no healthy fallback exists does the orchestrator **wait for the rate limit to
+  lift** instead of failing the role: it parses the reset hint from the agent's
+  output (`try again at 4:30 PM`, `retry after 30s`) and sleeps until then
+  (falling back to exponential backoff when no hint is given), looping until an
+  agent becomes available. The wait is logged as `rate_limit_wait` so a long
+  sleep is visible, and Ctrl-C interrupts it. `max_seconds` now bounds a single
+  sleep chunk (so other agents' resets are rechecked promptly), not the total
+  wait. A role only fails (`all agents failed`) when every agent is
+  non-recoverably broken (auth failure, crash) with none merely rate-limited.
+  Agents that can't authenticate headless are dropped rather than waited on:
+  static preflight skips a provider agent with no usable credential
+  (`no_credentials`), and at run time an agent that falls back to an
+  interactive auth prompt (e.g. an un-logged-in gemini CLI opening a browser
+  OAuth flow) is detected and skipped immediately (`auth-failed`) instead of
+  being retried.
 - loop limits and rate-limit backoff settings, including
   `verify_tester_command` (the orchestrator re-runs the tester's reported
   command and overrides a false "pass"; on by default) and
@@ -269,6 +286,11 @@ The main loop is intentionally small:
    (`mode: per_task` moves verification inside the fix loop instead.)
 4. Successful tasks are committed one at a time.
 5. Factory mode wraps all of the above per feature, on per-feature branches.
+   When a feature fails mid-task, any uncommitted residue is preserved as a
+   labelled `wip(orq-lite): checkpoint …` commit on the feature branch before
+   returning to base — so the queue never gets stuck on a dirty tree, the work
+   is recoverable (`git checkout <branch>`; `git reset --soft HEAD^`), and
+   completed tasks remain as their own commits.
 
 See [CONTEXT.md](./CONTEXT.md) for the full domain model and
 [docs/adr/](./docs/adr/) for architecture decisions.
