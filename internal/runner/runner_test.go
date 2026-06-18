@@ -86,14 +86,17 @@ func TestRunAgent_DetectsInteractiveAuthPrompt(t *testing.T) {
 func TestDetectAuthPrompt(t *testing.T) {
 	yes := []string{
 		"Opening authentication page in your browser.",
-		"Error authenticating: FatalCancellationError",
-		"Please log in with the CLI first",
-		"not authenticated",
-		"login required",
+		"FatalCancellationError: Authentication cancelled by user.",
+		"Please run codex login to continue",
+		"You need to reauthenticate",
 	}
 	no := []string{
 		"All 6 tests passed",
 		"Implemented T002 and wrote results",
+		// Application content that must NOT be mistaken for a CLI auth prompt:
+		`{"detail":"Not authenticated"}`, // FastAPI 401 body
+		"login required",                 // UI/route-guard string in code under edit
+		"please log in to your account",  // app copy
 		"",
 	}
 	for _, s := range yes {

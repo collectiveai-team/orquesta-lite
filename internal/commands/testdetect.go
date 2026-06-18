@@ -30,7 +30,10 @@ func detectTestCommand(dir string) string {
 		return "uv run pytest -q"
 	case exists("pytest.ini"), exists("tox.ini"), exists("setup.cfg"), exists("requirements.txt"), exists("Pipfile"):
 		return "pytest -q"
-	case exists("package.json"):
+	// Only propose `npm test` when package.json actually declares a test script.
+	// A Next.js/Vite app often has none, so `npm test` would exit non-zero
+	// ("missing script: test") and fail the full-suite gate after every task.
+	case exists("package.json") && fileContains(dir, "package.json", "\"test\":"):
 		return "npm test --silent"
 	case exists("go.mod"):
 		return "go test ./..."

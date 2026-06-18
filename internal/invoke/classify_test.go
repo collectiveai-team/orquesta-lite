@@ -14,15 +14,34 @@ func TestClassifyFallbackDisposition(t *testing.T) {
 		wantReason   string
 	}{
 		{
-			name: "auth failure takes precedence over everything",
+			name: "auth failure with no result is auth_failed",
 			result: &runner.Result{
 				AuthFailed:   true,
-				RateLimited:  true,
-				TimedOut:     true,
 				ResultExists: false,
 			},
 			wantFallback: true,
 			wantReason:   "auth_failed",
+		},
+		{
+			name: "auth-ish text but result written is success (no false skip)",
+			result: &runner.Result{
+				// e.g. the agent printed a FastAPI 401 "Not authenticated" body
+				// while working, but still wrote its result file.
+				AuthFailed:   true,
+				ResultExists: true,
+			},
+			wantFallback: false,
+			wantReason:   "",
+		},
+		{
+			name: "rate limit beats auth even with no result",
+			result: &runner.Result{
+				RateLimited:  true,
+				AuthFailed:   true,
+				ResultExists: false,
+			},
+			wantFallback: true,
+			wantReason:   "rate_limit",
 		},
 		{
 			name: "rate limit takes precedence",
