@@ -29,6 +29,12 @@ type Deps interface {
 	// CheckoutFeatureBranch makes the work tree point at the feature's branch,
 	// creating it from base when it does not exist yet.
 	CheckoutFeatureBranch(branch, base string) error
+	// CheckpointResidue commits any uncommitted residue from an interrupted
+	// task to the CURRENT (feature) branch as a labelled WIP commit, so the
+	// work is preserved on the branch and the subsequent return to base finds a
+	// clean tree. No-op when the tree is already clean. Returns whether a
+	// checkpoint commit was made.
+	CheckpointResidue(f Feature) (bool, error)
 	// CheckoutBase returns the work tree to the base branch.
 	CheckoutBase(base string) error
 	// RunFeature plans and runs one feature on the current branch.
@@ -101,6 +107,18 @@ func Run(ctx context.Context, q *Queue, cfg Config, d Deps) error {
 				f.PRURL = url
 				d.Logf("factory: %s PR %s", f.ID, url)
 			}
+		}
+
+		// Preserve any half-done residue (e.g. an interrupted task whose hard
+		// failure skipped task-level rollback) as a WIP commit on the feature
+		// branch before switching away — otherwise the work is lost AND the
+		// checkout would abort on a dirty tree. The branch keeps the work; base
+		// stays clean.
+		if checkpointed, err := d.CheckpointResidue(*f); err != nil {
+			_ = d.SaveState(q)
+			return fmt.Errorf("checkpoint residue for %s: %w", f.ID, err)
+		} else if checkpointed {
+			d.Logf("factory: %s checkpointed uncommitted residue to %s (wip commit)", f.ID, f.Branch)
 		}
 
 		if err := d.CheckoutBase(q.BaseBranch); err != nil {

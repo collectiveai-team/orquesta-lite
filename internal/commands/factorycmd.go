@@ -171,18 +171,25 @@ func (d *liveFactoryDeps) CheckoutFeatureBranch(branch, base string) error {
 	return gitx.CheckoutNewBranch(d.dir, branch, base)
 }
 
-func (d *liveFactoryDeps) CheckoutBase(base string) error {
-	// A failed feature can leave a half-done task's uncommitted edits on the
-	// feature branch (completed tasks are already committed and stay safe on the
-	// branch). Discard that residue first, otherwise `git checkout <base>`
-	// aborts with "local changes would be overwritten" and the queue gets stuck
-	// on the feature branch.
-	if clean, err := gitx.IsCleanTree(d.dir); err == nil && !clean {
-		d.Logf("factory: discarding uncommitted residue before returning to %s", base)
-		if err := gitx.DiscardWorktree(d.dir); err != nil {
-			return fmt.Errorf("discard worktree before checkout %s: %w", base, err)
-		}
+// CheckpointResidue preserves a half-done task's uncommitted edits (completed
+// tasks are already committed) as a labelled WIP commit on the current feature
+// branch. This keeps the work recoverable on the branch and leaves a clean tree
+// so the subsequent `git checkout <base>` cannot abort with "local changes
+// would be overwritten". No-op when the tree is already clean, and never blocks
+// the queue when git state can't be read.
+func (d *liveFactoryDeps) CheckpointResidue(f factory.Feature) (bool, error) {
+	clean, err := gitx.IsCleanTree(d.dir)
+	if err != nil || clean {
+		return false, nil
 	}
+	msg := fmt.Sprintf("wip(orq-lite): checkpoint residue from interrupted feature %s (%s) — not gate-passed", f.ID, f.Title)
+	if _, err := gitx.CommitAll(d.dir, msg); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (d *liveFactoryDeps) CheckoutBase(base string) error {
 	return gitx.Checkout(d.dir, base)
 }
 

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/lionelchamorro/orquestalite/internal/factory"
+	"github.com/lionelchamorro/orquestalite/internal/gitx"
 )
 
 func initTestRepo(t *testing.T) string {
@@ -124,6 +125,66 @@ func TestFactory_RequiresCleanTree(t *testing.T) {
 	err := Factory(context.Background(), FactoryOptions{ProjectDir: dir, FeaturesPath: featuresPath})
 	if err == nil || !strings.Contains(err.Error(), "clean work tree") {
 		t.Fatalf("expected clean-tree error, got %v", err)
+	}
+}
+
+func TestCheckpointResidue_PreservesWorkAndCleansTree(t *testing.T) {
+	dir := initTestRepo(t)
+	d := &liveFactoryDeps{dir: dir, out: io.Discard}
+	feat := factory.Feature{ID: "F001", Title: "Feature one", Branch: "factory/001-feature-one"}
+
+	// Clean tree: no-op, no commit.
+	if checkpointed, err := d.CheckpointResidue(feat); err != nil || checkpointed {
+		t.Fatalf("clean tree: checkpointed=%v err=%v, want (false, nil)", checkpointed, err)
+	}
+
+	// Residue from a half-done task: a modified tracked file + a new file.
+	tracked := filepath.Join(dir, "tracked.txt")
+	if err := os.WriteFile(tracked, []byte("v1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := exec.Command("git", "add", "tracked.txt")
+	c.Dir = dir
+	if out, err := c.CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v\n%s", err, out)
+	}
+	c = exec.Command("git", "commit", "-m", "seed tracked")
+	c.Dir = dir
+	if out, err := c.CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v\n%s", err, out)
+	}
+	if err := os.WriteFile(tracked, []byte("half-done edit"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "new.txt"), []byte("partial"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	checkpointed, err := d.CheckpointResidue(feat)
+	if err != nil || !checkpointed {
+		t.Fatalf("dirty tree: checkpointed=%v err=%v, want (true, nil)", checkpointed, err)
+	}
+
+	// Tree is now clean (so a base checkout would not abort) ...
+	clean, err := gitx.IsCleanTree(dir)
+	if err != nil || !clean {
+		t.Fatalf("tree clean=%v err=%v, want clean after checkpoint", clean, err)
+	}
+	// ... and the residue is preserved in a labelled wip commit on this branch.
+	logOut := exec.Command("git", "log", "-1", "--pretty=%s")
+	logOut.Dir = dir
+	subject, err := logOut.CombinedOutput()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(subject), "wip(orq-lite): checkpoint residue") || !strings.Contains(string(subject), "F001") {
+		t.Errorf("checkpoint commit subject = %q, want labelled wip commit for F001", subject)
+	}
+	if b, _ := os.ReadFile(tracked); string(b) != "half-done edit" {
+		t.Errorf("residue not preserved: tracked.txt = %q", b)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "new.txt")); err != nil {
+		t.Errorf("new untracked residue should be committed, not lost: %v", err)
 	}
 }
 

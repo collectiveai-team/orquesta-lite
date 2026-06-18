@@ -86,17 +86,26 @@ func TestQueueStateRoundTrip(t *testing.T) {
 }
 
 type fakeDeps struct {
-	checkouts []string
-	bases     int
-	runs      []string
-	runResult func(f Feature) (Summary, error)
-	publish   func(f Feature) (string, error)
-	saves     int
+	checkouts   []string
+	bases       int
+	runs        []string
+	runResult   func(f Feature) (Summary, error)
+	publish     func(f Feature) (string, error)
+	saves       int
+	checkpoints []string // feature IDs for which CheckpointResidue ran
+	checkpoint  func(f Feature) (bool, error)
 }
 
 func (d *fakeDeps) CheckoutFeatureBranch(branch, base string) error {
 	d.checkouts = append(d.checkouts, branch)
 	return nil
+}
+func (d *fakeDeps) CheckpointResidue(f Feature) (bool, error) {
+	d.checkpoints = append(d.checkpoints, f.ID)
+	if d.checkpoint != nil {
+		return d.checkpoint(f)
+	}
+	return false, nil
 }
 func (d *fakeDeps) CheckoutBase(base string) error { d.bases++; return nil }
 func (d *fakeDeps) RunFeature(ctx context.Context, f Feature) (Summary, error) {
@@ -163,6 +172,44 @@ func TestEngineRun_AllTasksFailedMarksFeatureFailed(t *testing.T) {
 	}
 	if q.Features[0].Status != StatusFailed {
 		t.Errorf("got %+v", q.Features[0])
+	}
+}
+
+func TestEngineRun_CheckpointsResidueBeforeReturningToBase(t *testing.T) {
+	q := &Queue{BaseBranch: "main", Features: ParseFeatures("## A\n\nbody\n")}
+	var checkpointedWhileDirty bool
+	d := &fakeDeps{
+		runResult: func(Feature) (Summary, error) {
+			return Summary{}, fmt.Errorf("all agents failed for role tester")
+		},
+		checkpoint: func(f Feature) (bool, error) {
+			checkpointedWhileDirty = true
+			return true, nil
+		},
+	}
+	if err := Run(context.Background(), q, Config{}, d); err != nil {
+		t.Fatal(err)
+	}
+	if !checkpointedWhileDirty {
+		t.Error("expected CheckpointResidue to run for the failed feature")
+	}
+	// Checkpoint must happen before the base checkout so the tree is clean.
+	if len(d.checkpoints) != 1 || d.bases != 1 {
+		t.Errorf("checkpoints=%v bases=%d, want one checkpoint then one base checkout", d.checkpoints, d.bases)
+	}
+	if q.Features[0].Status != StatusFailed {
+		t.Errorf("feature status = %q, want failed", q.Features[0].Status)
+	}
+}
+
+func TestEngineRun_CheckpointErrorAbortsQueue(t *testing.T) {
+	q := &Queue{BaseBranch: "main", Features: ParseFeatures("## A\n\nbody\n")}
+	d := &fakeDeps{checkpoint: func(Feature) (bool, error) {
+		return false, fmt.Errorf("commit failed")
+	}}
+	err := Run(context.Background(), q, Config{}, d)
+	if err == nil || d.bases != 0 {
+		t.Fatalf("err=%v bases=%d; a checkpoint failure must abort before checking out base", err, d.bases)
 	}
 }
 

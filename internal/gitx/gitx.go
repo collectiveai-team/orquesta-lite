@@ -157,17 +157,3 @@ func CheckoutNewBranch(dir, name, base string) error {
 	_, err := run(dir, "checkout", "-b", name, base)
 	return err
 }
-
-// DiscardWorktree returns the work tree to HEAD, dropping uncommitted changes
-// to tracked files and removing untracked files/directories. Committed work on
-// the current branch is preserved; ignored files (e.g. .orquestalite state,
-// build caches) are left untouched because `clean -fd` omits `-x`. Used to
-// recover from a half-done task's residue so a subsequent branch switch does
-// not abort with "local changes would be overwritten".
-func DiscardWorktree(dir string) error {
-	if _, err := run(dir, "reset", "--hard", "HEAD"); err != nil {
-		return err
-	}
-	_, err := run(dir, "clean", "-fd")
-	return err
-}

@@ -286,9 +286,11 @@ The main loop is intentionally small:
    (`mode: per_task` moves verification inside the fix loop instead.)
 4. Successful tasks are committed one at a time.
 5. Factory mode wraps all of the above per feature, on per-feature branches.
-   When a feature fails mid-task, any uncommitted residue is discarded before
-   returning to the base branch, so the queue never gets stuck on a dirty tree
-   (completed tasks remain committed on the feature branch).
+   When a feature fails mid-task, any uncommitted residue is preserved as a
+   labelled `wip(orq-lite): checkpoint …` commit on the feature branch before
+   returning to base — so the queue never gets stuck on a dirty tree, the work
+   is recoverable (`git checkout <branch>`; `git reset --soft HEAD^`), and
+   completed tasks remain as their own commits.
 
 See [CONTEXT.md](./CONTEXT.md) for the full domain model and
 [docs/adr/](./docs/adr/) for architecture decisions.

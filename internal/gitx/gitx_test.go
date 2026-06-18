@@ -72,58 +72,6 @@ func TestCommitAll_CreatesCommit(t *testing.T) {
 	}
 }
 
-func TestDiscardWorktree_CleansResidueButKeepsCommitsAndIgnored(t *testing.T) {
-	gitOrSkip(t)
-	dir := initRepo(t)
-
-	// A committed (tracked) file, plus a .gitignore so ignored state survives.
-	if err := os.WriteFile(filepath.Join(dir, "tracked.txt"), []byte("v1"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(".orquestalite/\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := CommitAll(dir, "seed"); err != nil {
-		t.Fatal(err)
-	}
-
-	// Residue from a half-done task: a modified tracked file, a new untracked
-	// file, and ignored state that must be preserved.
-	if err := os.WriteFile(filepath.Join(dir, "tracked.txt"), []byte("v2-uncommitted"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "untracked.txt"), []byte("new"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(dir, ".orquestalite"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, ".orquestalite", "state.json"), []byte("{}"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := DiscardWorktree(dir); err != nil {
-		t.Fatal(err)
-	}
-
-	clean, err := IsCleanTree(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !clean {
-		t.Errorf("expected clean tree after DiscardWorktree")
-	}
-	if b, _ := os.ReadFile(filepath.Join(dir, "tracked.txt")); string(b) != "v1" {
-		t.Errorf("tracked.txt = %q, want committed v1", b)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "untracked.txt")); !os.IsNotExist(err) {
-		t.Errorf("untracked residue should be removed")
-	}
-	if _, err := os.Stat(filepath.Join(dir, ".orquestalite", "state.json")); err != nil {
-		t.Errorf("ignored .orquestalite state must survive: %v", err)
-	}
-}
-
 func TestUntrackedFiles_ExcludesIgnoredAndTracked(t *testing.T) {
 	gitOrSkip(t)
 	dir := initRepo(t)
