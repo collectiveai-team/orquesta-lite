@@ -172,6 +172,17 @@ func (d *liveFactoryDeps) CheckoutFeatureBranch(branch, base string) error {
 }
 
 func (d *liveFactoryDeps) CheckoutBase(base string) error {
+	// A failed feature can leave a half-done task's uncommitted edits on the
+	// feature branch (completed tasks are already committed and stay safe on the
+	// branch). Discard that residue first, otherwise `git checkout <base>`
+	// aborts with "local changes would be overwritten" and the queue gets stuck
+	// on the feature branch.
+	if clean, err := gitx.IsCleanTree(d.dir); err == nil && !clean {
+		d.Logf("factory: discarding uncommitted residue before returning to %s", base)
+		if err := gitx.DiscardWorktree(d.dir); err != nil {
+			return fmt.Errorf("discard worktree before checkout %s: %w", base, err)
+		}
+	}
 	return gitx.Checkout(d.dir, base)
 }
 

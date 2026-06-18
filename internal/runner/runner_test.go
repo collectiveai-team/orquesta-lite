@@ -57,6 +57,57 @@ func TestRunAgent_DetectsRateLimitFromStderr(t *testing.T) {
 	}
 }
 
+func TestRunAgent_DetectsInteractiveAuthPrompt(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("posix-only test")
+	}
+	// The real gemini-cli output when it falls back to an OAuth browser flow
+	// with no TTY: an auth-page prompt followed by a cancellation.
+	geminiAuthErr := "Opening authentication page in your browser. Do you want to continue? [Y/n]: " +
+		"Error authenticating: FatalCancellationError: Authentication cancelled by user."
+	res, err := RunAgent(context.Background(), Spec{
+		Cmd:              []string{"sh", "-c", "echo '" + geminiAuthErr + "' 1>&2; exit 42", "{{PROMPT}}"},
+		Prompt:           "x",
+		ResultPath:       filepath.Join(t.TempDir(), "out.json"),
+		Timeout:          5 * time.Second,
+		RateLimitPattern: "rate_?limit",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.AuthFailed {
+		t.Errorf("expected AuthFailed=true for interactive auth prompt")
+	}
+	if res.RateLimited {
+		t.Errorf("auth prompt must not be misclassified as a rate limit")
+	}
+}
+
+func TestDetectAuthPrompt(t *testing.T) {
+	yes := []string{
+		"Opening authentication page in your browser.",
+		"Error authenticating: FatalCancellationError",
+		"Please log in with the CLI first",
+		"not authenticated",
+		"login required",
+	}
+	no := []string{
+		"All 6 tests passed",
+		"Implemented T002 and wrote results",
+		"",
+	}
+	for _, s := range yes {
+		if !detectAuthPrompt(s, "") {
+			t.Errorf("expected auth prompt detected in %q", s)
+		}
+	}
+	for _, s := range no {
+		if detectAuthPrompt(s, "") {
+			t.Errorf("did not expect auth prompt in %q", s)
+		}
+	}
+}
+
 func TestRunAgent_TimeoutKills(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("posix-only test")

@@ -75,15 +75,102 @@ func TestCallRole_AllRateLimitedThenSucceeds(t *testing.T) {
 	}
 }
 
-func TestCallRole_Exhausted(t *testing.T) {
+// TestCallRole_RateLimitLoopsUntilAvailable verifies the loop no longer gives
+// up on a rate-limited agent: it keeps sleeping and retrying until the agent
+// recovers, rather than returning ErrRateLimitExhausted once backoff exceeds
+// MaxBackoff.
+func TestCallRole_RateLimitLoopsUntilAvailable(t *testing.T) {
 	chain := []string{"a1"}
 	cfg := Config{InitialBackoff: time.Millisecond, Factor: 2, MaxBackoff: 4 * time.Millisecond, Now: time.Now}
 	c := NewCaller(cfg)
-	_, _, err := c.Call(context.Background(), chain, func(ctx context.Context, name string) (Outcome, error) {
+	pass := 0
+	_, agent, err := c.Call(context.Background(), chain, func(ctx context.Context, name string) (Outcome, error) {
+		pass++
+		if pass < 5 {
+			return Outcome{RateLimited: true}, nil // limited well past MaxBackoff
+		}
+		return Outcome{ResultExists: true}, nil
+	})
+	if err != nil {
+		t.Fatalf("expected the loop to wait out the rate limit, got %v", err)
+	}
+	if agent != "a1" || pass != 5 {
+		t.Fatalf("agent=%s pass=%d; expected to retry a1 until it recovered", agent, pass)
+	}
+}
+
+// TestCallRole_RateLimitRespectsContextCancel verifies an indefinitely
+// rate-limited agent does not hang forever: ctx cancellation breaks the wait.
+func TestCallRole_RateLimitRespectsContextCancel(t *testing.T) {
+	chain := []string{"a1"}
+	cfg := Config{InitialBackoff: time.Hour, Factor: 2, MaxBackoff: time.Hour, Now: time.Now}
+	c := NewCaller(cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(5 * time.Millisecond)
+		cancel()
+	}()
+	_, _, err := c.Call(ctx, chain, func(ctx context.Context, name string) (Outcome, error) {
 		return Outcome{RateLimited: true}, nil
 	})
-	if !errors.Is(err, ErrRateLimitExhausted) {
-		t.Fatalf("expected ErrRateLimitExhausted, got %v", err)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+}
+
+// TestCallRole_WaitsForRateLimitedWhenFallbacksBroken is the regression for the
+// reported failure: a primary that is rate-limited plus a fallback that is
+// non-recoverably broken should wait for the primary to recover, not fail the
+// role.
+func TestCallRole_WaitsForRateLimitedWhenFallbacksBroken(t *testing.T) {
+	chain := []string{"codex", "gemini"}
+	cfg := Config{InitialBackoff: time.Millisecond, Factor: 2, MaxBackoff: 4 * time.Millisecond, Now: time.Now}
+	c := NewCaller(cfg)
+	codexCalls := 0
+	_, agent, err := c.Call(context.Background(), chain, func(ctx context.Context, name string) (Outcome, error) {
+		switch name {
+		case "codex":
+			codexCalls++
+			if codexCalls < 3 {
+				return Outcome{RateLimited: true}, nil
+			}
+			return Outcome{ResultExists: true}, nil // recovers
+		default: // gemini: permanently broken (auth failure)
+			return Outcome{ShouldFallback: true, FallbackReason: "result_missing"}, nil
+		}
+	})
+	if err != nil {
+		t.Fatalf("expected to wait for codex to recover, got %v", err)
+	}
+	if agent != "codex" {
+		t.Fatalf("expected codex to win after recovery, got %s", agent)
+	}
+}
+
+// TestCallRole_ResetAtKeysCooldown verifies a parsed ResetAt drives the
+// cooldown expiry (so the loop sleeps until the real reset, not now+backoff).
+func TestCallRole_ResetAtKeysCooldown(t *testing.T) {
+	nowT := time.Unix(1_700_000_000, 0)
+	reset := nowT.Add(90 * time.Minute)
+	chain := []string{"a", "b"}
+	cfg := Config{
+		InitialBackoff: time.Second,
+		Factor:         2,
+		MaxBackoff:     30 * time.Minute,
+		Now:            func() time.Time { return nowT },
+	}
+	c := NewCaller(cfg)
+	_, agentUsed, err := c.Call(context.Background(), chain, func(ctx context.Context, name string) (Outcome, error) {
+		if name == "a" {
+			return Outcome{RateLimited: true, ShouldFallback: true, FallbackReason: "rate_limit", ResetAt: reset}, nil
+		}
+		return Outcome{ResultExists: true}, nil
+	})
+	if err != nil || agentUsed != "b" {
+		t.Fatalf("agent=%s err=%v; expected fallback to b", agentUsed, err)
+	}
+	if cd := c.cooldown["a"]; !cd.Equal(reset) {
+		t.Fatalf("cooldown for a = %v, want ResetAt %v", cd, reset)
 	}
 }
 

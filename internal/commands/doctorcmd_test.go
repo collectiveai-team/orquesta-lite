@@ -7,6 +7,41 @@ import (
 	"testing"
 )
 
+func TestProviderHasUsableCredentials(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("GEMINI_API_KEY", "")
+
+	// A provider we have no credential profile for: assume usable (cannot tell).
+	if !providerHasUsableCredentials("mystery-provider") {
+		t.Errorf("unknown provider should be assumed usable")
+	}
+
+	// No env var and no cached login: not usable (this is the gemini case that
+	// caused interactive auth prompts mid-run).
+	if providerHasUsableCredentials("gemini") {
+		t.Errorf("expected gemini unusable with no env var and no cached login")
+	}
+
+	// API-key env var present: usable headless.
+	t.Setenv("GEMINI_API_KEY", "test-key")
+	if !providerHasUsableCredentials("gemini") {
+		t.Errorf("expected gemini usable via GEMINI_API_KEY")
+	}
+	t.Setenv("GEMINI_API_KEY", "")
+
+	// Cached login file present: usable.
+	if err := os.MkdirAll(filepath.Join(home, ".gemini"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".gemini", "oauth_creds.json"), []byte("{}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !providerHasUsableCredentials("gemini") {
+		t.Errorf("expected gemini usable via cached login file")
+	}
+}
+
 func doctorLevels(checks []check) map[string]checkLevel {
 	m := map[string]checkLevel{}
 	for _, c := range checks {

@@ -34,10 +34,15 @@ type Spec struct {
 
 // Result holds the captured output and derived state after RunAgent returns.
 type Result struct {
-	Stdout       string
-	Stderr       string
-	TimedOut     bool
-	RateLimited  bool
+	Stdout      string
+	Stderr      string
+	TimedOut    bool
+	RateLimited bool
+	// AuthFailed is set when the agent CLI tried to authenticate interactively
+	// (e.g. opened a browser OAuth flow) instead of running headless — a sign
+	// its cached credentials are missing or expired. Such an agent will keep
+	// failing this session, so it is treated as non-recoverable and skipped.
+	AuthFailed   bool
 	ResultExists bool
 	ExitCode     int
 	Duration     time.Duration
@@ -193,6 +198,7 @@ func RunAgent(ctx context.Context, s Spec) (*Result, error) {
 	} else {
 		res.RateLimited = detectRateLimit(s.RateLimitPattern, res.Stdout, res.Stderr)
 	}
+	res.AuthFailed = detectAuthPrompt(res.Stdout, res.Stderr)
 
 	if _, statErr := os.Stat(s.ResultPath); statErr == nil {
 		res.ResultExists = true
@@ -290,6 +296,17 @@ func detectRateLimit(pattern, stdout, stderr string) bool {
 	}
 	re, errRe := regexp.Compile("(?i)" + pattern)
 	return errRe == nil && (re.MatchString(stderr) || re.MatchString(stdout))
+}
+
+// authPromptRe matches the signatures an agent CLI emits when it falls back to
+// interactive authentication (no valid headless credential). Seen with
+// gemini-cli: an OAuth browser flow plus a "[Y/n]" continue prompt that, with
+// no TTY, resolves to a cancellation. Conservative on purpose — these phrases
+// do not appear in normal successful output.
+var authPromptRe = regexp.MustCompile(`(?i)opening authentication page|authentication cancelled|fatalcancellationerror|error authenticating|please (?:run .*)?log ?in|not authenticated|login required|reauthenticate`)
+
+func detectAuthPrompt(stdout, stderr string) bool {
+	return authPromptRe.MatchString(stderr) || authPromptRe.MatchString(stdout)
 }
 
 func providerErrorText(res *Result) string {

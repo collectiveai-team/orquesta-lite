@@ -197,6 +197,21 @@ func usedProviders(cfg *config.Config) []string {
 	return out
 }
 
+// providerHasUsableCredentials reports whether a provider can authenticate
+// non-interactively: either its API-key env var is set, or a cached login file
+// exists. Providers without a known credential profile are assumed usable (we
+// cannot tell). Shared by the doctor check and the run-time static preflight.
+func providerHasUsableCredentials(provider string) bool {
+	cred, ok := credentialPaths[provider]
+	if !ok {
+		return true
+	}
+	if os.Getenv(cred.envVar) != "" {
+		return true
+	}
+	return firstExistingHomeFile(cred.files) != ""
+}
+
 func firstExistingHomeFile(rels []string) string {
 	home, err := os.UserHomeDir()
 	if err != nil {

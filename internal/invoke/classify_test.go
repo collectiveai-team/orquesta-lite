@@ -14,6 +14,17 @@ func TestClassifyFallbackDisposition(t *testing.T) {
 		wantReason   string
 	}{
 		{
+			name: "auth failure takes precedence over everything",
+			result: &runner.Result{
+				AuthFailed:   true,
+				RateLimited:  true,
+				TimedOut:     true,
+				ResultExists: false,
+			},
+			wantFallback: true,
+			wantReason:   "auth_failed",
+		},
+		{
 			name: "rate limit takes precedence",
 			result: &runner.Result{
 				RateLimited:  true,
