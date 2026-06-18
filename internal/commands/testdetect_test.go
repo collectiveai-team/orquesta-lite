@@ -14,7 +14,8 @@ func TestDetectTestCommand(t *testing.T) {
 	}{
 		{"python pyproject", map[string]string{"pyproject.toml": ""}, "uv run pytest -q"},
 		{"python requirements", map[string]string{"requirements.txt": ""}, "pytest -q"},
-		{"node", map[string]string{"package.json": "{}"}, "npm test --silent"},
+		{"node with test script", map[string]string{"package.json": "{\"scripts\":{\"test\":\"vitest run\"}}"}, "npm test --silent"},
+		{"node without test script falls through", map[string]string{"package.json": "{\"scripts\":{\"build\":\"next build\"}}"}, ""},
 		{"go", map[string]string{"go.mod": "module x"}, "go test ./..."},
 		{"rust", map[string]string{"Cargo.toml": ""}, "cargo test"},
 		{"makefile target wins", map[string]string{"Makefile": "test:\n\tgo test ./...\n", "go.mod": "module x"}, "make test"},

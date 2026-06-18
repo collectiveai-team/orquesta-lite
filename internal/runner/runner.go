@@ -301,9 +301,15 @@ func detectRateLimit(pattern, stdout, stderr string) bool {
 // authPromptRe matches the signatures an agent CLI emits when it falls back to
 // interactive authentication (no valid headless credential). Seen with
 // gemini-cli: an OAuth browser flow plus a "[Y/n]" continue prompt that, with
-// no TTY, resolves to a cancellation. Conservative on purpose — these phrases
-// do not appear in normal successful output.
-var authPromptRe = regexp.MustCompile(`(?i)opening authentication page|authentication cancelled|fatalcancellationerror|error authenticating|please (?:run .*)?log ?in|not authenticated|login required|reauthenticate`)
+// no TTY, resolves to a cancellation.
+//
+// Kept deliberately narrow and CLI-specific. Broad phrases like "not
+// authenticated" or "login required" are intentionally NOT matched: they appear
+// in ordinary application output (e.g. a FastAPI 401 body is literally
+// {"detail":"Not authenticated"}) and in code the agent is editing, which would
+// misclassify a perfectly healthy agent. As a second guard, classify only
+// treats a match as auth_failed when the agent wrote no result (see classify).
+var authPromptRe = regexp.MustCompile(`(?i)opening authentication page|authentication cancelled|fatalcancellationerror|reauthenticate|run (?:codex|claude|gemini) login`)
 
 func detectAuthPrompt(stdout, stderr string) bool {
 	return authPromptRe.MatchString(stderr) || authPromptRe.MatchString(stdout)

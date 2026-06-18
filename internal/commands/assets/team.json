@@ -31,7 +31,7 @@
       ],
       "prompt": "prompts/parser.md",
       "result_path": ".orquestalite/results/parser.json",
-      "timeout_seconds": 300,
+      "timeout_seconds": 600,
       "decompose_prompt": "prompts/parser-decompose.md"
     },
     "coder": {
@@ -41,7 +41,7 @@
       ],
       "prompt": "prompts/coder.md",
       "result_path": ".orquestalite/results/coder.json",
-      "timeout_seconds": 900
+      "timeout_seconds": 1800
     },
     "tester": {
       "agents": [
@@ -51,7 +51,7 @@
       ],
       "prompt": "prompts/tester.md",
       "result_path": ".orquestalite/results/tester.json",
-      "timeout_seconds": 600
+      "timeout_seconds": 900
     },
     "critic": {
       "agents": [
@@ -60,7 +60,7 @@
       ],
       "prompt": "prompts/critic.md",
       "result_path": ".orquestalite/results/critic.json",
-      "timeout_seconds": 300
+      "timeout_seconds": 600
     },
     "verifier": {
       "agents": [
@@ -80,7 +80,7 @@
       ],
       "prompt": "prompts/reviewer.md",
       "result_path": ".orquestalite/results/reviewer.json",
-      "timeout_seconds": 600
+      "timeout_seconds": 900
     }
   },
   "limits": {
