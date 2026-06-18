@@ -140,6 +140,22 @@ project root:
 ./orq-lite factory          # uses ./feature.md if present, dashboard on
 ```
 
+Plain `orq-lite factory` (no args) resumes the queue but re-plans each feature
+it runs — a `done`/`failed` feature is skipped, and a resumed feature starts
+from a fresh task list. To continue a feature that stopped partway through
+**without** redoing finished tasks, use `--resume`:
+
+```bash
+./orq-lite factory --resume   # retry failed features; reuse the existing
+                              # task list (skip completed tasks, no re-plan)
+```
+
+`--resume` makes `failed` features runnable again and, for the feature that owns
+the on-disk `tasks.json`, continues that list so committed tasks are skipped
+rather than replanned. A feature that fails again is attempted once and then
+passed over (no infinite retry). Features other than the task-list owner still
+plan fresh.
+
 The dashboard can also run standalone (e.g. pointed at a container's mount):
 
 ```bash
@@ -155,6 +171,7 @@ orq-lite plan <plan.md> --append
 orq-lite run                   run review/task/fix loops
 orq-lite factory <features.md> develop each '## ' feature on its own branch
 orq-lite factory               resume an interrupted queue (--status, --force, --pr, --serve)
+orq-lite factory --resume      continue the queue without re-planning: retry failed features and skip already-done tasks
 orq-lite serve [--addr A]      web dashboard with live SSE event stream
 orq-lite doctor                preflight git/team.json/CLIs/credentials before spending
 orq-lite cost                  per-task spend rollup (sessions priced via agtop)

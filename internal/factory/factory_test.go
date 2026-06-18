@@ -94,6 +94,7 @@ type fakeDeps struct {
 	saves       int
 	checkpoints []string // feature IDs for which CheckpointResidue ran
 	checkpoint  func(f Feature) (bool, error)
+	reusePlans  map[string]bool // feature ID -> reusePlan passed to RunFeature
 }
 
 func (d *fakeDeps) CheckoutFeatureBranch(branch, base string) error {
@@ -108,8 +109,12 @@ func (d *fakeDeps) CheckpointResidue(f Feature) (bool, error) {
 	return false, nil
 }
 func (d *fakeDeps) CheckoutBase(base string) error { d.bases++; return nil }
-func (d *fakeDeps) RunFeature(ctx context.Context, f Feature) (Summary, error) {
+func (d *fakeDeps) RunFeature(ctx context.Context, f Feature, reusePlan bool) (Summary, error) {
 	d.runs = append(d.runs, f.ID)
+	if d.reusePlans == nil {
+		d.reusePlans = map[string]bool{}
+	}
+	d.reusePlans[f.ID] = reusePlan
 	if d.runResult != nil {
 		return d.runResult(f)
 	}
@@ -210,6 +215,63 @@ func TestEngineRun_CheckpointErrorAbortsQueue(t *testing.T) {
 	err := Run(context.Background(), q, Config{}, d)
 	if err == nil || d.bases != 0 {
 		t.Fatalf("err=%v bases=%d; a checkpoint failure must abort before checking out base", err, d.bases)
+	}
+}
+
+func TestEngineRun_ResumeReusesPlanForOwnerAndRetriesFailed(t *testing.T) {
+	// F001 failed earlier and owns the on-disk task list; F002 is pending.
+	q := &Queue{
+		BaseBranch:       "main",
+		Features:         ParseFeatures("## A\n\nbody\n\n## B\n\nbody\n"),
+		PlannedFeatureID: "F001",
+	}
+	q.Features[0].Status = StatusFailed
+	d := &fakeDeps{}
+	if err := Run(context.Background(), q, Config{Resume: true}, d); err != nil {
+		t.Fatal(err)
+	}
+	// Both features run: the failed one (retried) and the pending one.
+	if fmt.Sprint(d.runs) != "[F001 F002]" {
+		t.Fatalf("runs = %v, want [F001 F002]", d.runs)
+	}
+	// F001 owns tasks.json -> reuse its plan; F002 is fresh -> re-plan.
+	if !d.reusePlans["F001"] {
+		t.Errorf("F001 should reuse its existing task list on resume")
+	}
+	if d.reusePlans["F002"] {
+		t.Errorf("F002 (never planned) must not reuse a plan")
+	}
+}
+
+func TestEngineRun_WithoutResumeSkipsFailedFeature(t *testing.T) {
+	q := &Queue{BaseBranch: "main", Features: ParseFeatures("## A\n\nbody\n\n## B\n\nbody\n")}
+	q.Features[0].Status = StatusFailed
+	d := &fakeDeps{}
+	if err := Run(context.Background(), q, Config{}, d); err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(d.runs) != "[F002]" {
+		t.Fatalf("runs = %v, want only [F002] (failed F001 is terminal without --resume)", d.runs)
+	}
+}
+
+func TestEngineRun_ResumeDoesNotLoopOnRepeatedFailure(t *testing.T) {
+	// A feature that keeps failing must be attempted once and then passed over,
+	// not re-selected forever.
+	q := &Queue{BaseBranch: "main", Features: ParseFeatures("## A\n\nbody\n\n## B\n\nbody\n")}
+	q.Features[0].Status = StatusFailed
+	d := &fakeDeps{runResult: func(f Feature) (Summary, error) {
+		if f.ID == "F001" {
+			return Summary{}, errors.New("still broken")
+		}
+		return Summary{TasksDone: 1}, nil
+	}}
+	if err := Run(context.Background(), q, Config{Resume: true}, d); err != nil {
+		t.Fatal(err)
+	}
+	// F001 attempted exactly once despite re-failing; F002 still gets its turn.
+	if fmt.Sprint(d.runs) != "[F001 F002]" {
+		t.Fatalf("runs = %v, want [F001 F002] (no infinite retry of F001)", d.runs)
 	}
 }
 

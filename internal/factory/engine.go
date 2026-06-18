@@ -21,6 +21,11 @@ type Config struct {
 	// queue state is preserved, so raising the budget and resuming continues
 	// where it stopped.
 	BudgetUSD float64
+	// Resume continues the existing queue without re-planning. It makes failed
+	// features runnable again and, for the feature that owns the on-disk
+	// tasks.json (PlannedFeatureID), reuses that task list so completed tasks
+	// are skipped instead of replanned from scratch.
+	Resume bool
 }
 
 // Deps abstracts everything the engine needs from the outside world so the
@@ -37,8 +42,10 @@ type Deps interface {
 	CheckpointResidue(f Feature) (bool, error)
 	// CheckoutBase returns the work tree to the base branch.
 	CheckoutBase(base string) error
-	// RunFeature plans and runs one feature on the current branch.
-	RunFeature(ctx context.Context, f Feature) (Summary, error)
+	// RunFeature plans and runs one feature on the current branch. When
+	// reusePlan is true it skips the re-plan and continues the existing
+	// tasks.json (resume), so already-completed tasks are not redone.
+	RunFeature(ctx context.Context, f Feature, reusePlan bool) (Summary, error)
 	// PublishFeature optionally opens a pull request for a finished feature
 	// branch. Return "" (no error) when publishing is disabled. Errors are
 	// logged and never fail the feature — the branch still exists locally.
@@ -55,6 +62,10 @@ type Deps interface {
 // abort the whole factory run. The work tree is returned to the base branch
 // after every feature.
 func Run(ctx context.Context, q *Queue, cfg Config, d Deps) error {
+	// attempted guards against re-picking a feature already run this invocation
+	// — without it, --resume would re-select a feature that fails again on every
+	// pass and loop forever.
+	attempted := map[string]bool{}
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -65,27 +76,39 @@ func Run(ctx context.Context, q *Queue, cfg Config, d Deps) error {
 				return nil
 			}
 		}
-		f := q.NextRunnable()
+		f := q.NextRunnable(cfg.Resume, attempted)
 		if f == nil {
 			d.Logf("factory: queue drained (%s)", Counts(q))
 			return nil
 		}
+		attempted[f.ID] = true
+
+		// Reuse the on-disk task list only when resuming the feature that owns
+		// it — otherwise plan fresh (a different feature, or a normal run).
+		reusePlan := cfg.Resume && f.ID == q.PlannedFeatureID
 
 		now := time.Now().UTC()
 		f.Status = StatusInProgress
 		if f.StartedAt == nil {
 			f.StartedAt = &now
 		}
+		// The feature about to run owns tasks.json from here on (whether it
+		// reuses the existing list or plans a fresh one).
+		q.PlannedFeatureID = f.ID
 		if err := d.SaveState(q); err != nil {
 			return err
 		}
 
-		d.Logf("factory: %s %q -> branch %s", f.ID, f.Title, f.Branch)
+		if reusePlan {
+			d.Logf("factory: %s %q -> branch %s (resuming existing task list, no re-plan)", f.ID, f.Title, f.Branch)
+		} else {
+			d.Logf("factory: %s %q -> branch %s", f.ID, f.Title, f.Branch)
+		}
 		if err := d.CheckoutFeatureBranch(f.Branch, q.BaseBranch); err != nil {
 			return fmt.Errorf("checkout %s: %w", f.Branch, err)
 		}
 
-		sum, runErr := d.RunFeature(ctx, *f)
+		sum, runErr := d.RunFeature(ctx, *f, reusePlan)
 		f.TasksDone, f.TasksFailed, f.TasksOther = sum.TasksDone, sum.TasksFailed, sum.TasksOther
 		f.CostUSD = sum.CostUSD
 		end := time.Now().UTC()

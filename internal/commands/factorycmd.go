@@ -26,6 +26,7 @@ type FactoryOptions struct {
 	Force        bool   // replace an existing unfinished queue
 	StatusOnly   bool   // print the queue and exit
 	CreatePR     bool   // push each finished feature branch and open a PR via gh
+	Resume       bool   // continue the existing queue without re-planning (includes failed features)
 	LogFormat    eventlog.Format
 	Out          io.Writer
 }
@@ -60,7 +61,7 @@ func Factory(ctx context.Context, opts FactoryOptions) error {
 
 	// Budget is optional and read from team.json; a missing or invalid
 	// team.json surfaces later (and more precisely) when the run starts.
-	fcfg := factory.Config{}
+	fcfg := factory.Config{Resume: opts.Resume}
 	if cfg, cfgErr := config.Load(filepath.Join(opts.ProjectDir, "team.json")); cfgErr == nil {
 		fcfg.BudgetUSD = cfg.Limits.FactoryBudgetUSD
 	}
@@ -93,7 +94,7 @@ func loadOrCreateQueue(opts FactoryOptions) (*factory.Queue, error) {
 		}
 	}
 
-	if existing != nil && existing.NextRunnable() != nil && !opts.Force {
+	if existing != nil && existing.NextRunnable(false, nil) != nil && !opts.Force {
 		return nil, errors.New("an unfinished factory queue exists: resume it with `orq-lite factory` (no args) or replace it with --force")
 	}
 
@@ -202,25 +203,29 @@ func (d *liveFactoryDeps) Logf(format string, args ...any) {
 }
 
 // RunFeature plans the feature and drives the review loop on the current
-// (feature) branch. Each feature starts from a fresh tasks.json; the previous
-// one is archived under .orquestalite/archive/.
-func (d *liveFactoryDeps) RunFeature(ctx context.Context, f factory.Feature) (factory.Summary, error) {
-	if err := d.archiveStaleTasks(); err != nil {
-		return factory.Summary{}, err
-	}
-
-	planPath := filepath.Join(d.dir, ".orquestalite", "factory-plan-"+f.ID+".md")
-	if err := os.WriteFile(planPath, []byte(f.Plan), 0o644); err != nil {
-		return factory.Summary{}, err
-	}
-
+// (feature) branch. Normally each feature starts from a fresh tasks.json (the
+// previous one is archived under .orquestalite/archive/). When reusePlan is true
+// (--resume) and a usable tasks.json already exists, the re-plan is skipped and
+// the existing task list is continued, so already-completed tasks are not redone.
+func (d *liveFactoryDeps) RunFeature(ctx context.Context, f factory.Feature, reusePlan bool) (factory.Summary, error) {
 	start := time.Now().UTC()
 	if f.StartedAt != nil {
 		start = *f.StartedAt
 	}
 
-	if err := PlanWithLiveCaller(ctx, d.dir, planPath, false); err != nil {
-		return factory.Summary{}, fmt.Errorf("plan: %w", err)
+	if reusePlan && d.tasksFileExists() {
+		d.Logf("factory: %s reusing existing task list (skipping plan)", f.ID)
+	} else {
+		if err := d.archiveStaleTasks(); err != nil {
+			return factory.Summary{}, err
+		}
+		planPath := filepath.Join(d.dir, ".orquestalite", "factory-plan-"+f.ID+".md")
+		if err := os.WriteFile(planPath, []byte(f.Plan), 0o644); err != nil {
+			return factory.Summary{}, err
+		}
+		if err := PlanWithLiveCaller(ctx, d.dir, planPath, false); err != nil {
+			return factory.Summary{}, fmt.Errorf("plan: %w", err)
+		}
 	}
 
 	runErr := Run(ctx, RunOptions{
@@ -280,6 +285,12 @@ func (d *liveFactoryDeps) PublishFeature(ctx context.Context, f factory.Feature,
 		return "", fmt.Errorf("gh pr create: %w\n%s", err, out)
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+// tasksFileExists reports whether a tasks.json is present to resume from.
+func (d *liveFactoryDeps) tasksFileExists() bool {
+	_, err := os.Stat(filepath.Join(d.dir, ".orquestalite", "tasks.json"))
+	return err == nil
 }
 
 func (d *liveFactoryDeps) archiveStaleTasks() error {

@@ -50,18 +50,34 @@ type Feature struct {
 type Queue struct {
 	BaseBranch string    `json:"base_branch"`
 	Features   []Feature `json:"features"`
+	// PlannedFeatureID is the feature whose task list currently lives at
+	// .orquestalite/tasks.json (there is only one at a time). Used by --resume
+	// to tell whether the on-disk tasks.json belongs to the feature being
+	// resumed, so it can continue that list instead of re-planning.
+	PlannedFeatureID string `json:"planned_feature_id,omitempty"`
 }
 
-// NextRunnable returns the first feature that still needs work: an
-// in_progress one (interrupted run) takes priority over pending ones.
-func (q *Queue) NextRunnable() *Feature {
+// NextRunnable returns the first feature that still needs work, in queue order.
+// An in_progress feature (interrupted run) always takes priority. Pending
+// features are runnable; failed features are too only when resumeFailed is set
+// (the --resume path retries them). Features whose ID is in skip are passed
+// over — the engine uses this to avoid re-picking a feature it already
+// attempted this run (so a feature that keeps failing can't loop forever).
+func (q *Queue) NextRunnable(resumeFailed bool, skip map[string]bool) *Feature {
 	for i := range q.Features {
+		if skip[q.Features[i].ID] {
+			continue
+		}
 		if q.Features[i].Status == StatusInProgress {
 			return &q.Features[i]
 		}
 	}
 	for i := range q.Features {
-		if q.Features[i].Status == StatusPending {
+		if skip[q.Features[i].ID] {
+			continue
+		}
+		s := q.Features[i].Status
+		if s == StatusPending || (resumeFailed && s == StatusFailed) {
 			return &q.Features[i]
 		}
 	}
