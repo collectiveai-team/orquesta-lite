@@ -12,9 +12,11 @@ import (
 var reRelative = regexp.MustCompile(`(?i)(?:try again in|retry after|retry-after:?|retry in|resets? in|available in|wait)\s*(\d+)\s*(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h)?`)
 
 // reClock matches absolute clock hints such as "try again at 4:30 PM",
-// "at 16:30", or "at 4 PM". A bare "at 4" (no minutes and no am/pm) is too
-// ambiguous and is rejected by ParseResetTime.
-var reClock = regexp.MustCompile(`(?i)\bat\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b`)
+// "at 16:30", "at 4 PM", or "resets 7pm" / "resets at 7 pm" (Claude's session
+// limit phrases it as "resets 7pm"). The lead-in is "at" or "reset[s]"
+// (optionally "reset at"). A bare "at 4" / "resets 7" (no minutes and no am/pm)
+// is too ambiguous and is rejected by ParseResetTime.
+var reClock = regexp.MustCompile(`(?i)(?:\bat|\breset(?:s)?(?:\s+at)?)\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?`)
 
 // ParseResetTime extracts a rate-limit reset time from agent output, relative
 // to now. It recognises relative hints ("try again in 30 seconds") and

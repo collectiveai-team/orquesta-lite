@@ -4,12 +4,13 @@
       "provider": "claude",
       "model": "claude-sonnet-4-6",
       "dangerously_skip_permissions": true,
-      "rate_limit_pattern": "rate_?limit|429|quota"
+      "rate_limit_pattern": "(?i)(rate_?limit|429|quota|session limit|usage limit)"
     },
     "claude_opus": {
       "provider": "claude",
       "model": "claude-opus-4-8",
-      "dangerously_skip_permissions": true
+      "dangerously_skip_permissions": true,
+      "rate_limit_pattern": "(?i)(rate_?limit|429|quota|session limit|usage limit)"
     },
     "codex_gpt5": {
       "provider": "codex",
@@ -92,7 +93,7 @@
     "initial_seconds": 30,
     "factor": 2,
     "max_seconds": 1800,
-    "default_pattern": "rate_?limit|429|quota|too many requests"
+    "default_pattern": "(?i)(rate_?limit|429|quota|too many requests|session limit|usage limit)"
   },
   "full_test_command": "go test ./...",
   "lint_command": ""
