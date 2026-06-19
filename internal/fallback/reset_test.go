@@ -34,16 +34,15 @@ func TestParseResetTime(t *testing.T) {
 			wantUTC: time.Date(2026, 6, 16, 19, 0, 0, 0, time.Local),
 		},
 		{
-			name:    "resets at with space and am/pm",
-			text:    "quota exceeded; resets at 6 am",
+			name:    "resets at with space and am/pm (future)",
+			text:    "quota exceeded; resets at 6 pm",
 			wantOK:  true,
-			wantUTC: time.Date(2026, 6, 17, 6, 0, 0, 0, time.Local), // 6am already past 13:50 -> next day
+			wantUTC: time.Date(2026, 6, 16, 18, 0, 0, 0, time.Local),
 		},
 		{
-			name:    "clock already past rolls to next day",
-			text:    "try again at 9:00 AM",
-			wantOK:  true,
-			wantUTC: time.Date(2026, 6, 17, 9, 0, 0, 0, time.Local),
+			name:   "clock already past yields no reset (caller uses backoff, not +24h)",
+			text:   "try again at 9:00 AM",
+			wantOK: false,
 		},
 		{
 			name:    "relative seconds",
@@ -93,5 +92,22 @@ func TestParseResetTime(t *testing.T) {
 				t.Fatalf("reset = %v, want %v", got, tc.wantUTC)
 			}
 		})
+	}
+}
+
+// TestParseResetTime_JustPassedNotRolledToTomorrow is the regression for the
+// ~24h-wait bug: re-reading "try again at 8:07 PM" a few seconds after 8:07 PM
+// must report no reset (so the caller backs off and retries soon), not roll the
+// reset forward a full day.
+func TestParseResetTime_JustPassedNotRolledToTomorrow(t *testing.T) {
+	justAfter := time.Date(2026, 6, 16, 20, 7, 3, 0, time.Local) // 8:07:03 PM
+	if got, ok := ParseResetTime("You've hit your usage limit ... try again at 8:07 PM.", justAfter); ok {
+		t.Fatalf("expected no reset for a just-passed time, got %v (~%s away)", got, got.Sub(justAfter))
+	}
+	// Sanity: the same message a couple hours BEFORE the reset is still used.
+	before := time.Date(2026, 6, 16, 18, 20, 0, 0, time.Local)
+	got, ok := ParseResetTime("try again at 8:07 PM.", before)
+	if !ok || !got.Equal(time.Date(2026, 6, 16, 20, 7, 0, 0, time.Local)) {
+		t.Fatalf("future reset should be 20:07, got ok=%v %v", ok, got)
 	}
 }

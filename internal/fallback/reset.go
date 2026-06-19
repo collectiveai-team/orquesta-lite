@@ -74,7 +74,13 @@ func ParseResetTime(text string, now time.Time) (time.Time, bool) {
 		}
 		t := time.Date(now.Year(), now.Month(), now.Day(), hour, minute, 0, 0, now.Location())
 		if !t.After(now) {
-			t = t.Add(24 * time.Hour)
+			// The clock time has already passed. Do NOT roll it to the next day:
+			// rate-limit messages quote a fixed wall-clock ("try again at 8:07
+			// PM"), so re-reading the same message a moment after the reset would
+			// otherwise schedule a ~24h wait. A just-passed reset means the limit
+			// should be lifting now — report "no reset" so the caller falls back
+			// to short exponential backoff and retries until it actually clears.
+			return time.Time{}, false
 		}
 		return t, true
 	}
