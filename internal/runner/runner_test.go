@@ -89,6 +89,9 @@ func TestDetectAuthPrompt(t *testing.T) {
 		"FatalCancellationError: Authentication cancelled by user.",
 		"Please run codex login to continue",
 		"You need to reauthenticate",
+		// gemini free OAuth tier discontinued — unrecoverable, must bench.
+		"Error authenticating: IneligibleTierError: This client is no longer supported for Gemini Code Assist for individuals.",
+		"reasonCode: 'UNSUPPORTED_CLIENT'",
 	}
 	no := []string{
 		"All 6 tests passed",
