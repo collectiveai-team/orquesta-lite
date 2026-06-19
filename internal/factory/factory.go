@@ -50,11 +50,37 @@ type Feature struct {
 type Queue struct {
 	BaseBranch string    `json:"base_branch"`
 	Features   []Feature `json:"features"`
-	// PlannedFeatureID is the feature whose task list currently lives at
-	// .orquestalite/tasks.json (there is only one at a time). Used by --resume
-	// to tell whether the on-disk tasks.json belongs to the feature being
-	// resumed, so it can continue that list instead of re-planning.
-	PlannedFeatureID string `json:"planned_feature_id,omitempty"`
+	// PlannedFeatures records every feature whose task list has been decomposed
+	// at least once (its tasks-<ID>.json exists). Reuse is the default: a feature
+	// in this set is NOT re-planned on a retry/resume — its persisted task list
+	// is continued so completed tasks are skipped. Only --replan forces a fresh
+	// decomposition. A nil map means "nothing planned yet" (FeatureIsPlanned is
+	// nil-safe), which is also what an old factory.json without this field loads
+	// as — those features fall back to a fresh plan, the safe default.
+	PlannedFeatures map[string]bool `json:"planned_features,omitempty"`
+}
+
+// FeatureIsPlanned reports whether feature id has already been decomposed (its
+// tasks-<id>.json was written at least once). Nil-safe.
+func (q *Queue) FeatureIsPlanned(id string) bool {
+	return q.PlannedFeatures[id]
+}
+
+// MarkFeaturePlanned records that feature id now owns a persisted task list.
+// Lazily initialises the map.
+func (q *Queue) MarkFeaturePlanned(id string) {
+	if q.PlannedFeatures == nil {
+		q.PlannedFeatures = map[string]bool{}
+	}
+	q.PlannedFeatures[id] = true
+}
+
+// TasksFilePath is the per-feature task list path: .orquestalite/tasks-<id>.json.
+// Each feature persists its decomposition here so retries reuse it instead of
+// re-planning. The canonical .orquestalite/tasks.json is a scratch working copy
+// of the feature currently running.
+func TasksFilePath(projectDir, featureID string) string {
+	return filepath.Join(projectDir, ".orquestalite", "tasks-"+featureID+".json")
 }
 
 // NextRunnable returns the first feature that still needs work, in queue order.
@@ -112,20 +138,56 @@ func Save(projectDir string, q *Queue) error {
 	return os.WriteFile(path, append(raw, '\n'), 0o644)
 }
 
+// FeatureDraft is a title+plan pair before queue metadata (ID, branch, status)
+// is assigned. Both the heading-split fallback (ParseFeatures) and the LLM
+// planner produce drafts, then hand them to NewFeatures for uniform numbering.
+type FeatureDraft struct {
+	Title string
+	Plan  string
+}
+
+// NewFeatures turns drafts into queued features, assigning sequential IDs
+// (F001, F002, ...), pending status, and a branch name. Drafts with an empty
+// plan are dropped; an empty title falls back to the plan's first non-empty line.
+func NewFeatures(drafts []FeatureDraft) []Feature {
+	feats := make([]Feature, 0, len(drafts))
+	for _, d := range drafts {
+		plan := strings.TrimSpace(d.Plan)
+		if plan == "" {
+			continue
+		}
+		title := strings.TrimSpace(d.Title)
+		if title == "" {
+			title = firstNonEmptyLine(plan)
+		}
+		feats = append(feats, Feature{Title: title, Plan: plan})
+	}
+	for i := range feats {
+		feats[i].ID = fmt.Sprintf("F%03d", i+1)
+		feats[i].Status = StatusPending
+		feats[i].Branch = fmt.Sprintf("factory/%03d-%s", i+1, Slug(feats[i].Title))
+	}
+	return feats
+}
+
 // ParseFeatures splits a markdown features file into one Feature per level-2
 // heading ("## Title"). Text before the first heading is ignored (treated as
 // preamble). A file without any level-2 heading becomes a single feature
 // titled after its first non-empty line.
+//
+// This is the heading-split fallback. The factory's primary path is the LLM
+// planner (vertical-slice extraction); ParseFeatures is retained for the
+// offline/test path and as a structural baseline.
 func ParseFeatures(markdown string) []Feature {
 	lines := strings.Split(markdown, "\n")
-	var feats []Feature
-	var cur *Feature
+	var drafts []FeatureDraft
+	var cur *FeatureDraft
 
 	flush := func() {
 		if cur != nil {
 			cur.Plan = strings.TrimSpace(cur.Plan)
 			if cur.Plan != "" {
-				feats = append(feats, *cur)
+				drafts = append(drafts, *cur)
 			}
 			cur = nil
 		}
@@ -134,7 +196,7 @@ func ParseFeatures(markdown string) []Feature {
 	for _, line := range lines {
 		if title, ok := strings.CutPrefix(line, "## "); ok {
 			flush()
-			cur = &Feature{Title: strings.TrimSpace(title), Plan: line + "\n"}
+			cur = &FeatureDraft{Title: strings.TrimSpace(title), Plan: line + "\n"}
 			continue
 		}
 		if cur != nil {
@@ -143,21 +205,15 @@ func ParseFeatures(markdown string) []Feature {
 	}
 	flush()
 
-	if len(feats) == 0 {
+	if len(drafts) == 0 {
 		body := strings.TrimSpace(markdown)
 		if body == "" {
 			return nil
 		}
-		title := firstNonEmptyLine(body)
-		feats = []Feature{{Title: title, Plan: body}}
+		drafts = []FeatureDraft{{Title: firstNonEmptyLine(body), Plan: body}}
 	}
 
-	for i := range feats {
-		feats[i].ID = fmt.Sprintf("F%03d", i+1)
-		feats[i].Status = StatusPending
-		feats[i].Branch = fmt.Sprintf("factory/%03d-%s", i+1, Slug(feats[i].Title))
-	}
-	return feats
+	return NewFeatures(drafts)
 }
 
 func firstNonEmptyLine(s string) string {

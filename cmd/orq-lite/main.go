@@ -66,7 +66,8 @@ func main() {
 		force := fs.Bool("force", false, "replace an existing unfinished queue")
 		statusOnly := fs.Bool("status", false, "print the factory queue and exit")
 		createPR := fs.Bool("pr", false, "push each finished feature branch and open a PR via gh")
-		resume := fs.Bool("resume", false, "continue the queue without re-planning; retries failed features and skips already-done tasks")
+		resume := fs.Bool("resume", false, "retry failed features (reuses their persisted task lists)")
+		replan := fs.Bool("replan", false, "force fresh task decomposition for every feature (discards tasks-F*.json)")
 		logFormat := fs.String("log-format", "auto", "stdout log format: auto|verbose|human")
 		serve := fs.Bool("serve", true, "host the web dashboard while running (on by default)")
 		addr := fs.String("addr", "127.0.0.1:4173", "dashboard address")
@@ -88,6 +89,7 @@ func main() {
 			StatusOnly:   *statusOnly,
 			CreatePR:     *createPR,
 			Resume:       *resume,
+			Replan:       *replan,
 			LogFormat:    eventlog.Format(*logFormat),
 			Out:          os.Stdout,
 		}))
@@ -179,7 +181,7 @@ Commands:
   init [--lang L] [dir] scaffold .orquestalite, team.json, prompts/ (--lang: python|node|go|auto)
   plan <plan.md>        invoke parser, write tasks.json (--append to add)
   run [--log-format F]  run review/task/fix loops over existing tasks.json (--log-format: auto|verbose|human)
-  factory <features.md> develop each feature on its own branch (no args: resume queue; --resume: continue without re-planning; --status; --force; --serve; --pr)
+  factory <features.md> develop each feature on its own branch (no args: resume queue; --resume: retry failed features; --replan: fresh decomposition; --status; --force; --serve; --pr)
   cost                  per-task spend rollup (run.log sessions priced via agtop)
   doctor                preflight the setup (git, team.json, CLIs, credentials) before spending
   status [--watch]      print tasks table (--watch refreshes until Ctrl+C)

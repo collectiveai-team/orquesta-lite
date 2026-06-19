@@ -115,19 +115,25 @@ Reset local orchestration state:
 Run a whole backlog of features, each on its own branch (factory mode):
 
 ```bash
-cat > features.md <<'EOF'
-## Add login endpoint
+cat > plan.md <<'EOF'
+# PRM capacity planning
 
-POST /login issuing a JWT; reject bad credentials with 401.
-
-## Add health check
-
-GET /healthz returns 200 with build info.
+Add per-person FTE capacity, prospective-project dates, and a capacity
+roll-up endpoint with an over-allocation view. (Write the plan however you
+think — sections, prose, goals; the planner sorts out what's implementable.)
 EOF
 
-./orq-lite factory features.md
+./orq-lite factory plan.md
 ./orq-lite factory --status
 ```
+
+The factory begins with a **planner** pass (a dedicated `planner` role in
+`team.json`) that reads the plan and extracts independently-shippable
+**vertical slices** — each cutting through every layer it needs (schema → API
+→ UI → test). Document-only sections (goals, terminology, "current state",
+verification checklists) are discarded, not turned into features. If the
+planner's whole agent chain fails, the factory hard-fails with a clear message
+rather than silently falling back to a naive heading split.
 
 Factory mode hosts the live dashboard by default and prints its URL on
 startup (`orquestalite dashboard: http://127.0.0.1:4173`), so you can always
@@ -140,21 +146,20 @@ project root:
 ./orq-lite factory          # uses ./feature.md if present, dashboard on
 ```
 
-Plain `orq-lite factory` (no args) resumes the queue but re-plans each feature
-it runs — a `done`/`failed` feature is skipped, and a resumed feature starts
-from a fresh task list. To continue a feature that stopped partway through
-**without** redoing finished tasks, use `--resume`:
+Each feature is decomposed into tasks **once** and persisted in its own
+`.orquestalite/tasks-<ID>.json`. **Reuse is the default**: a feature that is
+retried or resumed continues its persisted task list (completed tasks skipped),
+so it is never re-decomposed from scratch. Plain `orq-lite factory` (no args)
+resumes an interrupted queue this way.
 
 ```bash
-./orq-lite factory --resume   # retry failed features; reuse the existing
-                              # task list (skip completed tasks, no re-plan)
+./orq-lite factory --resume   # also retry failed features (reusing their lists)
+./orq-lite factory --replan   # force a fresh decomposition for every feature
 ```
 
-`--resume` makes `failed` features runnable again and, for the feature that owns
-the on-disk `tasks.json`, continues that list so committed tasks are skipped
-rather than replanned. A feature that fails again is attempted once and then
-passed over (no infinite retry). Features other than the task-list owner still
-plan fresh.
+`--resume` makes `failed` features runnable again (a feature that fails again is
+attempted once, then passed over — no infinite retry). `--replan` discards the
+persisted `tasks-<ID>.json` files and re-decomposes from the plan.
 
 The dashboard can also run standalone (e.g. pointed at a container's mount):
 
@@ -169,9 +174,10 @@ orq-lite init [dir]            scaffold .orquestalite, team.json, prompts/
 orq-lite plan <plan.md>        invoke parser, write tasks.json
 orq-lite plan <plan.md> --append
 orq-lite run                   run review/task/fix loops
-orq-lite factory <features.md> develop each '## ' feature on its own branch
+orq-lite factory <plan.md>     plan vertical-slice features, develop each on its own branch
 orq-lite factory               resume an interrupted queue (--status, --force, --pr, --serve)
-orq-lite factory --resume      continue the queue without re-planning: retry failed features and skip already-done tasks
+orq-lite factory --resume      retry failed features, reusing their persisted task lists
+orq-lite factory --replan      force a fresh task decomposition for every feature
 orq-lite serve [--addr A]      web dashboard with live SSE event stream
 orq-lite doctor                preflight git/team.json/CLIs/credentials before spending
 orq-lite cost                  per-task spend rollup (sessions priced via agtop)

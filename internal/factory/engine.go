@@ -21,11 +21,15 @@ type Config struct {
 	// queue state is preserved, so raising the budget and resuming continues
 	// where it stopped.
 	BudgetUSD float64
-	// Resume continues the existing queue without re-planning. It makes failed
-	// features runnable again and, for the feature that owns the on-disk
-	// tasks.json (PlannedFeatureID), reuses that task list so completed tasks
-	// are skipped instead of replanned from scratch.
+	// Resume makes failed features runnable again so the queue retries them.
+	// It no longer governs plan reuse: reuse is the default (see Replan). A
+	// resumed feature continues its persisted tasks-<ID>.json, skipping
+	// completed tasks.
 	Resume bool
+	// Replan forces a fresh task decomposition for every feature this run,
+	// discarding the persisted tasks-<ID>.json. Without it, an already-planned
+	// feature reuses its task list (the default).
+	Replan bool
 }
 
 // Deps abstracts everything the engine needs from the outside world so the
@@ -83,24 +87,26 @@ func Run(ctx context.Context, q *Queue, cfg Config, d Deps) error {
 		}
 		attempted[f.ID] = true
 
-		// Reuse the on-disk task list only when resuming the feature that owns
-		// it — otherwise plan fresh (a different feature, or a normal run).
-		reusePlan := cfg.Resume && f.ID == q.PlannedFeatureID
+		// Reuse the feature's persisted task list whenever it has already been
+		// decomposed — unless --replan forces a fresh plan. This is the default,
+		// so an interrupted or retried feature continues its own tasks-<ID>.json
+		// instead of re-planning from scratch.
+		reusePlan := !cfg.Replan && q.FeatureIsPlanned(f.ID)
 
 		now := time.Now().UTC()
 		f.Status = StatusInProgress
 		if f.StartedAt == nil {
 			f.StartedAt = &now
 		}
-		// The feature about to run owns tasks.json from here on (whether it
-		// reuses the existing list or plans a fresh one).
-		q.PlannedFeatureID = f.ID
+		// Record that this feature owns a persisted task list from here on
+		// (RunFeature writes tasks-<ID>.json whether it plans fresh or reuses).
+		q.MarkFeaturePlanned(f.ID)
 		if err := d.SaveState(q); err != nil {
 			return err
 		}
 
 		if reusePlan {
-			d.Logf("factory: %s %q -> branch %s (resuming existing task list, no re-plan)", f.ID, f.Title, f.Branch)
+			d.Logf("factory: %s %q -> branch %s (reusing task list, no re-plan)", f.ID, f.Title, f.Branch)
 		} else {
 			d.Logf("factory: %s %q -> branch %s", f.ID, f.Title, f.Branch)
 		}

@@ -8,6 +8,23 @@ import (
 	"path/filepath"
 )
 
+// PlannerFeature is one vertical-slice feature emitted by the factory planner:
+// an independently shippable unit cutting through every layer it needs.
+type PlannerFeature struct {
+	Title              string   `json:"title"`
+	Plan               string   `json:"plan"`
+	AcceptanceCriteria []string `json:"acceptance_criteria"`
+	FilesLikelyTouched []string `json:"files_likely_touched"`
+}
+
+// PlannerResult is the factory planner's output: the vertical slices to queue.
+type PlannerResult struct {
+	Features       []PlannerFeature `json:"features"`
+	NotesForMemory *string          `json:"notes_for_memory"`
+}
+
+func (r PlannerResult) MemoryNote() *string { return r.NotesForMemory }
+
 type ParserTask struct {
 	Title       string `json:"title"`
 	Description string `json:"description"`
@@ -153,6 +170,14 @@ func rerunArchivePath(basePath string, rerun int) string {
 
 func ParseParser(path string) (*ParserResult, error) {
 	var r ParserResult
+	if err := read(path, &r); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+func ParsePlanner(path string) (*PlannerResult, error) {
+	var r PlannerResult
 	if err := read(path, &r); err != nil {
 		return nil, err
 	}
