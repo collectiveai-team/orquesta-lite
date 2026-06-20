@@ -309,8 +309,10 @@ The main loop is intentionally small:
    is recoverable (`git checkout <branch>`; `git reset --soft HEAD^`), and
    completed tasks remain as their own commits.
 
-See [CONTEXT.md](./CONTEXT.md) for the full domain model and
-[docs/adr/](./docs/adr/) for architecture decisions.
+See [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) for the full flow with
+diagrams (factory planning, the review/task/fix loops, agent resilience) and a
+component-by-component reference. [CONTEXT.md](./CONTEXT.md) holds the domain
+model and [docs/adr/](./docs/adr/) the architecture decisions.
 
 ## Development
 
