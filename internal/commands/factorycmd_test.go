@@ -12,6 +12,7 @@ import (
 	"github.com/lionelchamorro/orquestalite/internal/factory"
 	"github.com/lionelchamorro/orquestalite/internal/gitx"
 	"github.com/lionelchamorro/orquestalite/internal/results"
+	"github.com/lionelchamorro/orquestalite/internal/tasks"
 )
 
 // headingSplitExtractor stands in for the live LLM planner in tests: it builds
@@ -240,6 +241,61 @@ func TestPlanTextWithCriteria_FoldsCriteriaAndFiles(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("folded plan missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestAppendVisualTasks_OnlyFailedChecksBecomeTasks(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "tasks.json")
+	if err := os.WriteFile(p, []byte(`{"tasks":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	checks := []results.VerifyCheck{
+		{Name: "banner renders", Expected: "visible", Actual: "missing", Passed: false},
+		{Name: "list loads", Expected: "rows", Actual: "rows", Passed: true},
+		{Name: "no console errors", Action: "open /x", Expected: "clean", Actual: "TypeError", Passed: false},
+	}
+	n, err := appendVisualTasks(p, checks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("queued %d tasks, want 2 (only failed checks)", n)
+	}
+	tl, err := tasks.Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tl.Tasks) != 2 || tl.Tasks[0].Status != tasks.StatusPending {
+		t.Fatalf("tasks = %+v", tl.Tasks)
+	}
+	if !strings.Contains(tl.Tasks[0].Title, "banner renders") {
+		t.Errorf("task title = %q", tl.Tasks[0].Title)
+	}
+}
+
+func TestAppendVisualTasks_AllPassedQueuesNothing(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "tasks.json")
+	if err := os.WriteFile(p, []byte(`{"tasks":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	n, err := appendVisualTasks(p, []results.VerifyCheck{{Name: "ok", Passed: true}})
+	if err != nil || n != 0 {
+		t.Fatalf("n=%d err=%v, want 0 nil", n, err)
+	}
+}
+
+func TestVisualReport_SummarisesFailedChecks(t *testing.T) {
+	rep := visualReport(&results.VerifierResult{Checks: []results.VerifyCheck{
+		{Name: "banner", Expected: "visible", Actual: "missing", Passed: false},
+		{Name: "list", Passed: true},
+	}})
+	if !strings.Contains(rep, "banner") || !strings.Contains(rep, "missing") {
+		t.Errorf("report = %q", rep)
+	}
+	if strings.Contains(rep, "list") {
+		t.Errorf("passed checks must not appear in the report: %q", rep)
 	}
 }
 

@@ -77,6 +77,19 @@ type Limits struct {
 	// feature once the recorded spend (priced via agtop) reaches this amount.
 	// 0 = unlimited.
 	FactoryBudgetUSD float64 `json:"factory_budget_usd,omitempty"`
+	// MaxVisualRounds caps how many times a visual feature's browser
+	// verification can fail and feed its findings back as tasks before the
+	// feature is marked failed. 0 = use the default (2).
+	MaxVisualRounds int `json:"max_visual_rounds,omitempty"`
+}
+
+// VisualRounds returns the configured cap on browser-verify feedback rounds for
+// a visual feature, defaulting to 2 when unset.
+func (l Limits) VisualRounds() int {
+	if l.MaxVisualRounds <= 0 {
+		return 2
+	}
+	return l.MaxVisualRounds
 }
 
 // TesterVerificationEnabled reports whether the orchestrator should re-run the

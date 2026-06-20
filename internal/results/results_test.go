@@ -15,6 +15,26 @@ func write(t *testing.T, body string) string {
 	return p
 }
 
+func TestParsePlanner_FeaturesWithVisualFlag(t *testing.T) {
+	p := write(t, `{"features":[
+		{"title":"Capacity page","plan":"render /capacity","acceptance_criteria":["banner shows"],"files_likely_touched":["app/capacity.tsx"],"visual":true},
+		{"title":"Capacity rollup API","plan":"GET /api/capacity","acceptance_criteria":["200"],"visual":false}
+	],"notes_for_memory":null}`)
+	r, err := ParsePlanner(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Features) != 2 {
+		t.Fatalf("got %d features", len(r.Features))
+	}
+	if !r.Features[0].Visual {
+		t.Error("feature 0 should be visual")
+	}
+	if r.Features[1].Visual {
+		t.Error("feature 1 (API) should not be visual")
+	}
+}
+
 func TestParseTester_PassNoFailures(t *testing.T) {
 	p := write(t, `{"status":"pass","command_run":"go test","failures":[],"notes_for_memory":null}`)
 	r, err := ParseTester(p)

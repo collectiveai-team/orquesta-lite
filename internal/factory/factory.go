@@ -27,11 +27,15 @@ const (
 // Feature is one queued unit of work: a feature description that becomes a
 // plan, a branch, and a full review-loop run.
 type Feature struct {
-	ID         string     `json:"id"` // "F001"
-	Title      string     `json:"title"`
-	Plan       string     `json:"plan"` // full markdown section fed to the parser
-	Branch     string     `json:"branch"`
-	Status     Status     `json:"status"`
+	ID     string `json:"id"` // "F001"
+	Title  string `json:"title"`
+	Plan   string `json:"plan"` // full markdown section fed to the parser
+	Branch string `json:"branch"`
+	Status Status `json:"status"`
+	// Visual marks a feature with user-facing UI that warrants a browser-driven
+	// visual verification pass at feature close (set by the planner). Non-visual
+	// features skip that step.
+	Visual     bool       `json:"visual,omitempty"`
 	StartedAt  *time.Time `json:"started_at,omitempty"`
 	FinishedAt *time.Time `json:"finished_at,omitempty"`
 	// Task counts copied from tasks.json after the run finishes.
@@ -142,8 +146,9 @@ func Save(projectDir string, q *Queue) error {
 // is assigned. Both the heading-split fallback (ParseFeatures) and the LLM
 // planner produce drafts, then hand them to NewFeatures for uniform numbering.
 type FeatureDraft struct {
-	Title string
-	Plan  string
+	Title  string
+	Plan   string
+	Visual bool
 }
 
 // NewFeatures turns drafts into queued features, assigning sequential IDs
@@ -160,7 +165,7 @@ func NewFeatures(drafts []FeatureDraft) []Feature {
 		if title == "" {
 			title = firstNonEmptyLine(plan)
 		}
-		feats = append(feats, Feature{Title: title, Plan: plan})
+		feats = append(feats, Feature{Title: title, Plan: plan, Visual: d.Visual})
 	}
 	for i := range feats {
 		feats[i].ID = fmt.Sprintf("F%03d", i+1)

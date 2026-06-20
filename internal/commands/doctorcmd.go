@@ -153,6 +153,11 @@ func runDoctorChecks(dir string) []check {
 	} else {
 		add(checkPass, "gh", "PR creation available")
 	}
+	if _, err := exec.LookPath("agent-browser"); err != nil {
+		add(checkWarn, "agent-browser", "not on PATH — visual features fall back to playwright/curl; install with `npm i -g agent-browser && agent-browser install`")
+	} else {
+		add(checkPass, "agent-browser", "browser-driven visual verification available")
+	}
 
 	return checks
 }

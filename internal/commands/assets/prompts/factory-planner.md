@@ -20,6 +20,7 @@ A vertical slice is **NOT** a documentation section. Discard, and never emit as 
 2. Keep ONLY the parts that describe implementable, testable new behavior. Split or merge the plan's own sections freely — section headings in the plan are NOT features; you decide the slices.
 3. Order slices by dependency (foundational data/model work first).
 4. For each slice, produce its acceptance criteria and a best-effort list of files it will touch.
+5. Set `visual: true` when the slice adds or changes **user-facing UI** (a page, component, screen, or rendered view a user looks at) — the factory runs a browser-driven visual check on it at feature close. Pure backend/data/API/CLI slices are `visual: false`.
 
 If the entire plan is documentation with no implementable behavior, output `{"features": []}`.
 
@@ -46,7 +47,8 @@ Your final action MUST be to write `.orquestalite/results/planner.json` with the
       "title": "short imperative title, no conjunctions",
       "plan": "the relevant excerpt the implementing agent needs, ending with acceptance criteria",
       "acceptance_criteria": ["observable outcome 1", "observable outcome 2"],
-      "files_likely_touched": ["path/one.py", "path/two.tsx"]
+      "files_likely_touched": ["path/one.py", "path/two.tsx"],
+      "visual": false
     }
   ],
   "notes_for_memory": null

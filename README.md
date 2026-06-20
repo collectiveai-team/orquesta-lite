@@ -161,6 +161,16 @@ resumes an interrupted queue this way.
 attempted once, then passed over — no infinite retry). `--replan` discards the
 persisted `tasks-<ID>.json` files and re-decomposes from the plan.
 
+**Visual features.** The planner marks UI slices `visual: true`. When such a
+feature's review loop closes, the factory runs a **browser-driven visual
+verification** pass that drives [`agent-browser`](https://github.com/vercel-labs/agent-browser)
+(open the affected pages, assert the rendered elements, screenshot, fail on
+console errors). Each failed visual check becomes a fix task and the feature
+re-runs, bounded by `limits.max_visual_rounds` (default 2) before it is marked
+failed. Install with `npm i -g agent-browser && agent-browser install`; without
+it the pass falls back to playwright/curl. This is separate from the per-cycle
+`verifier` (generic black-box) — it is feature-scoped and browser-specific.
+
 The dashboard can also run standalone (e.g. pointed at a container's mount):
 
 ```bash
