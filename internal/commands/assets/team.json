@@ -17,12 +17,6 @@
       "model": "gpt-5.5",
       "effort": "medium",
       "rate_limit_pattern": "(?i)(429|usage limit reached|rate_?limit_exceeded|quota.*exceeded|usage limit)"
-    },
-    "gemini_pro": {
-      "provider": "gemini",
-      "model": "gemini-2.5-pro",
-      "dangerously_skip_permissions": true,
-      "rate_limit_pattern": "(?i)(429|rate_?limit|quota.*exceeded|resource.*exhausted)"
     }
   },
   "roles": {
@@ -47,8 +41,7 @@
     "tester": {
       "agents": [
         "claude_sonnet",
-        "codex_gpt5",
-        "gemini_pro"
+        "codex_gpt5"
       ],
       "prompt": "prompts/tester.md",
       "result_path": ".orquestalite/results/tester.json",
