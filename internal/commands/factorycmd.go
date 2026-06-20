@@ -166,8 +166,9 @@ func extractFeaturesWithLLM(ctx context.Context, opts FactoryOptions, planMarkdo
 	drafts := make([]factory.FeatureDraft, 0, len(res.Features))
 	for _, f := range res.Features {
 		drafts = append(drafts, factory.FeatureDraft{
-			Title: f.Title,
-			Plan:  planTextWithCriteria(f),
+			Title:  f.Title,
+			Plan:   planTextWithCriteria(f),
+			Visual: f.Visual,
 		})
 	}
 	return factory.NewFeatures(drafts), nil
@@ -315,22 +316,142 @@ func (d *liveFactoryDeps) RunFeature(ctx context.Context, f factory.Feature, reu
 		}
 	}
 
-	runErr := Run(ctx, RunOptions{
-		ProjectDir: d.dir,
-		TeamPath:   filepath.Join(d.dir, "team.json"),
-		LogFormat:  d.logFormat,
-	})
+	// syncTasks mirrors the canonical scratch tasks.json back to the feature's
+	// own file so a later resume reflects what actually completed.
+	syncTasks := func() {
+		if err := copyFileAtomic(canonical, featureTasks); err != nil {
+			d.Logf("factory: %s warning: could not persist task states to %s: %v", f.ID, filepath.Base(featureTasks), err)
+		}
+	}
 
-	// Sync the final task states back to the per-feature file so a later resume
-	// reflects what actually completed. Best-effort: a sync failure must not mask
-	// the run outcome.
-	if err := copyFileAtomic(canonical, featureTasks); err != nil {
-		d.Logf("factory: %s warning: could not persist task states to %s: %v", f.ID, filepath.Base(featureTasks), err)
+	maxRounds := 1
+	if f.Visual {
+		maxRounds = d.visualRounds()
+	}
+
+	var runErr error
+	for round := 1; ; round++ {
+		runErr = Run(ctx, RunOptions{
+			ProjectDir: d.dir,
+			TeamPath:   filepath.Join(d.dir, "team.json"),
+			LogFormat:  d.logFormat,
+		})
+		syncTasks()
+		if runErr != nil || !f.Visual {
+			break
+		}
+
+		// Feature-level visual verification (browser-driven) runs only for
+		// UI features, once the review loop has closed all tasks this round.
+		passed, report, checks, vErr := d.verifyFeatureVisually(ctx, f, round)
+		if vErr != nil {
+			// A missing/unusable verifier must not block the feature.
+			d.Logf("factory: %s visual verify skipped: %v", f.ID, vErr)
+			break
+		}
+		if passed {
+			d.Logf("factory: %s visual verify passed", f.ID)
+			break
+		}
+
+		queued, qErr := appendVisualTasks(canonical, checks)
+		if round >= maxRounds || queued == 0 || qErr != nil {
+			if qErr != nil {
+				d.Logf("factory: %s could not queue visual fix tasks: %v", f.ID, qErr)
+			}
+			runErr = fmt.Errorf("visual verification failed after %d round(s): %s", round, report)
+			break
+		}
+		syncTasks()
+		d.Logf("factory: %s visual verify failed; queued %d fix task(s), re-running (round %d/%d)", f.ID, queued, round+1, maxRounds)
 	}
 
 	sum := d.summarizeTasks()
 	sum.CostUSD = d.featureSpend(ctx, start)
 	return sum, runErr
+}
+
+// visualRounds is the configured cap on browser-verify feedback rounds for a
+// visual feature (team.json limits.max_visual_rounds, default 2).
+func (d *liveFactoryDeps) visualRounds() int {
+	if cfg, err := config.Load(filepath.Join(d.dir, "team.json")); err == nil {
+		return cfg.Limits.VisualRounds()
+	}
+	return 2
+}
+
+// verifyFeatureVisually runs the browser-driven visual verification pass for a
+// UI feature using the verifier role's agent chain under the visual-verify
+// prompt. Returns whether every check passed, a human-readable report of the
+// failures, and the raw checks (to seed fix tasks). An error means the pass
+// could not run (e.g. no verifier role configured) — the caller treats that as
+// "skip", never as a feature failure.
+func (d *liveFactoryDeps) verifyFeatureVisually(ctx context.Context, f factory.Feature, round int) (bool, string, []results.VerifyCheck, error) {
+	deps, cleanup, err := newLiveDeps(liveDepsOptions{
+		ProjectDir: d.dir,
+		TeamPath:   filepath.Join(d.dir, "team.json"),
+		LogFormat:  d.logFormat,
+		Roles:      []string{"verifier"},
+	})
+	if err != nil {
+		return false, "", nil, err
+	}
+	defer cleanup()
+
+	res, err := invoke.Role(ctx, deps.inv, "verifier", invoke.RoleCall{
+		PromptPath:  "prompts/factory-visual-verify.md",
+		ArchiveRole: "visual-verify",
+		ResultPath:  ".orquestalite/results/visual-verify.json",
+		Vars:        map[string]string{"FEATURE_TITLE": f.Title, "FEATURE_PLAN": f.Plan},
+	}, invoke.RunContext{TaskID: "_visual", Attempt: round}, results.ParseVerifier)
+	if err != nil {
+		return false, "", nil, err
+	}
+	return res.Status == "pass", visualReport(res), res.Checks, nil
+}
+
+// visualReport renders the failed checks of a visual verification into a short
+// human-readable summary for the feature's error field.
+func visualReport(res *results.VerifierResult) string {
+	var b strings.Builder
+	for _, c := range res.Checks {
+		if c.Passed {
+			continue
+		}
+		fmt.Fprintf(&b, "%s — expected %q, got %q; ", c.Name, c.Expected, c.Actual)
+	}
+	s := strings.TrimSuffix(strings.TrimSpace(b.String()), ";")
+	if s == "" {
+		return "visual verification reported a failure with no itemised checks"
+	}
+	return s
+}
+
+// appendVisualTasks turns each failed visual check into a pending fix task and
+// appends it to the task list at tasksPath. Returns the number of tasks added.
+func appendVisualTasks(tasksPath string, checks []results.VerifyCheck) (int, error) {
+	tl, err := tasks.Load(tasksPath)
+	if err != nil {
+		return 0, err
+	}
+	var newTasks []tasks.Task
+	for _, c := range checks {
+		if c.Passed {
+			continue
+		}
+		newTasks = append(newTasks, tasks.Task{
+			Title: "Fix visual issue: " + c.Name,
+			Description: fmt.Sprintf(
+				"A browser visual check failed at feature close.\nAction: %s\nExpected: %s\nActual: %s\n\nMake the UI satisfy the expected result.",
+				c.Action, c.Expected, c.Actual),
+			Priority: 0,
+		})
+	}
+	if len(newTasks) == 0 {
+		return 0, nil
+	}
+	tl.Append(newTasks, 0)
+	return len(newTasks), tasks.Save(tasksPath, tl)
 }
 
 // featureSpend prices the agent sessions this feature consumed (runs logged

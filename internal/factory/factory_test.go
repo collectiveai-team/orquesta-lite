@@ -76,6 +76,22 @@ func TestNewFeatures_AssignsMetadataAndDropsEmpty(t *testing.T) {
 	}
 }
 
+func TestNewFeatures_CarriesVisualFlag(t *testing.T) {
+	feats := NewFeatures([]FeatureDraft{
+		{Title: "Capacity page", Plan: "render /capacity", Visual: true},
+		{Title: "Rollup API", Plan: "GET /api/capacity", Visual: false},
+	})
+	if len(feats) != 2 {
+		t.Fatalf("got %d features", len(feats))
+	}
+	if !feats[0].Visual {
+		t.Error("F001 should carry Visual=true")
+	}
+	if feats[1].Visual {
+		t.Error("F002 should carry Visual=false")
+	}
+}
+
 func TestQueuePlannedFeatures(t *testing.T) {
 	q := &Queue{} // nil PlannedFeatures map
 	if q.FeatureIsPlanned("F001") {

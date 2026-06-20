@@ -54,15 +54,26 @@ alongside a `factory` run against the same project mount.
 
 ## Browser-real verification (web apps)
 
-The verifier role prefers a real headless browser over `curl` for web apps.
-Bake chromium + playwright into the image (≈400MB extra):
+Two layers use a real headless browser over `curl` for web apps:
+
+- The **verifier** role (per-cycle, generic black-box) prefers a browser.
+- The **feature-level visual verifier** runs once at feature close for slices
+  the planner marked `visual: true`, driving [`agent-browser`](https://github.com/vercel-labs/agent-browser)
+  (open → snapshot → assert → screenshot). On failure its findings become fix
+  tasks and the feature re-runs, bounded by `limits.max_visual_rounds` (default 2).
+
+Provide browser tooling one of two ways:
 
 ```bash
+# agent-browser (preferred for visual features)
+npm i -g agent-browser && agent-browser install
+
+# or bake chromium + playwright into the Docker image (≈400MB extra)
 docker compose build --build-arg INSTALL_PLAYWRIGHT=1
 ```
 
-Without it, the verifier falls back to HTML fetching and marks the
-limitation in its check evidence.
+Without any browser tooling, the verifier falls back to HTML fetching and marks
+the limitation in its check evidence.
 
 ## Notes
 

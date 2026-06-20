@@ -15,6 +15,9 @@ type PlannerFeature struct {
 	Plan               string   `json:"plan"`
 	AcceptanceCriteria []string `json:"acceptance_criteria"`
 	FilesLikelyTouched []string `json:"files_likely_touched"`
+	// Visual marks a slice with user-facing UI, so the factory runs a
+	// browser-driven visual verification pass at feature close.
+	Visual bool `json:"visual"`
 }
 
 // PlannerResult is the factory planner's output: the vertical slices to queue.

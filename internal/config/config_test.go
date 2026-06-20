@@ -8,6 +8,18 @@ import (
 	"time"
 )
 
+func TestLimits_VisualRounds(t *testing.T) {
+	if got := (Limits{}).VisualRounds(); got != 2 {
+		t.Errorf("default VisualRounds = %d, want 2", got)
+	}
+	if got := (Limits{MaxVisualRounds: 4}).VisualRounds(); got != 4 {
+		t.Errorf("configured VisualRounds = %d, want 4", got)
+	}
+	if got := (Limits{MaxVisualRounds: -1}).VisualRounds(); got != 2 {
+		t.Errorf("negative VisualRounds falls back to %d, want 2", got)
+	}
+}
+
 func writeTeamJSON(t *testing.T, body string) string {
 	t.Helper()
 	dir := t.TempDir()
