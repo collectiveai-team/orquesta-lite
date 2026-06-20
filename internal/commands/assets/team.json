@@ -20,6 +20,15 @@
     }
   },
   "roles": {
+    "planner": {
+      "agents": [
+        "claude_sonnet",
+        "claude_opus"
+      ],
+      "prompt": "prompts/factory-planner.md",
+      "result_path": ".orquestalite/results/planner.json",
+      "timeout_seconds": 900
+    },
     "parser": {
       "agents": [
         "claude_opus"

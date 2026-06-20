@@ -57,6 +57,47 @@ func TestParseFeatures_EmptyInput(t *testing.T) {
 	}
 }
 
+func TestNewFeatures_AssignsMetadataAndDropsEmpty(t *testing.T) {
+	feats := NewFeatures([]FeatureDraft{
+		{Title: "Add login endpoint", Plan: "POST /login with JWT."},
+		{Title: "ignored", Plan: "   "}, // empty plan -> dropped
+		{Title: "", Plan: "GET /healthz returns 200."},
+	})
+	if len(feats) != 2 {
+		t.Fatalf("got %d features: %+v", len(feats), feats)
+	}
+	if feats[0].ID != "F001" || feats[0].Status != StatusPending || feats[0].Branch != "factory/001-add-login-endpoint" {
+		t.Errorf("f0 = %+v", feats[0])
+	}
+	// Empty title falls back to the plan's first non-empty line, and IDs stay
+	// sequential (the dropped draft does not leave a gap).
+	if feats[1].ID != "F002" || feats[1].Title != "GET /healthz returns 200." {
+		t.Errorf("f1 = %+v", feats[1])
+	}
+}
+
+func TestQueuePlannedFeatures(t *testing.T) {
+	q := &Queue{} // nil PlannedFeatures map
+	if q.FeatureIsPlanned("F001") {
+		t.Fatal("nil map must report not planned (no panic)")
+	}
+	q.MarkFeaturePlanned("F001")
+	if !q.FeatureIsPlanned("F001") {
+		t.Error("F001 should be planned after MarkFeaturePlanned")
+	}
+	if q.FeatureIsPlanned("F002") {
+		t.Error("F002 was never planned")
+	}
+}
+
+func TestTasksFilePath(t *testing.T) {
+	got := TasksFilePath("/proj", "F003")
+	want := "/proj/.orquestalite/tasks-F003.json"
+	if got != want {
+		t.Errorf("TasksFilePath = %q, want %q", got, want)
+	}
+}
+
 func TestSlug(t *testing.T) {
 	cases := map[string]string{
 		"Add login endpoint!":  "add-login-endpoint",
@@ -219,11 +260,12 @@ func TestEngineRun_CheckpointErrorAbortsQueue(t *testing.T) {
 }
 
 func TestEngineRun_ResumeReusesPlanForOwnerAndRetriesFailed(t *testing.T) {
-	// F001 failed earlier and owns the on-disk task list; F002 is pending.
+	// F001 failed earlier and was already decomposed (owns tasks-F001.json);
+	// F002 is pending and has never been planned.
 	q := &Queue{
-		BaseBranch:       "main",
-		Features:         ParseFeatures("## A\n\nbody\n\n## B\n\nbody\n"),
-		PlannedFeatureID: "F001",
+		BaseBranch:      "main",
+		Features:        ParseFeatures("## A\n\nbody\n\n## B\n\nbody\n"),
+		PlannedFeatures: map[string]bool{"F001": true},
 	}
 	q.Features[0].Status = StatusFailed
 	d := &fakeDeps{}
@@ -240,6 +282,41 @@ func TestEngineRun_ResumeReusesPlanForOwnerAndRetriesFailed(t *testing.T) {
 	}
 	if d.reusePlans["F002"] {
 		t.Errorf("F002 (never planned) must not reuse a plan")
+	}
+}
+
+func TestEngineRun_ReplanForcesFreshPlanEvenWhenPlanned(t *testing.T) {
+	// F001 was already decomposed, but --replan must discard it and re-plan.
+	q := &Queue{
+		BaseBranch:      "main",
+		Features:        ParseFeatures("## A\n\nbody\n"),
+		PlannedFeatures: map[string]bool{"F001": true},
+	}
+	q.Features[0].Status = StatusFailed
+	d := &fakeDeps{}
+	if err := Run(context.Background(), q, Config{Resume: true, Replan: true}, d); err != nil {
+		t.Fatal(err)
+	}
+	if d.reusePlans["F001"] {
+		t.Errorf("--replan must force a fresh decomposition, not reuse F001's task list")
+	}
+}
+
+func TestEngineRun_ReusesPlanByDefaultForInterruptedFeature(t *testing.T) {
+	// An interrupted (in_progress) feature was already planned; a plain run (no
+	// --resume) must reuse its task list rather than re-plan from scratch.
+	q := &Queue{
+		BaseBranch:      "main",
+		Features:        ParseFeatures("## A\n\nbody\n"),
+		PlannedFeatures: map[string]bool{"F001": true},
+	}
+	q.Features[0].Status = StatusInProgress
+	d := &fakeDeps{}
+	if err := Run(context.Background(), q, Config{}, d); err != nil {
+		t.Fatal(err)
+	}
+	if !d.reusePlans["F001"] {
+		t.Errorf("interrupted, already-planned F001 should reuse its task list by default")
 	}
 }
 

@@ -11,7 +11,15 @@ import (
 
 	"github.com/lionelchamorro/orquestalite/internal/factory"
 	"github.com/lionelchamorro/orquestalite/internal/gitx"
+	"github.com/lionelchamorro/orquestalite/internal/results"
 )
+
+// headingSplitExtractor stands in for the live LLM planner in tests: it builds
+// features from the markdown headings, so loadOrCreateQueue is exercised without
+// invoking a real agent.
+func headingSplitExtractor(_ context.Context, _ FactoryOptions, md string) ([]factory.Feature, error) {
+	return factory.ParseFeatures(md), nil
+}
 
 func initTestRepo(t *testing.T) string {
 	t.Helper()
@@ -45,7 +53,7 @@ func TestFactory_CreatesQueueFromFeaturesFile(t *testing.T) {
 	dir := initTestRepo(t)
 	featuresPath := writeFeatures(t, dir)
 
-	q, err := loadOrCreateQueue(FactoryOptions{ProjectDir: dir, FeaturesPath: featuresPath})
+	q, err := loadOrCreateQueue(context.Background(), FactoryOptions{ProjectDir: dir, FeaturesPath: featuresPath}, headingSplitExtractor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,21 +74,21 @@ func TestFactory_RefusesToReplaceUnfinishedQueueWithoutForce(t *testing.T) {
 	dir := initTestRepo(t)
 	featuresPath := writeFeatures(t, dir)
 
-	if _, err := loadOrCreateQueue(FactoryOptions{ProjectDir: dir, FeaturesPath: featuresPath}); err != nil {
+	if _, err := loadOrCreateQueue(context.Background(), FactoryOptions{ProjectDir: dir, FeaturesPath: featuresPath}, headingSplitExtractor); err != nil {
 		t.Fatal(err)
 	}
-	_, err := loadOrCreateQueue(FactoryOptions{ProjectDir: dir, FeaturesPath: featuresPath})
+	_, err := loadOrCreateQueue(context.Background(), FactoryOptions{ProjectDir: dir, FeaturesPath: featuresPath}, headingSplitExtractor)
 	if err == nil || !strings.Contains(err.Error(), "--force") {
 		t.Fatalf("expected --force guidance, got %v", err)
 	}
-	if _, err := loadOrCreateQueue(FactoryOptions{ProjectDir: dir, FeaturesPath: featuresPath, Force: true}); err != nil {
+	if _, err := loadOrCreateQueue(context.Background(), FactoryOptions{ProjectDir: dir, FeaturesPath: featuresPath, Force: true}, headingSplitExtractor); err != nil {
 		t.Fatalf("--force should replace: %v", err)
 	}
 }
 
 func TestFactory_ResumeWithoutQueueFails(t *testing.T) {
 	dir := initTestRepo(t)
-	_, err := loadOrCreateQueue(FactoryOptions{ProjectDir: dir})
+	_, err := loadOrCreateQueue(context.Background(), FactoryOptions{ProjectDir: dir}, headingSplitExtractor)
 	if err == nil {
 		t.Fatal("expected error when resuming without a queue")
 	}
@@ -93,7 +101,7 @@ func TestFactory_AutoDiscoversFeatureFile(t *testing.T) {
 		[]byte("## Build the thing\n\nmake it work\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	q, err := loadOrCreateQueue(FactoryOptions{ProjectDir: dir, Out: io.Discard})
+	q, err := loadOrCreateQueue(context.Background(), FactoryOptions{ProjectDir: dir, Out: io.Discard}, headingSplitExtractor)
 	if err != nil {
 		t.Fatalf("expected auto-discovery to succeed, got %v", err)
 	}
@@ -188,10 +196,57 @@ func TestCheckpointResidue_PreservesWorkAndCleansTree(t *testing.T) {
 	}
 }
 
+func TestCopyFileAtomic_CopiesAndOverwrites(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.json")
+	dst := filepath.Join(dir, "dst.json")
+	if err := os.WriteFile(src, []byte(`{"v":1}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyFileAtomic(src, dst); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(dst); string(b) != `{"v":1}` {
+		t.Errorf("dst = %q", b)
+	}
+	// Overwrite an existing dst, and leave no .tmp behind.
+	if err := os.WriteFile(src, []byte(`{"v":2}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyFileAtomic(src, dst); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(dst); string(b) != `{"v":2}` {
+		t.Errorf("dst after overwrite = %q", b)
+	}
+	if fileExists(dst + ".tmp") {
+		t.Error("temp file should be renamed away, not left behind")
+	}
+}
+
+func TestPlanTextWithCriteria_FoldsCriteriaAndFiles(t *testing.T) {
+	got := planTextWithCriteria(results.PlannerFeature{
+		Plan:               "Add the login endpoint.",
+		AcceptanceCriteria: []string{"POST /login returns 200", "invalid creds return 401"},
+		FilesLikelyTouched: []string{"api/auth.py"},
+	})
+	for _, want := range []string{
+		"Add the login endpoint.",
+		"## Acceptance Criteria",
+		"- POST /login returns 200",
+		"## Files Likely Touched",
+		"- api/auth.py",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("folded plan missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestFactory_StatusOutput(t *testing.T) {
 	dir := initTestRepo(t)
 	featuresPath := writeFeatures(t, dir)
-	if _, err := loadOrCreateQueue(FactoryOptions{ProjectDir: dir, FeaturesPath: featuresPath}); err != nil {
+	if _, err := loadOrCreateQueue(context.Background(), FactoryOptions{ProjectDir: dir, FeaturesPath: featuresPath}, headingSplitExtractor); err != nil {
 		t.Fatal(err)
 	}
 
