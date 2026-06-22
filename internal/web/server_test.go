@@ -177,6 +177,57 @@ func TestAPIDiff_ReturnsCommitDiffAndAgent(t *testing.T) {
 	}
 }
 
+func TestAPIDiff_IncludesCoderSummaryFromArchive(t *testing.T) {
+	dir := stateDir(t)
+	sha := gitCommit(t, dir, "x.go", "package x\n", "T001 x")
+	log := `{"event":"task_done","task_id":"T001","commit_sha":"` + sha + `"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, ".orquestalite", "run.log"), []byte(log), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	archive := filepath.Join(dir, ".orquestalite", "results", "by-task", "T001")
+	if err := os.MkdirAll(archive, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(archive, "coder.c1.a1.json"), []byte(`{"summary":"added x package"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	srv := &Server{Dir: dir}
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/diff/T001", nil))
+	if !strings.Contains(rec.Body.String(), "added x package") {
+		t.Fatalf("diff response missing coder summary: %q", rec.Body.String())
+	}
+}
+
+func TestAPITasksByFeature_ServesFeatureList(t *testing.T) {
+	dir := stateDir(t)
+	body := `{"tasks":[{"id":"T001","title":"done thing","status":"done"}]}`
+	if err := os.WriteFile(filepath.Join(dir, ".orquestalite", "tasks-F003.json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	srv := &Server{Dir: dir}
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/tasks/F003", nil))
+	if !strings.Contains(rec.Body.String(), "done thing") {
+		t.Fatalf("body=%q", rec.Body.String())
+	}
+	// Bare /api/tasks still serves the canonical list, not the feature handler.
+	rec2 := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec2, httptest.NewRequest("GET", "/api/tasks", nil))
+	if strings.TrimSpace(rec2.Body.String()) != `{"tasks":[]}` {
+		t.Fatalf("bare /api/tasks body=%q", rec2.Body.String())
+	}
+}
+
+func TestAPITasksByFeature_EmptyWhenAbsent(t *testing.T) {
+	srv := &Server{Dir: stateDir(t)}
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/tasks/F999", nil))
+	if strings.TrimSpace(rec.Body.String()) != `{"tasks":[]}` {
+		t.Fatalf("body=%q", rec.Body.String())
+	}
+}
+
 func TestAPIDiff_UnavailableWithoutCommit(t *testing.T) {
 	dir := stateDir(t)
 	if err := os.WriteFile(filepath.Join(dir, ".orquestalite", "run.log"),

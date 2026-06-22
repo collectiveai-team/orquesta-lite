@@ -6,7 +6,56 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
 )
+
+// archiveNameRe matches the cycle/attempt/rerun suffix of an archived result
+// file, e.g. "coder.c2.a3.json" or "coder.c2.a3.r2.json".
+var archiveNameRe = regexp.MustCompile(`\.c(\d+)\.a(\d+)(?:\.r(\d+))?\.json$`)
+
+// LatestByTask returns the most recent archived result bytes for (taskID, role)
+// from the by-task archive, choosing the highest (cycle, attempt, rerun). This
+// recovers a finished task's last accepted result — used to show summaries for
+// previously implemented tasks. ok is false when no archive exists.
+func LatestByTask(dir, taskID, role string) ([]byte, bool) {
+	archiveDir := filepath.Join(dir, ".orquestalite", "results", "by-task", taskID)
+	entries, err := os.ReadDir(archiveDir)
+	if err != nil {
+		return nil, false
+	}
+	prefix := role + "."
+	best := ""
+	bc, ba, br := -1, -1, -1
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasPrefix(name, prefix) {
+			continue
+		}
+		m := archiveNameRe.FindStringSubmatch(name)
+		if m == nil {
+			continue
+		}
+		c, _ := strconv.Atoi(m[1])
+		a, _ := strconv.Atoi(m[2])
+		r := 0
+		if m[3] != "" {
+			r, _ = strconv.Atoi(m[3])
+		}
+		if c > bc || (c == bc && (a > ba || (a == ba && r > br))) {
+			bc, ba, br, best = c, a, r, name
+		}
+	}
+	if best == "" {
+		return nil, false
+	}
+	raw, err := os.ReadFile(filepath.Join(archiveDir, best))
+	if err != nil {
+		return nil, false
+	}
+	return raw, true
+}
 
 // PlannerFeature is one vertical-slice feature emitted by the factory planner:
 // an independently shippable unit cutting through every layer it needs.
