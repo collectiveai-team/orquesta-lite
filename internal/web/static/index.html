@@ -97,6 +97,24 @@
   #diff-pre .del { color: var(--err); }
   #diff-pre .hunk { color: var(--accent); }
   #diff-pre .meta { color: var(--muted); }
+  #diff-summary { display: none; padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--fg); font-size: 13px; line-height: 1.5; }
+  #diff-summary.show { display: block; }
+  #diff-summary b { color: var(--muted); font-weight: 600; }
+  tr.featrow { cursor: pointer; }
+  tr.featrow:hover td { background: #1c2230; }
+  #tasks-modal { position: fixed; inset: 0; display: none; z-index: 9; }
+  #tasks-modal.open { display: block; }
+  #tasks-backdrop { position: absolute; inset: 0; background: rgba(1,4,9,0.6); }
+  #tasks-card {
+    position: absolute; top: 8%; left: 50%; transform: translateX(-50%);
+    width: min(820px, 92vw); max-height: 84vh; display: flex; flex-direction: column;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+  }
+  #tasks-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 13px; }
+  #tasks-head .x { margin-left: auto; cursor: pointer; color: var(--muted); }
+  #tasks-head .x:hover { color: var(--fg); }
+  #tasks-list { overflow: auto; }
+  #tasks-list table { width: 100%; }
 </style>
 </head>
 <body>
@@ -135,7 +153,15 @@
   <div id="diff-backdrop"></div>
   <div id="diff-card">
     <div id="diff-head"><b id="diff-title"></b><span id="diff-meta" class="muted"></span><span class="x" id="diff-close" title="close (Esc)">✕</span></div>
+    <div id="diff-summary"></div>
     <pre id="diff-pre"></pre>
+  </div>
+</div>
+<div id="tasks-modal">
+  <div id="tasks-backdrop"></div>
+  <div id="tasks-card">
+    <div id="tasks-head"><b id="tasks-title"></b><span id="tasks-sub" class="muted"></span><span class="x" id="tasks-close" title="close (Esc)">✕</span></div>
+    <div id="tasks-list"></div>
   </div>
 </div>
 <script>
@@ -172,7 +198,7 @@ async function refreshFactory() {
     const q = await res.json();
     if (!q || !q.features) { $("factory-section").style.display = "none"; return; }
     $("factory-section").style.display = "block";
-    $("factory-body").innerHTML = q.features.map(f => `<tr>
+    $("factory-body").innerHTML = q.features.map(f => `<tr class="featrow" data-feature="${esc(f.id)}" data-title="${esc(f.title)}" title="click to browse this feature's tasks">
       <td>${esc(f.id)}</td>
       <td>${badge(f.status)}</td>
       <td class="muted">${esc(f.branch)}</td>
@@ -244,14 +270,21 @@ function colorDiff(text) {
   }).join("\n");
 }
 
+function setSummary(text) {
+  const el = $("diff-summary");
+  if (text) { el.innerHTML = `<b>summary:</b> ${esc(text)}`; el.classList.add("show"); }
+  else { el.textContent = ""; el.classList.remove("show"); }
+}
 async function openDiff(task) {
   $("diff-title").textContent = task;
   $("diff-meta").textContent = "loading…";
   $("diff-pre").innerHTML = "";
+  setSummary("");
   $("diff-modal").classList.add("open");
   try {
     const res = await fetch("/api/diff/" + encodeURIComponent(task));
     const d = await res.json();
+    setSummary(d.summary || "");
     if (!d.available) { $("diff-meta").textContent = ""; $("diff-pre").textContent = "No commit recorded for this task yet."; return; }
     $("diff-meta").textContent = [d.short, d.agent].filter(Boolean).join(" · ");
     $("diff-pre").innerHTML = colorDiff(d.diff || "");
@@ -260,10 +293,38 @@ async function openDiff(task) {
 function closeDiff() { $("diff-modal").classList.remove("open"); }
 $("diff-backdrop").addEventListener("click", closeDiff);
 $("diff-close").addEventListener("click", closeDiff);
-document.addEventListener("keydown", e => { if (e.key === "Escape") closeDiff(); });
-$("tasks-body").addEventListener("click", e => {
-  const tr = e.target.closest("tr[data-task]");
-  if (tr) openDiff(tr.dataset.task);
+
+async function openFeature(feature, title) {
+  $("tasks-title").textContent = feature + (title ? " · " + title : "");
+  $("tasks-sub").textContent = "loading…";
+  $("tasks-list").innerHTML = "";
+  $("tasks-modal").classList.add("open");
+  try {
+    const res = await fetch("/api/tasks/" + encodeURIComponent(feature));
+    const data = await res.json();
+    const tasks = data.tasks || [];
+    $("tasks-sub").textContent = `${tasks.length} task${tasks.length === 1 ? "" : "s"}`;
+    $("tasks-list").innerHTML = `<table><tbody>${tasks.map(t => `<tr class="taskrow" data-task="${esc(t.id)}" title="view changes">
+      <td>${esc(t.id)}</td><td>${badge(t.status)}</td><td class="title">${esc(t.title)}</td>
+    </tr>`).join("")}</tbody></table>`;
+  } catch { $("tasks-sub").textContent = ""; $("tasks-list").textContent = "Failed to load tasks."; }
+}
+function closeTasks() { $("tasks-modal").classList.remove("open"); }
+$("tasks-backdrop").addEventListener("click", closeTasks);
+$("tasks-close").addEventListener("click", closeTasks);
+
+document.addEventListener("keydown", e => {
+  if (e.key !== "Escape") return;
+  if ($("diff-modal").classList.contains("open")) closeDiff();
+  else closeTasks();
+});
+// Delegated clicks: a task row (current Tasks table or the feature modal) opens
+// its diff; a feature row opens that feature's task list.
+document.addEventListener("click", e => {
+  const taskTr = e.target.closest("tr[data-task]");
+  if (taskTr) { openDiff(taskTr.dataset.task); return; }
+  const featTr = e.target.closest("tr[data-feature]");
+  if (featTr) openFeature(featTr.dataset.feature, featTr.dataset.title);
 });
 
 refreshTasks(); refreshFactory(); connectEvents(); refreshCost();

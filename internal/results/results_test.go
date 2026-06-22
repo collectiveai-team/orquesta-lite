@@ -165,6 +165,32 @@ func TestArchive_WritesRerunSuffixWhenArchiveAlreadyExists(t *testing.T) {
 	assertFile(t, rerunArchive, `{"status":"second"}`)
 }
 
+func TestLatestByTask_PicksHighestCycleAttemptRerun(t *testing.T) {
+	dir := t.TempDir()
+	for _, a := range []struct{ cycle, attempt, rerun int }{{1, 1, 0}, {1, 2, 0}, {2, 1, 0}} {
+		if err := Archive(dir, "coder", "T010", a.cycle, a.attempt, []byte(`{"summary":"c`+itoa(a.cycle)+`a`+itoa(a.attempt)+`"}`)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw, ok := LatestByTask(dir, "T010", "coder")
+	if !ok {
+		t.Fatal("expected an archive")
+	}
+	if string(raw) != `{"summary":"c2a1"}` {
+		t.Fatalf("latest = %q, want c2a1", raw)
+	}
+	if _, ok := LatestByTask(dir, "T999", "coder"); ok {
+		t.Fatal("missing task should return ok=false")
+	}
+}
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	return string(rune('0' + n))
+}
+
 func assertFile(t *testing.T, path, want string) {
 	t.Helper()
 	got, err := os.ReadFile(path)

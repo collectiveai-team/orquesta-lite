@@ -20,6 +20,7 @@ import (
 
 	"github.com/lionelchamorro/orquestalite/internal/cost"
 	"github.com/lionelchamorro/orquestalite/internal/gitx"
+	"github.com/lionelchamorro/orquestalite/internal/results"
 )
 
 // taskIDRe and shaRe gate the values handed to git: a task id reaches the
@@ -63,6 +64,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/cost", s.handleCost)
 	mux.HandleFunc("GET /api/result/{role}", s.handleResult)
 	mux.HandleFunc("GET /api/diff/{task}", s.handleDiff)
+	mux.HandleFunc("GET /api/tasks/{feature}", s.handleTasksByFeature)
 
 	static, err := fs.Sub(staticFS, "static")
 	if err != nil {
@@ -136,14 +138,39 @@ func (s *Server) handleDiff(w http.ResponseWriter, r *http.Request) {
 	if len(short) > 8 {
 		short = short[:8]
 	}
-	write(map[string]any{
+	payload := map[string]any{
 		"available": true,
 		"task":      task,
 		"commit":    sha,
 		"short":     short,
 		"agent":     agent,
 		"diff":      diff,
-	})
+	}
+	// Recover the coder's summary for the task from the by-task archive so the
+	// UI can show "what this change did" above the diff (works for past tasks).
+	if raw, ok := results.LatestByTask(s.Dir, task, "coder"); ok {
+		var cr struct {
+			Summary string `json:"summary"`
+		}
+		if json.Unmarshal(raw, &cr) == nil && cr.Summary != "" {
+			payload["summary"] = cr.Summary
+		}
+	}
+	write(payload)
+}
+
+// handleTasksByFeature serves the task list for a finished or current feature
+// (.orquestalite/tasks-<feature>.json), so the UI can browse previously
+// implemented tasks. Unknown/!valid feature ids yield an empty list.
+func (s *Server) handleTasksByFeature(w http.ResponseWriter, r *http.Request) {
+	feature := r.PathValue("feature")
+	if !taskIDRe.MatchString(feature) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write([]byte(`{"tasks":[]}`))
+		return
+	}
+	s.serveJSONFile(w, s.statePath("tasks-"+feature+".json"), `{"tasks":[]}`)
 }
 
 // findTaskCommit scans run.log for a task's landed commit and the coder agent
