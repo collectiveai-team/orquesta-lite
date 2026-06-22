@@ -26,6 +26,7 @@ import (
 	"github.com/lionelchamorro/orquestalite/internal/preflight"
 	"github.com/lionelchamorro/orquestalite/internal/results"
 	"github.com/lionelchamorro/orquestalite/internal/runner"
+	"github.com/lionelchamorro/orquestalite/internal/sessions"
 	"github.com/lionelchamorro/orquestalite/internal/tasks"
 )
 
@@ -185,6 +186,12 @@ func newLiveDeps(opts liveDepsOptions) (*liveDeps, func() error, error) {
 				deps.currentTask.LastAgent = agent
 			}
 		},
+	}
+	// Let the coder resume its provider session across fix-loop iterations (and
+	// across a factory --resume) when the same agent runs again on the same task.
+	if cfg.Limits.SessionResumeEnabled() {
+		inv.Sessions = sessions.Load(opts.ProjectDir)
+		inv.ResumeRoles = map[string]bool{"coder": true}
 	}
 
 	tl, err := tasks.Load(tasksPath)
