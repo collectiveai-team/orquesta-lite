@@ -34,9 +34,10 @@ var credentialPaths = map[string]struct {
 	files  []string
 	envVar string
 }{
-	"claude": {files: []string{".claude.json", ".claude/.credentials.json"}, envVar: "ANTHROPIC_API_KEY"},
-	"codex":  {files: []string{".codex/auth.json"}, envVar: "OPENAI_API_KEY"},
-	"gemini": {files: []string{".gemini/oauth_creds.json", ".gemini/google_accounts.json"}, envVar: "GEMINI_API_KEY"},
+	"claude":   {files: []string{".claude.json", ".claude/.credentials.json"}, envVar: "ANTHROPIC_API_KEY"},
+	"codex":    {files: []string{".codex/auth.json"}, envVar: "OPENAI_API_KEY"},
+	"gemini":   {files: []string{".gemini/oauth_creds.json", ".gemini/google_accounts.json"}, envVar: "GEMINI_API_KEY"},
+	"opencode": {files: []string{".local/share/opencode/auth.json"}, envVar: ""},
 }
 
 // Doctor preflights the whole setup — git state, team.json, prompts, agent

@@ -228,8 +228,20 @@ will always report itself as outdated).
 
 `team.json` defines:
 
-- an agent pool with provider configs (`claude`, `codex`, `gemini`) or legacy
-  CLI commands, models, and optional rate-limit patterns
+- an agent pool with provider configs (`claude`, `codex`, `gemini`, `opencode`)
+  or legacy CLI commands, models, and optional rate-limit patterns. An opencode
+  agent binds the `opencode run` CLI to a model in opencode's `provider/model`
+  form:
+
+  ```json
+  "opencode_sonnet": { "provider": "opencode", "model": "anthropic/claude-sonnet-4-6" }
+  ```
+
+  The `model` must be prefixed with its opencode provider (e.g.
+  `anthropic/claude-sonnet-4-6`, `openai/gpt-5.4`, `zai/glm-5.2`); a bare model
+  name is rejected by opencode. See
+  [the opencode provider notes](#using-the-opencode-provider) below for setup
+  and authentication.
 - role bindings for `parser`, `coder`, `tester`, `critic`, `reviewer`, and the
   optional `verifier` (black-box manual verification after critic approval)
 - prompt paths and expected result paths
@@ -274,6 +286,51 @@ will always report itself as outdated).
 - `conventions_file` — optional path to a house-style document (see below)
 
 Prompts live in `prompts/` and use `{{VAR}}` interpolation markers.
+
+### Using the opencode provider
+
+The `opencode` provider drives the [`opencode`](https://opencode.ai) CLI
+(`opencode run`) in JSON-streaming mode, so any model opencode is authenticated
+for can fill a role. A team that uses opencode for every role looks like:
+
+```json
+{
+  "agents": {
+    "oc_opus":   { "provider": "opencode", "model": "anthropic/claude-opus-4-8",   "dangerously_skip_permissions": true },
+    "oc_sonnet": { "provider": "opencode", "model": "anthropic/claude-sonnet-4-6", "dangerously_skip_permissions": true },
+    "oc_haiku":  { "provider": "opencode", "model": "anthropic/claude-haiku-4-5",  "dangerously_skip_permissions": true }
+  },
+  "roles": {
+    "parser":   { "agents": ["oc_opus"],              "prompt": "prompts/parser.md",   "result_path": ".orquestalite/results/parser.json",   "timeout_seconds": 600, "decompose_prompt": "prompts/parser-decompose.md" },
+    "coder":    { "agents": ["oc_sonnet", "oc_opus"], "prompt": "prompts/coder.md",    "result_path": ".orquestalite/results/coder.json",    "timeout_seconds": 1800 },
+    "tester":   { "agents": ["oc_sonnet", "oc_haiku"],"prompt": "prompts/tester.md",   "result_path": ".orquestalite/results/tester.json",   "timeout_seconds": 900 },
+    "critic":   { "agents": ["oc_opus", "oc_sonnet"], "prompt": "prompts/critic.md",   "result_path": ".orquestalite/results/critic.json",   "timeout_seconds": 600 },
+    "reviewer": { "agents": ["oc_opus", "oc_sonnet"], "prompt": "prompts/reviewer.md", "result_path": ".orquestalite/results/reviewer.json", "timeout_seconds": 900 }
+  }
+}
+```
+
+Notes:
+
+- **Model identifiers are `provider/model`.** List what your install can reach
+  with `opencode models` (e.g. `opencode models | grep '^anthropic/'`). A bare
+  model name (`claude-sonnet-4-6`) is rejected.
+- **Authentication is opencode's own.** Log in once with `opencode auth login`
+  (OAuth) or set the relevant provider API key; credentials are cached at
+  `~/.local/share/opencode/auth.json`. `orq-lite doctor` checks for this file
+  and warns if it is missing, and the run-time preflight skips an opencode agent
+  with no usable credential rather than burning an invocation on an interactive
+  auth prompt.
+- **`effort`** maps to opencode's `--variant` (reasoning effort, e.g. `high`),
+  and **`dangerously_skip_permissions`** maps to
+  `--dangerously-skip-permissions` so the agent can edit files unattended.
+- Verify the wiring before a real run:
+
+  ```bash
+  opencode auth list          # confirm the provider is logged in
+  orq-lite doctor             # team.json resolves, opencode CLI + auth present
+  orq-lite plan plan.md       # one parser call exercises the provider end to end
+  ```
 
 ### Matching your team's style
 
@@ -337,3 +394,52 @@ Run the test suite:
 ```bash
 go test ./...
 ```
+
+### Building a dev binary to test (without overwriting the installed one)
+
+When you already have a released `orq-lite` on your `PATH` and want to try local
+changes, build to a **scratch path** and invoke that binary by its **full
+path** — never name it `orq-lite` on the `PATH`, or it will shadow (or be
+shadowed by) the installed one and you won't know which build you ran.
+
+```bash
+# 1) Build from the source repo to a scratch location:
+go build -o /tmp/orq-lite-dev ./cmd/orq-lite
+
+# (optional) stamp a recognizable version so `version` distinguishes builds:
+go build -ldflags "-X main.version=dev-$(git rev-parse --short HEAD)" \
+  -o /tmp/orq-lite-dev ./cmd/orq-lite
+```
+
+`orq-lite` always operates on the **current working directory** (it has no
+`--project-dir` flag), so "targeting" a project means running the dev binary
+from inside it:
+
+```bash
+cd /path/to/target-project       # the repo the agents will edit + commit
+/tmp/orq-lite-dev version         # confirm it's your dev build, not the installed one
+/tmp/orq-lite-dev doctor          # validate team.json / CLIs / credentials
+/tmp/orq-lite-dev plan plan.md    # decompose the plan into tasks.json
+/tmp/orq-lite-dev run             # drive the review/task/fix loops
+```
+
+Confirm which binary is which at any time:
+
+```bash
+which -a orq-lite                 # installed copies on PATH (these stay untouched)
+orq-lite version                  # the installed build
+/tmp/orq-lite-dev version         # your dev build
+```
+
+The rebuild-and-test cycle after each source change is just: rebuild to the
+scratch path, then re-run from the target project:
+
+```bash
+go build -o /tmp/orq-lite-dev ./cmd/orq-lite          # in the source repo
+( cd /path/to/target-project && /tmp/orq-lite-dev run )
+```
+
+Use a throwaway, git-initialized directory as the target (a fresh `git init`
+repo gives the orchestrator real per-task commits; without a repo, tasks
+complete but commits are skipped). Only `cp /tmp/orq-lite-dev ~/.local/bin/orq-lite`
+when you deliberately want to promote the dev build to your `PATH`.

@@ -37,7 +37,7 @@ flowchart TD
         FB["fallback.Caller<br/>internal/fallback"]
         HEALTH["agenthealth.Tracker<br/>internal/agenthealth"]
         RUNNER["runner.RunAgent<br/>internal/runner"]
-        PROV["providers<br/>claude / codex / gemini"]
+        PROV["providers<br/>claude / codex / gemini / opencode"]
     end
 
     subgraph state["State — .orquestalite/"]
@@ -267,7 +267,7 @@ sequenceDiagram
 | `internal/fallback/` | `Caller`: agent chain, cooldowns, exponential backoff, rate-limit waiting (`reset.go`). |
 | `internal/agenthealth/` | `Tracker`: bench agents that auth-fail or repeatedly fail. |
 | `internal/runner/runner.go` | `RunAgent`: spawn the CLI subprocess, capture output, detect rate-limit/auth/timeout. |
-| `internal/providers/` | Per-CLI adapters (`claude`, `codex`, `gemini`): build args, parse the stream-JSON. |
+| `internal/providers/` | Per-CLI adapters (`claude`, `codex`, `gemini`, `opencode`): build args, parse the stream-JSON. |
 | `internal/config/config.go` | `team.json` model (agents, roles, limits, backoff) + validation/resolution. |
 | `internal/results/results.go` | Typed role result structs, parsers, immutable per-run archive. |
 | `internal/tasks/tasks.go` | `TaskList`/`Task` model, statuses, load/save. |
@@ -298,8 +298,9 @@ sequenceDiagram
 
 ## 7. Configuration surface (`team.json`)
 
-- **`agents`** — each CLI agent: `provider` (`claude`/`codex`/`gemini`),
-  `model`, `effort`, `rate_limit_pattern`.
+- **`agents`** — each CLI agent: `provider` (`claude`/`codex`/`gemini`/`opencode`),
+  `model`, `effort`, `rate_limit_pattern`. opencode models use the
+  `provider/model` form (e.g. `anthropic/claude-sonnet-4-6`).
 - **`roles`** — `planner` (factory only), `parser`, `coder`, `tester`,
   `critic`, `verifier` (optional), `reviewer`. Each declares an ordered `agents`
   chain, a `prompt`, a `result_path`, and a `timeout_seconds`.

@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"reflect"
 	"testing"
 )
 
@@ -38,8 +39,10 @@ func TestNewRegisteredProviders(t *testing.T) {
 		wantName string
 		wantType any
 	}{
-		"claude": {wantName: "claude", wantType: Claude{}},
-		"codex":  {wantName: "codex", wantType: Codex{}},
+		"claude":   {wantName: "claude", wantType: Claude{}},
+		"codex":    {wantName: "codex", wantType: Codex{}},
+		"gemini":   {wantName: "gemini", wantType: &Gemini{}},
+		"opencode": {wantName: "opencode", wantType: &OpenCode{}},
 	}
 
 	for name, test := range tests {
@@ -51,8 +54,8 @@ func TestNewRegisteredProviders(t *testing.T) {
 			if got := provider.Name(); got != test.wantName {
 				t.Fatalf("New(%q).Name() = %q, want %q", name, got, test.wantName)
 			}
-			if got := any(provider); got != test.wantType {
-				t.Fatalf("New(%q) = %T, want %T", name, provider, test.wantType)
+			if got, want := reflect.TypeOf(provider), reflect.TypeOf(test.wantType); got != want {
+				t.Fatalf("New(%q) = %v, want %v", name, got, want)
 			}
 		})
 	}
