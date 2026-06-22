@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>orquestalite · office</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Silkscreen:wght@400;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body,#root{height:100%}
+  body{background:#0e0a1e;overflow:hidden;font-family:'IBM Plex Mono',monospace;-webkit-font-smoothing:antialiased}
+  @keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-3px)}}
+  @keyframes pls{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.4);opacity:.45}}
+  @keyframes flow{to{stroke-dashoffset:-32}}
+  @keyframes tok{0%,100%{transform:scale(1);opacity:.85}50%{transform:scale(1.6);opacity:.15}}
+  @keyframes fade{from{opacity:0}to{opacity:1}}
+  @keyframes float{0%,100%{transform:translate(-50%,0)}50%{transform:translate(-50%,-4px)}}
+  ::-webkit-scrollbar{width:8px;height:8px}
+  ::-webkit-scrollbar-thumb{background:#3a3358;border-radius:4px}
+  ::-webkit-scrollbar-track{background:transparent}
+  /* hover utilities (React has no style-hover; these replace the dc pseudo-classes) */
+  .hb12{transition:filter .12s}
+  .hb12:hover{filter:brightness(1.12)}
+  .hb25{transition:filter .15s,transform .15s}
+  .hb25:hover{filter:brightness(1.25);transform:translateY(-1px)}
+  .btnx:hover{background:#33294f!important;color:#fff!important}
+  .modepill{transition:filter .12s}
+  .modepill:hover{filter:brightness(1.2)}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="./vendor/react.production.min.js"></script>
+<script src="./vendor/react-dom.production.min.js"></script>
+<script src="./gameboard.js"></script>
+</body>
+</html>

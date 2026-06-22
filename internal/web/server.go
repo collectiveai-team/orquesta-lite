@@ -35,6 +35,14 @@ func (s *Server) statePath(name string) string {
 	return filepath.Join(s.Dir, ".orquestalite", name)
 }
 
+// resultRoles is the fixed set of roles whose result file may be served via
+// /api/result/{role}. Whitelisting keeps the {role} path segment from being
+// used for traversal into arbitrary files under .orquestalite/results.
+var resultRoles = map[string]bool{
+	"planner": true, "parser": true, "coder": true, "tester": true,
+	"critic": true, "reviewer": true, "verifier": true, "orchestrator": true,
+}
+
 // Handler builds the HTTP routes.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
@@ -42,13 +50,43 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/factory", s.handleFactory)
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 	mux.HandleFunc("GET /api/cost", s.handleCost)
+	mux.HandleFunc("GET /api/result/{role}", s.handleResult)
 
 	static, err := fs.Sub(staticFS, "static")
 	if err != nil {
 		panic(err) // embedded FS layout is fixed at compile time
 	}
+	// The office gameboard is a distinct screen mode served at a clean path;
+	// its assets (gameboard.js, vendor/*) come from the static file server.
+	mux.HandleFunc("GET /gameboard", s.handleGameboard)
 	mux.Handle("GET /", http.FileServerFS(static))
 	return mux
+}
+
+// handleGameboard serves the office gameboard shell at a clean URL.
+func (s *Server) handleGameboard(w http.ResponseWriter, r *http.Request) {
+	raw, err := staticFS.ReadFile("static/gameboard.html")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write(raw)
+}
+
+// handleResult serves one role's latest result document
+// (.orquestalite/results/<role>.json), used by the gameboard's JSON/summary
+// views. Unknown roles yield "null" rather than an error so the UI can render
+// an empty state uniformly.
+func (s *Server) handleResult(w http.ResponseWriter, r *http.Request) {
+	role := r.PathValue("role")
+	if !resultRoles[role] {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write([]byte("null"))
+		return
+	}
+	s.serveJSONFile(w, filepath.Join(s.statePath("results"), role+".json"), "null")
 }
 
 // handleTasks serves tasks.json verbatim (empty task list when absent).
