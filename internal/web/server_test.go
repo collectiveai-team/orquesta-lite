@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -126,6 +127,76 @@ func TestAPIResult_RejectsUnknownRole(t *testing.T) {
 		if strings.TrimSpace(rec.Body.String()) != "null" {
 			t.Fatalf("role=%q body=%q (expected null)", role, rec.Body.String())
 		}
+	}
+}
+
+func gitCommit(t *testing.T, dir, file, content, msg string) string {
+	t.Helper()
+	runGit := func(args ...string) string {
+		t.Helper()
+		c := exec.Command("git", args...)
+		c.Dir = dir
+		c.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		out, err := c.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".git")); err != nil {
+		runGit("init", "-q")
+	}
+	if err := os.WriteFile(filepath.Join(dir, file), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", file)
+	runGit("commit", "-q", "-m", msg)
+	return runGit("rev-parse", "HEAD")
+}
+
+func TestAPIDiff_ReturnsCommitDiffAndAgent(t *testing.T) {
+	dir := stateDir(t)
+	sha := gitCommit(t, dir, "rollup.go", "package capacity\n\nfunc Sum() int { return 1 }\n", "T001 rollup")
+	log := `{"event":"agent_run","role":"coder","agent":"codex_gpt5","task_id":"T001"}` + "\n" +
+		`{"event":"task_done","task_id":"T001","commit_sha":"` + sha + `"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, ".orquestalite", "run.log"), []byte(log), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	srv := &Server{Dir: dir}
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/diff/T001", nil))
+	body := rec.Body.String()
+	if rec.Code != 200 || !strings.Contains(body, `"available":true`) {
+		t.Fatalf("code=%d body=%q", rec.Code, body)
+	}
+	for _, want := range []string{"rollup.go", "codex_gpt5", "func Sum"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("diff body missing %q: %q", want, body)
+		}
+	}
+}
+
+func TestAPIDiff_UnavailableWithoutCommit(t *testing.T) {
+	dir := stateDir(t)
+	if err := os.WriteFile(filepath.Join(dir, ".orquestalite", "run.log"),
+		[]byte(`{"event":"task_start","task_id":"T002"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	srv := &Server{Dir: dir}
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/diff/T002", nil))
+	if !strings.Contains(rec.Body.String(), `"available":false`) {
+		t.Fatalf("body=%q", rec.Body.String())
+	}
+}
+
+func TestAPIDiff_RejectsMalformedTaskID(t *testing.T) {
+	srv := &Server{Dir: stateDir(t)}
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/diff/bad.id", nil))
+	if !strings.Contains(rec.Body.String(), `"available":false`) {
+		t.Fatalf("body=%q", rec.Body.String())
 	}
 }
 

@@ -95,7 +95,7 @@
       tx: 0, ty: 0,
       near: null, openRole: "", tab: "estado",
       isMobile: ml,
-      tasks: [], features: [], cost: null, events: [], results: {}, connected: false
+      tasks: [], features: [], cost: null, events: [], results: {}, diffs: {}, connected: false
     };
   };
 
@@ -370,7 +370,35 @@
       self.setState(function (st) { var m = Object.assign({}, st.results); m[id] = j; return { results: m }; });
     }).catch(function () {});
   };
-  Office.prototype.setTab = function (t) { this.setState({ tab: t }); };
+  Office.prototype.setTab = function (t) {
+    this.setState({ tab: t });
+    if (t === "changes") this.fetchDiff(this.currentTask().id);
+  };
+
+  // fetchDiff lazily loads a task's landed git diff (once per task).
+  Office.prototype.fetchDiff = function (task) {
+    if (!task || task === "—" || this.state.diffs[task] !== undefined) return;
+    var self = this;
+    this.setState(function (st) { var m = Object.assign({}, st.diffs); m[task] = null; return { diffs: m }; });
+    fetch("/api/diff/" + encodeURIComponent(task)).then(function (r) { return r.json(); }).then(function (j) {
+      self.setState(function (st) { var m = Object.assign({}, st.diffs); m[task] = j; return { diffs: m }; });
+    }).catch(function () {
+      self.setState(function (st) { var m = Object.assign({}, st.diffs); m[task] = { available: false }; return { diffs: m }; });
+    });
+  };
+
+  // diffHTML colorizes a unified diff for a <pre dangerouslySetInnerHTML>.
+  Office.prototype.diffHTML = function (text) {
+    var esc = function (s) { return String(s).replace(/[&<>]/g, function (c) { return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]; }); };
+    return String(text).split("\n").map(function (line) {
+      var c = "#cfc7f0";
+      if (line.indexOf("+") === 0 && line.indexOf("+++") !== 0) c = "#46d39a";
+      else if (line.indexOf("-") === 0 && line.indexOf("---") !== 0) c = "#ff6b8a";
+      else if (line.indexOf("@@") === 0) c = "#5b9cff";
+      else if (/^(commit |Author|AuthorDate|Commit|CommitDate|Date|diff |index |\+\+\+|---)/.test(line)) c = "#8a7fb8";
+      return '<span style="color:' + c + '">' + esc(line) + "</span>";
+    }).join("\n");
+  };
 
   // ---------- screen-mode toggle ----------
   Office.prototype.modeToggle = function () {
@@ -455,14 +483,23 @@
       if (res === undefined) jsonNode = h("div", { style: { color: "#6c63a0", fontSize: "11.5px" } }, "Loading…");
       else if (res === null) jsonNode = h("div", { style: { color: "#6c63a0", fontSize: "11.5px" } }, "No result yet.");
       else jsonNode = this.jsonEl(res);
+      var dim = { color: "#6c63a0", fontSize: "11.5px" };
+      var diff = this.state.diffs[ct.id], changesNode, changesMeta = "";
+      if (ct.id === "—") changesNode = h("div", { style: dim }, "No task selected.");
+      else if (diff === undefined || diff === null) changesNode = h("div", { style: dim }, "Loading…");
+      else if (!diff.available) changesNode = h("div", { style: dim }, "No commit recorded for this task yet.");
+      else {
+        changesMeta = [diff.short, diff.agent].filter(Boolean).join(" · ");
+        changesNode = h("pre", { style: { margin: 0, fontFamily: "'IBM Plex Mono',monospace", fontSize: "11.5px", lineHeight: 1.55, whiteSpace: "pre", tabSize: 2 }, dangerouslySetInnerHTML: { __html: this.diffHTML(diff.diff || "") } });
+      }
       open = {
         label: Ro.label, desc: Ro.desc, spriteEl: this.spriteEl(oid, 4), statusLabel: smo.t,
         badgeStyle: { fontFamily: "'Silkscreen'", fontSize: "8px", color: smo.c, background: smo.c + "1f", border: "1px solid " + smo.c + "55", borderRadius: "6px", padding: "4px 8px", whiteSpace: "nowrap" },
         taskId: ct.id, taskTitle: ct.title, activity: this.roleActivity(oid), statChips: this.roleStatChips(oid), summary: this.roleSummary(oid),
-        isEstado: S.tab === "estado", isResumen: S.tab === "resumen", isJson: S.tab === "json",
-        tabEstadoStyle: tabStyle("estado"), tabResumenStyle: tabStyle("resumen"), tabJsonStyle: tabStyle("json"),
-        tEstado: function () { self.setTab("estado"); }, tResumen: function () { self.setTab("resumen"); }, tJson: function () { self.setTab("json"); },
-        jsonEl: jsonNode
+        isEstado: S.tab === "estado", isResumen: S.tab === "resumen", isJson: S.tab === "json", isChanges: S.tab === "changes",
+        tabEstadoStyle: tabStyle("estado"), tabResumenStyle: tabStyle("resumen"), tabJsonStyle: tabStyle("json"), tabChangesStyle: tabStyle("changes"),
+        tEstado: function () { self.setTab("estado"); }, tResumen: function () { self.setTab("resumen"); }, tJson: function () { self.setTab("json"); }, tChanges: function () { self.setTab("changes"); },
+        jsonEl: jsonNode, changesEl: changesNode, changesMeta: changesMeta
       };
       panelStyle = S.isMobile
         ? { position: "absolute", left: 0, right: 0, bottom: 0, height: "72%", display: "flex", flexDirection: "column", background: "#15102b", borderTop: "2px solid " + rc, borderRadius: "16px 16px 0 0", boxShadow: "0 -10px 40px #000a", zIndex: 50, "--rc": rc, "--rc-soft": rcSoft, overflow: "hidden" }
@@ -565,7 +602,8 @@
           el("div", { style: "flex:0 0 auto;display:flex;gap:4px;padding:8px 12px 0;border-bottom:1px solid #251d44;background:#15102b;" },
             el("div", { onClick: o.tEstado, style: o.tabEstadoStyle }, "STATE"),
             el("div", { onClick: o.tResumen, style: o.tabResumenStyle }, "SUMMARY"),
-            el("div", { onClick: o.tJson, style: o.tabJsonStyle }, "JSON")),
+            el("div", { onClick: o.tJson, style: o.tabJsonStyle }, "JSON"),
+            el("div", { onClick: o.tChanges, style: o.tabChangesStyle }, "CHANGES")),
           o.isEstado ? el("div", { style: "flex:1 1 auto;overflow-y:auto;padding:16px;" },
             el("div", { style: "border:1px solid #2e2550;border-radius:10px;padding:14px;background:#19132f;box-shadow:inset 0 0 0 1px var(--rc-soft);" },
               el("div", { style: "font-size:9px;color:#8a7fb8;letter-spacing:1px;" }, "CURRENT TASK"),
@@ -589,7 +627,10 @@
             el("div", { style: "font-size:12.5px;line-height:1.65;color:#d9d2f5;border-left:3px solid var(--rc);padding-left:13px;" }, o.summary)) : null,
           o.isJson ? el("div", { style: "flex:1 1 auto;overflow:auto;padding:14px;background:#0c0820;" },
             el("div", { style: "font-size:9px;color:#6c63a0;letter-spacing:1px;margin-bottom:10px;" }, ".orquestalite/results/" + v.openRole + ".json"),
-            o.jsonEl) : null)
+            o.jsonEl) : null,
+          o.isChanges ? el("div", { style: "flex:1 1 auto;overflow:auto;padding:14px;background:#0c0820;" },
+            el("div", { style: "font-size:9px;color:#6c63a0;letter-spacing:1px;margin-bottom:10px;" }, "CHANGES · " + o.taskId + (o.changesMeta ? " · " + o.changesMeta : "")),
+            o.changesEl) : null)
       ];
     }
 
