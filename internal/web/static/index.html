@@ -27,6 +27,13 @@
   #conn.live { background: var(--ok); }
   #summary { color: var(--muted); margin-left: auto; }
   #cost { color: var(--warn); padding-left: 14px; }
+  #mode { display: flex; gap: 4px; margin-left: 14px; }
+  #mode a, #mode span {
+    text-decoration: none; font-size: 12px; padding: 3px 10px; border-radius: 6px;
+    border: 1px solid var(--border); color: var(--muted); cursor: pointer; white-space: nowrap;
+  }
+  #mode .active { background: var(--accent); border-color: var(--accent); color: #0d1117; }
+  #mode a:hover { border-color: var(--accent); color: var(--fg); }
   main {
     display: grid; gap: 16px; padding: 16px 20px; max-width: 1400px; margin: 0 auto;
     grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
@@ -80,6 +87,10 @@
   <h1>orquesta<span>lite</span></h1>
   <div id="summary"></div>
   <div id="cost" class="muted" title="spend priced via agtop"></div>
+  <nav id="mode" title="screen mode">
+    <span class="active">▣ Dashboard</span>
+    <a href="/gameboard" onclick="try{localStorage.setItem('orqScreenMode','office')}catch(e){}">🎮 Office</a>
+  </nav>
 </header>
 <main>
   <section id="factory-section">

@@ -75,6 +75,60 @@ func TestIndexServed(t *testing.T) {
 	}
 }
 
+func TestGameboardServed(t *testing.T) {
+	srv := &Server{Dir: stateDir(t)}
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/gameboard", nil))
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "gameboard.js") {
+		t.Fatalf("code=%d body=%q", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAPIResult_ServesRoleFile(t *testing.T) {
+	dir := stateDir(t)
+	resultsDir := filepath.Join(dir, ".orquestalite", "results")
+	if err := os.MkdirAll(resultsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := `{"role":"coder","status":"completed"}`
+	if err := os.WriteFile(filepath.Join(resultsDir, "coder.json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	srv := &Server{Dir: dir}
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/result/coder", nil))
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "completed") {
+		t.Fatalf("code=%d body=%q", rec.Code, rec.Body.String())
+	}
+}
+
+func TestAPIResult_NullWhenAbsent(t *testing.T) {
+	srv := &Server{Dir: stateDir(t)}
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/result/critic", nil))
+	if strings.TrimSpace(rec.Body.String()) != "null" {
+		t.Fatalf("body=%q", rec.Body.String())
+	}
+}
+
+// An unknown or traversal-style role segment must never read outside the
+// whitelist; it returns "null" rather than reaching the filesystem.
+func TestAPIResult_RejectsUnknownRole(t *testing.T) {
+	dir := stateDir(t)
+	// A real file that a traversal attempt might target.
+	if err := os.WriteFile(filepath.Join(dir, ".orquestalite", "tasks.json"), []byte(`{"tasks":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	srv := &Server{Dir: dir}
+	for _, role := range []string{"bogus", "..%2ftasks", "tasks"} {
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/result/"+role, nil))
+		if strings.TrimSpace(rec.Body.String()) != "null" {
+			t.Fatalf("role=%q body=%q (expected null)", role, rec.Body.String())
+		}
+	}
+}
+
 func TestEventsSSE_ReplaysAndStreams(t *testing.T) {
 	dir := stateDir(t)
 	logPath := filepath.Join(dir, ".orquestalite", "run.log")
