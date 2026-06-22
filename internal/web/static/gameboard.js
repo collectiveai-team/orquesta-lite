@@ -69,14 +69,14 @@
     // Static per-role identity (palette + one-line description). Live state is
     // derived from events/tasks at render time, never hardcoded here.
     this.ROLE_META = {
-      planner:      { label: "PLANNER",      color: "#b07cff", skin: "#f1c9a5", hair: "#3a2d4a", desc: "Lee el plan y extrae features verticales." },
-      parser:       { label: "PARSER",       color: "#5b9cff", skin: "#e8b48c", hair: "#241a2a", desc: "Convierte la feature en tareas atómicas." },
-      coder:        { label: "CODER",        color: "#46d39a", skin: "#f1c9a5", hair: "#6b4a2a", desc: "Implementa la tarea actual del ciclo." },
-      tester:       { label: "TESTER",       color: "#ffc24b", skin: "#d99b6c", hair: "#1e1726", desc: "Corre la suite y reporta pass/fail." },
-      critic:       { label: "CRITIC",       color: "#ff6b8a", skin: "#f1c9a5", hair: "#8a3b3b", desc: "Revisión en dos ejes: Standards y Spec." },
-      reviewer:     { label: "REVIEWER",     color: "#38d6d6", skin: "#e8b48c", hair: "#241a2a", desc: "Cierra el ciclo y genera las próximas tareas." },
-      verifier:     { label: "VERIFIER",     color: "#ff924b", skin: "#c98a5e", hair: "#1e1726", desc: "Verificación black-box: corre la app de verdad." },
-      orchestrator: { label: "ORCHESTRATOR", color: "#ffd84b", skin: "#f1c9a5", hair: "#caa23a", desc: "Coordina roles, loops, commits y rate-limits." }
+      planner:      { label: "PLANNER",      color: "#b07cff", skin: "#f1c9a5", hair: "#3a2d4a", desc: "Reads the plan and extracts vertical-slice features." },
+      parser:       { label: "PARSER",       color: "#5b9cff", skin: "#e8b48c", hair: "#241a2a", desc: "Breaks the feature into atomic tasks." },
+      coder:        { label: "CODER",        color: "#46d39a", skin: "#f1c9a5", hair: "#6b4a2a", desc: "Implements the current task in the cycle." },
+      tester:       { label: "TESTER",       color: "#ffc24b", skin: "#d99b6c", hair: "#1e1726", desc: "Runs the suite and reports pass/fail." },
+      critic:       { label: "CRITIC",       color: "#ff6b8a", skin: "#f1c9a5", hair: "#8a3b3b", desc: "Reviews on two axes: Standards and Spec." },
+      reviewer:     { label: "REVIEWER",     color: "#38d6d6", skin: "#e8b48c", hair: "#241a2a", desc: "Closes the cycle and generates the next tasks." },
+      verifier:     { label: "VERIFIER",     color: "#ff924b", skin: "#c98a5e", hair: "#1e1726", desc: "Black-box verification: runs the real app." },
+      orchestrator: { label: "ORCHESTRATOR", color: "#ffd84b", skin: "#f1c9a5", hair: "#caa23a", desc: "Coordinates roles, loops, commits and rate-limits." }
     };
     this.keys = { up: false, down: false, left: false, right: false };
     this.player = { x: 264, y: 310 };
@@ -225,7 +225,7 @@
     var pend = ts.find(function (t) { return t.status === "pending"; });
     if (pend) return { id: pend.id, title: pend.title };
     if (ts.length) { var last = ts[ts.length - 1]; return { id: last.id, title: last.title }; }
-    return { id: "—", title: "Sin tareas todavía" };
+    return { id: "—", title: "No tasks yet" };
   };
   Office.prototype.roleActivity = function (id) {
     var out = [];
@@ -250,10 +250,10 @@
       if (e && e.event === "agent_run" && e.role === id) { runs++; if (!last) last = e; }
     }
     return [
-      { k: "estado", v: last ? (last.status || "—") : "—" },
-      { k: "agente", v: last ? shortAgent(last.agent) : "—" },
-      { k: "última", v: last && last.duration_s ? Math.round(last.duration_s) + "s" : "—" },
-      { k: "corridas", v: String(runs) }
+      { k: "status", v: last ? (last.status || "—") : "—" },
+      { k: "agent", v: last ? shortAgent(last.agent) : "—" },
+      { k: "last", v: last && last.duration_s ? Math.round(last.duration_s) + "s" : "—" },
+      { k: "runs", v: String(runs) }
     ];
   };
   Office.prototype.roleSummary = function (id) {
@@ -262,7 +262,7 @@
       var s = r.notes_for_memory || r.summary || r.summary_of_cycle;
       if (s) return s;
     }
-    return "Sin resumen disponible todavía. Abrí la pestaña JSON para ver el último resultado crudo del rol.";
+    return "No summary available yet. Open the JSON tab to see the role's latest raw result.";
   };
   Office.prototype.featureInfo = function () {
     var fs = this.state.features;
@@ -356,9 +356,9 @@
   };
   Office.prototype.statusMeta = function (s) {
     return ({
-      done: { c: "#5b9cff", t: "completado" }, working: { c: "#46d39a", t: "trabajando" },
-      waiting: { c: "#ffc24b", t: "en espera" }, queued: { c: "#6c63a0", t: "en cola" },
-      coord: { c: "#ffd84b", t: "coordinando" }
+      done: { c: "#5b9cff", t: "done" }, working: { c: "#46d39a", t: "working" },
+      waiting: { c: "#ffc24b", t: "waiting" }, queued: { c: "#6c63a0", t: "queued" },
+      coord: { c: "#ffd84b", t: "coordinating" }
     })[s];
   };
 
@@ -406,7 +406,7 @@
         charStyle: { position: "absolute", left: "50%", top: (L.hub ? 86 : 92) + "px", transform: "translateX(-50%)", cursor: "pointer", animation: "bob " + (1.4 + (id.length % 5) * 0.12) + "s ease-in-out infinite", filter: "drop-shadow(0 3px 3px #0007)", zIndex: 7 },
         dotStyle: { position: "absolute", left: "calc(50% + 14px)", top: (L.hub ? 80 : 86) + "px", width: "9px", height: "9px", borderRadius: "50%", background: sm.c, boxShadow: "0 0 8px " + sm.c, border: "1.5px solid #15102b", zIndex: 9, animation: st === "working" ? "pls 1.1s ease-in-out infinite" : (st === "coord" ? "pls 1.6s ease-in-out infinite" : "none") },
         promptStyle: { position: "absolute", left: "50%", top: "-2px", transform: "translateX(-50%)", fontFamily: "'Silkscreen'", fontSize: "9px", color: "#15102b", background: "#ffd84b", borderRadius: "6px", padding: "3px 8px", whiteSpace: "nowrap", boxShadow: "0 3px 8px #000a, 0 0 14px #ffd84b66", zIndex: 12, animation: "float 1.6s ease-in-out infinite" },
-        promptText: L.hub ? "E · " + R.label : "E · hablar",
+        promptText: L.hub ? "E · " + R.label : "E · talk",
         spriteEl: self.spriteEl(id, L.hub ? 5 : 4),
         near: (S.near === id && !S.openRole),
         onOpen: function () { self.open(id); }
@@ -452,8 +452,8 @@
       var ct = this.currentTask();
       var res = this.state.results[oid];
       var jsonNode;
-      if (res === undefined) jsonNode = h("div", { style: { color: "#6c63a0", fontSize: "11.5px" } }, "Cargando…");
-      else if (res === null) jsonNode = h("div", { style: { color: "#6c63a0", fontSize: "11.5px" } }, "Sin resultado todavía.");
+      if (res === undefined) jsonNode = h("div", { style: { color: "#6c63a0", fontSize: "11.5px" } }, "Loading…");
+      else if (res === null) jsonNode = h("div", { style: { color: "#6c63a0", fontSize: "11.5px" } }, "No result yet.");
       else jsonNode = this.jsonEl(res);
       open = {
         label: Ro.label, desc: Ro.desc, spriteEl: this.spriteEl(oid, 4), statusLabel: smo.t,
@@ -499,7 +499,7 @@
         el("div", { style: "width:26px;height:26px;border-radius:6px;background:linear-gradient(135deg,#ffd84b,#ff924b);box-shadow:0 0 14px #ffba4b66;display:flex;align-items:center;justify-content:center;font-family:'Silkscreen';font-size:14px;color:#1a1430;" }, "O"),
         el("div", { style: "line-height:1.05;" },
           el("div", { style: "font-family:'Silkscreen';font-size:12px;letter-spacing:.5px;color:#fff;" }, "ORQUESTALITE"),
-          el("div", { style: "font-size:9.5px;color:#8a7fb8;letter-spacing:.3px;margin-top:2px;" }, "factory · oficina virtual"))),
+          el("div", { style: "font-size:9.5px;color:#8a7fb8;letter-spacing:.3px;margin-top:2px;" }, "factory · virtual office"))),
       this.modeToggle(),
       el("div", { style: "display:flex;align-items:center;gap:8px;min-width:max-content;padding-left:14px;border-left:1px solid #2c2250;" },
         el("span", { style: "font-size:11px;color:#b9b0e0;" }, v.feature.name),
@@ -513,16 +513,16 @@
       el("div", { style: "display:flex;align-items:center;gap:14px;min-width:max-content;margin-left:auto;" },
         el("div", { style: "text-align:right;line-height:1.1;" },
           el("div", { style: "font-family:'Silkscreen';font-size:11px;color:#fff;" }, v.stats.done, el("span", { style: "color:#6c63a0;" }, "/" + v.stats.total)),
-          el("div", { style: "font-size:8.5px;color:#8a7fb8;" }, "tareas")),
+          el("div", { style: "font-size:8.5px;color:#8a7fb8;" }, "tasks")),
         el("div", { style: "text-align:right;line-height:1.1;" },
           el("div", { style: "font-family:'Silkscreen';font-size:11px;color:#fff;" }, "C" + v.stats.cycle),
-          el("div", { style: "font-size:8.5px;color:#8a7fb8;" }, "ciclo")),
+          el("div", { style: "font-size:8.5px;color:#8a7fb8;" }, "cycle")),
         el("div", { style: "text-align:right;line-height:1.1;" },
           el("div", { style: "font-family:'Silkscreen';font-size:11px;color:#ffd84b;" }, v.stats.cost),
-          el("div", { style: "font-size:8.5px;color:#8a7fb8;" }, "gasto")),
+          el("div", { style: "font-size:8.5px;color:#8a7fb8;" }, "spend")),
         el("div", { style: "text-align:right;line-height:1.1;" },
           el("div", { ref: this.elapsedRef, style: "font-family:'Silkscreen';font-size:11px;color:" + (this.state.connected ? "#46d39a" : "#6c63a0") + ";" }, "00:00:00"),
-          el("div", { style: "font-size:8.5px;color:#8a7fb8;" }, "en vivo"))));
+          el("div", { style: "font-size:8.5px;color:#8a7fb8;" }, "live"))));
 
     var stage = el("div", { ref: this.stageWrapRef, style: "position:relative;flex:1 1 auto;overflow:hidden;" },
       el("div", { ref: this.stageRef, style: v.stageStyle },
@@ -538,10 +538,10 @@
         }),
         el("div", { ref: this.playerRef, style: "position:absolute;left:0;top:0;transform:translate(204px,250px);z-index:18;will-change:transform;" },
           el("div", { ref: this.facingRef, style: "animation:bob 1.5s ease-in-out infinite;transform-origin:50% 100%;" }, v.playerSpriteEl),
-          el("div", { style: "position:absolute;top:-15px;left:50%;font-family:'Silkscreen';font-size:8px;color:#ffd84b;text-shadow:0 1px 0 #000,0 0 6px #ffba4b88;white-space:nowrap;animation:float 2s ease-in-out infinite;" }, "TÚ"))),
+          el("div", { style: "position:absolute;top:-15px;left:50%;font-family:'Silkscreen';font-size:8px;color:#ffd84b;text-shadow:0 1px 0 #000,0 0 6px #ffba4b88;white-space:nowrap;animation:float 2s ease-in-out infinite;" }, "YOU"))),
       el("div", { style: v.hintStyle },
-        el("span", { style: "color:#ffd84b;font-family:'Silkscreen';font-size:8px;" }, "WASD"), " moverse  ·  ",
-        el("span", { style: "color:#ffd84b;font-family:'Silkscreen';font-size:8px;" }, "E"), " hablar"),
+        el("span", { style: "color:#ffd84b;font-family:'Silkscreen';font-size:8px;" }, "WASD"), " move  ·  ",
+        el("span", { style: "color:#ffd84b;font-family:'Silkscreen';font-size:8px;" }, "E"), " talk"),
       el("div", { style: v.dpadWrapStyle },
         el("div", { style: "display:grid;grid-template-columns:repeat(3,46px);grid-template-rows:repeat(3,46px);gap:4px;" },
           h("div"), el("div", { onPointerDown: v.dpad.upD, onPointerUp: v.dpad.upU, onPointerLeave: v.dpad.upU, style: v.dpadBtn }, "▲"), h("div"),
@@ -563,21 +563,21 @@
             el("div", { style: o.badgeStyle }, o.statusLabel),
             el("div", { onClick: v.closePanel, className: "btnx", style: "cursor:pointer;width:28px;height:28px;border-radius:7px;display:flex;align-items:center;justify-content:center;background:#241c40;color:#b9b0e0;font-size:15px;" }, "✕")),
           el("div", { style: "flex:0 0 auto;display:flex;gap:4px;padding:8px 12px 0;border-bottom:1px solid #251d44;background:#15102b;" },
-            el("div", { onClick: o.tEstado, style: o.tabEstadoStyle }, "ESTADO"),
-            el("div", { onClick: o.tResumen, style: o.tabResumenStyle }, "RESUMEN"),
+            el("div", { onClick: o.tEstado, style: o.tabEstadoStyle }, "STATE"),
+            el("div", { onClick: o.tResumen, style: o.tabResumenStyle }, "SUMMARY"),
             el("div", { onClick: o.tJson, style: o.tabJsonStyle }, "JSON")),
           o.isEstado ? el("div", { style: "flex:1 1 auto;overflow-y:auto;padding:16px;" },
             el("div", { style: "border:1px solid #2e2550;border-radius:10px;padding:14px;background:#19132f;box-shadow:inset 0 0 0 1px var(--rc-soft);" },
-              el("div", { style: "font-size:9px;color:#8a7fb8;letter-spacing:1px;" }, "TAREA ACTUAL"),
+              el("div", { style: "font-size:9px;color:#8a7fb8;letter-spacing:1px;" }, "CURRENT TASK"),
               el("div", { style: "display:flex;align-items:center;gap:8px;margin-top:7px;" },
                 el("span", { style: "font-family:'Silkscreen';font-size:10px;color:var(--rc);background:var(--rc-soft);border-radius:5px;padding:2px 6px;" }, o.taskId),
                 el("span", { style: "font-size:12px;color:#ece7ff;" }, o.taskTitle))),
-            el("div", { style: "font-size:9px;color:#8a7fb8;letter-spacing:1px;margin:18px 0 9px;" }, "ACTIVIDAD · run.log"),
+            el("div", { style: "font-size:9px;color:#8a7fb8;letter-spacing:1px;margin:18px 0 9px;" }, "ACTIVITY · run.log"),
             o.activity.length ? o.activity.map(function (a, i) {
               return el("div", { key: i, style: "display:flex;gap:10px;padding:7px 0;border-bottom:1px dashed #251d44;" },
                 el("span", { style: "font-size:10px;color:#6c63a0;flex:0 0 auto;font-variant-numeric:tabular-nums;" }, a.t),
                 el("span", { style: "font-size:11px;color:#c7bff0;line-height:1.4;" }, a.m));
-            }) : el("div", { style: "font-size:11px;color:#6c63a0;" }, "Sin actividad todavía."),
+            }) : el("div", { style: "font-size:11px;color:#6c63a0;" }, "No activity yet."),
             el("div", { style: "display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:16px;" },
               o.statChips.map(function (sc, i) {
                 return el("div", { key: i, style: "background:#19132f;border:1px solid #2a2248;border-radius:8px;padding:9px 11px;" },
@@ -585,7 +585,7 @@
                   el("div", { style: "font-size:9px;color:#8a7fb8;margin-top:3px;" }, sc.k));
               }))) : null,
           o.isResumen ? el("div", { style: "flex:1 1 auto;overflow-y:auto;padding:16px;" },
-            el("div", { style: "font-size:9px;color:#8a7fb8;letter-spacing:1px;margin-bottom:9px;" }, "RESUMEN DE SESIÓN"),
+            el("div", { style: "font-size:9px;color:#8a7fb8;letter-spacing:1px;margin-bottom:9px;" }, "SESSION SUMMARY"),
             el("div", { style: "font-size:12.5px;line-height:1.65;color:#d9d2f5;border-left:3px solid var(--rc);padding-left:13px;" }, o.summary)) : null,
           o.isJson ? el("div", { style: "flex:1 1 auto;overflow:auto;padding:14px;background:#0c0820;" },
             el("div", { style: "font-size:9px;color:#6c63a0;letter-spacing:1px;margin-bottom:10px;" }, ".orquestalite/results/" + v.openRole + ".json"),
