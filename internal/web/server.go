@@ -5,6 +5,7 @@
 package web
 
 import (
+	"bufio"
 	"context"
 	"embed"
 	"encoding/json"
@@ -13,10 +14,20 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sync"
 	"time"
 
 	"github.com/lionelchamorro/orquestalite/internal/cost"
+	"github.com/lionelchamorro/orquestalite/internal/gitx"
+)
+
+// taskIDRe and shaRe gate the values handed to git: a task id reaches the
+// handler from the URL, and the commit sha is read back from run.log. Both are
+// validated so neither can smuggle a leading "-" (and thus a git flag) through.
+var (
+	taskIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+	shaRe    = regexp.MustCompile(`^[0-9a-fA-F]{7,40}$`)
 )
 
 //go:embed static
@@ -51,6 +62,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/events", s.handleEvents)
 	mux.HandleFunc("GET /api/cost", s.handleCost)
 	mux.HandleFunc("GET /api/result/{role}", s.handleResult)
+	mux.HandleFunc("GET /api/diff/{task}", s.handleDiff)
 
 	static, err := fs.Sub(staticFS, "static")
 	if err != nil {
@@ -87,6 +99,91 @@ func (s *Server) handleResult(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.serveJSONFile(w, filepath.Join(s.statePath("results"), role+".json"), "null")
+}
+
+// handleDiff returns the code changes that landed for one task: the git diff of
+// the commit recorded for that task in run.log, plus the agent that produced it.
+// {"available": false} when the task has no commit yet or the repo is absent.
+func (s *Server) handleDiff(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+
+	write := func(v any) {
+		raw, err := json.Marshal(v)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write(raw)
+	}
+
+	task := r.PathValue("task")
+	if !taskIDRe.MatchString(task) {
+		write(map[string]any{"available": false})
+		return
+	}
+	sha, agent := s.findTaskCommit(task)
+	if !shaRe.MatchString(sha) {
+		write(map[string]any{"available": false})
+		return
+	}
+	diff, err := gitx.ShowCommit(s.Dir, sha)
+	if err != nil {
+		write(map[string]any{"available": false, "reason": err.Error()})
+		return
+	}
+	short := sha
+	if len(short) > 8 {
+		short = short[:8]
+	}
+	write(map[string]any{
+		"available": true,
+		"task":      task,
+		"commit":    sha,
+		"short":     short,
+		"agent":     agent,
+		"diff":      diff,
+	})
+}
+
+// findTaskCommit scans run.log for a task's landed commit and the coder agent
+// that produced it. The latest task_done wins (a task may complete more than
+// once across re-runs); agent falls back to any agent_run for the task.
+func (s *Server) findTaskCommit(task string) (sha, agent string) {
+	f, err := os.Open(s.statePath("run.log"))
+	if err != nil {
+		return "", ""
+	}
+	defer f.Close()
+
+	var anyAgent string
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for sc.Scan() {
+		var e struct {
+			Event     string `json:"event"`
+			TaskID    string `json:"task_id"`
+			CommitSHA string `json:"commit_sha"`
+			Role      string `json:"role"`
+			Agent     string `json:"agent"`
+		}
+		if json.Unmarshal(sc.Bytes(), &e) != nil || e.TaskID != task {
+			continue
+		}
+		switch e.Event {
+		case "task_done":
+			sha = e.CommitSHA
+		case "agent_run":
+			anyAgent = e.Agent
+			if e.Role == "coder" {
+				agent = e.Agent
+			}
+		}
+	}
+	if agent == "" {
+		agent = anyAgent
+	}
+	return sha, agent
 }
 
 // handleTasks serves tasks.json verbatim (empty task list when absent).

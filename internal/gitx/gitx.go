@@ -126,6 +126,13 @@ func LogStat(dir, sinceSHA string) (string, error) {
 	return run(dir, "log", sinceSHA+"..HEAD", "--stat")
 }
 
+// ShowCommit returns one commit's message, diffstat, and full patch, as the
+// dashboard surfaces per-task changes. The caller must validate sha (it is
+// passed straight to git); a leading "-" would otherwise look like a flag.
+func ShowCommit(dir, sha string) (string, error) {
+	return run(dir, "show", "--no-color", "--stat", "--patch", "--format=fuller", sha)
+}
+
 // CurrentBranch returns the checked-out branch name, or an error in detached
 // HEAD state (factory mode requires a named base branch).
 func CurrentBranch(dir string) (string, error) {

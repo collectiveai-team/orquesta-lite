@@ -79,6 +79,24 @@
   .role { color: var(--accent); }
   .muted { color: var(--muted); }
   #empty-tasks { padding: 18px 14px; color: var(--muted); }
+  tr.taskrow { cursor: pointer; }
+  tr.taskrow:hover td { background: #1c2230; }
+  #diff-modal { position: fixed; inset: 0; display: none; z-index: 10; }
+  #diff-modal.open { display: block; }
+  #diff-backdrop { position: absolute; inset: 0; background: rgba(1,4,9,0.6); }
+  #diff-card {
+    position: absolute; top: 5%; left: 50%; transform: translateX(-50%);
+    width: min(1000px, 92vw); max-height: 88vh; display: flex; flex-direction: column;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+  }
+  #diff-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 13px; }
+  #diff-head .x { margin-left: auto; cursor: pointer; color: var(--muted); }
+  #diff-head .x:hover { color: var(--fg); }
+  #diff-pre { margin: 0; padding: 12px 14px; overflow: auto; font-size: 12px; line-height: 1.5; white-space: pre; }
+  #diff-pre .add { color: var(--ok); }
+  #diff-pre .del { color: var(--err); }
+  #diff-pre .hunk { color: var(--accent); }
+  #diff-pre .meta { color: var(--muted); }
 </style>
 </head>
 <body>
@@ -113,6 +131,13 @@
     <ul id="events"></ul>
   </section>
 </main>
+<div id="diff-modal">
+  <div id="diff-backdrop"></div>
+  <div id="diff-card">
+    <div id="diff-head"><b id="diff-title"></b><span id="diff-meta" class="muted"></span><span class="x" id="diff-close" title="close (Esc)">✕</span></div>
+    <pre id="diff-pre"></pre>
+  </div>
+</div>
 <script>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
@@ -125,7 +150,7 @@ async function refreshTasks() {
     const tasks = data.tasks || [];
     $("empty-tasks").style.display = tasks.length ? "none" : "block";
     $("tasks-table").style.display = tasks.length ? "table" : "none";
-    $("tasks-body").innerHTML = tasks.map(t => `<tr>
+    $("tasks-body").innerHTML = tasks.map(t => `<tr class="taskrow" data-task="${esc(t.id)}" title="click to view this task's changes">
       <td>${esc(t.id)}</td>
       <td>${badge(t.status)}</td>
       <td>${badge(t.verify_state)}</td>
@@ -207,6 +232,39 @@ async function refreshCost() {
     $("cost").textContent = c.available ? `$${c.total_usd.toFixed(2)}` : "";
   } catch { /* retry on next poll */ }
 }
+
+function colorDiff(text) {
+  return String(text).split("\n").map(line => {
+    let c = "";
+    if (line.startsWith("+") && !line.startsWith("+++")) c = "add";
+    else if (line.startsWith("-") && !line.startsWith("---")) c = "del";
+    else if (line.startsWith("@@")) c = "hunk";
+    else if (/^(commit |Author|AuthorDate|Commit|CommitDate|Date|diff |index |\+\+\+|---) /.test(line) || /^(diff|index|\+\+\+|---)/.test(line)) c = "meta";
+    return `<span class="${c}">${esc(line)}</span>`;
+  }).join("\n");
+}
+
+async function openDiff(task) {
+  $("diff-title").textContent = task;
+  $("diff-meta").textContent = "loading…";
+  $("diff-pre").innerHTML = "";
+  $("diff-modal").classList.add("open");
+  try {
+    const res = await fetch("/api/diff/" + encodeURIComponent(task));
+    const d = await res.json();
+    if (!d.available) { $("diff-meta").textContent = ""; $("diff-pre").textContent = "No commit recorded for this task yet."; return; }
+    $("diff-meta").textContent = [d.short, d.agent].filter(Boolean).join(" · ");
+    $("diff-pre").innerHTML = colorDiff(d.diff || "");
+  } catch { $("diff-meta").textContent = ""; $("diff-pre").textContent = "Failed to load diff."; }
+}
+function closeDiff() { $("diff-modal").classList.remove("open"); }
+$("diff-backdrop").addEventListener("click", closeDiff);
+$("diff-close").addEventListener("click", closeDiff);
+document.addEventListener("keydown", e => { if (e.key === "Escape") closeDiff(); });
+$("tasks-body").addEventListener("click", e => {
+  const tr = e.target.closest("tr[data-task]");
+  if (tr) openDiff(tr.dataset.task);
+});
 
 refreshTasks(); refreshFactory(); connectEvents(); refreshCost();
 setInterval(refreshTasks, 2000);
