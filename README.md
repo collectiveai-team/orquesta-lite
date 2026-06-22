@@ -25,7 +25,7 @@ task state in `.orquestalite/tasks.json`, and commits successful tasks.
 
 Pre-built binaries are published for Linux, macOS, and Windows on `amd64` and
 `arm64`. Pick the archive matching your platform from the
-[releases page](https://github.com/lionelchamorro/orquestalite/releases) and
+[releases page](https://github.com/lionelchamorro/orquesta-lite/releases) and
 extract `orq-lite` onto your `PATH`.
 
 **macOS / Linux** — replace `VERSION`, `OS` (`darwin` or `linux`), and `ARCH`
@@ -36,11 +36,11 @@ VERSION=v0.1.0
 OS=darwin
 ARCH=arm64
 curl -L -o orq-lite.tar.gz \
-  "https://github.com/lionelchamorro/orquestalite/releases/download/${VERSION}/orq-lite-${VERSION}-${OS}-${ARCH}.tar.gz"
+  "https://github.com/lionelchamorro/orquesta-lite/releases/download/${VERSION}/orq-lite-${VERSION}-${OS}-${ARCH}.tar.gz"
 
 # Optional: verify checksum
 curl -L -o orq-lite.tar.gz.sha256 \
-  "https://github.com/lionelchamorro/orquestalite/releases/download/${VERSION}/orq-lite-${VERSION}-${OS}-${ARCH}.tar.gz.sha256"
+  "https://github.com/lionelchamorro/orquesta-lite/releases/download/${VERSION}/orq-lite-${VERSION}-${OS}-${ARCH}.tar.gz.sha256"
 shasum -a 256 -c orq-lite.tar.gz.sha256
 
 tar -xzf orq-lite.tar.gz
@@ -59,7 +59,7 @@ xattr -d com.apple.quarantine /usr/local/bin/orq-lite
 ```powershell
 $Version = "v0.1.0"
 $Arch    = "amd64"   # or "arm64"
-$Url     = "https://github.com/lionelchamorro/orquestalite/releases/download/$Version/orq-lite-$Version-windows-$Arch.zip"
+$Url     = "https://github.com/lionelchamorro/orquesta-lite/releases/download/$Version/orq-lite-$Version-windows-$Arch.zip"
 Invoke-WebRequest -Uri $Url -OutFile orq-lite.zip
 Expand-Archive orq-lite.zip -DestinationPath .
 # Move orq-lite.exe somewhere on your PATH
