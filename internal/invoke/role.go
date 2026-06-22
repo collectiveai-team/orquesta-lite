@@ -24,6 +24,15 @@ type AgentRunner interface {
 	Run(ctx context.Context, s runner.Spec) (*runner.Result, error)
 }
 
+// SessionStore records and recalls a provider session id per (task, role,
+// agent) so a re-invocation of the same agent on the same task can resume the
+// conversation. Implemented by internal/sessions.Store.
+type SessionStore interface {
+	Get(task, role, agent string) string
+	Set(task, role, agent, id string) error
+	Delete(task, role, agent string) error
+}
+
 type ExecRunner struct{}
 
 func (ExecRunner) Run(ctx context.Context, s runner.Spec) (*runner.Result, error) {
@@ -45,6 +54,13 @@ type RoleInvoker struct {
 	// When set and readable, its contents are injected into every role prompt
 	// as {{CONVENTIONS}}. Read fresh per call so edits take effect mid-run.
 	ConventionsPath string
+	// Sessions, when set, records each successful run's provider session id and
+	// supplies it back to resume the conversation when the same agent runs again
+	// on the same task. Nil disables session tracking entirely.
+	Sessions SessionStore
+	// ResumeRoles is the set of roles allowed to resume a prior session. Empty
+	// or nil means no role resumes (tracking still happens for all roles).
+	ResumeRoles map[string]bool
 }
 
 type RoleCall struct {
@@ -211,6 +227,11 @@ func (inv *RoleInvoker) run(ctx context.Context, roleName string, role config.Ro
 				"ROLE":        roleName,
 			},
 		}
+		// Resume this agent's prior conversation for the task when one exists.
+		// Only the same agent on the same task resumes; a fallback to a different
+		// agent finds no entry and starts fresh (the desired "switch provider →
+		// from scratch" behaviour).
+		spec.ResumeSessionID = inv.resumeSessionID(roleName, agentName, rc.TaskID)
 		r, err := inv.runner().Run(ctx, spec)
 		if err != nil {
 			return fallback.Outcome{}, err
@@ -227,6 +248,18 @@ func (inv *RoleInvoker) run(ctx context.Context, roleName string, role config.Ro
 		inv.recordHealth(roleName, agentName, shouldFallback, fallbackReason)
 		if !shouldFallback && inv.OnAgentSuccess != nil {
 			inv.OnAgentSuccess(roleName, agentName)
+		}
+		// Record the session of a successful run so the next invocation of this
+		// same agent on this same task can resume it. On a non-rate-limit failure
+		// of a resumed run, drop the stored session so a stale/expired id is not
+		// retried on every subsequent attempt.
+		if inv.Sessions != nil && inv.ResumeRoles[roleName] && rc.TaskID != "" {
+			switch {
+			case !shouldFallback:
+				_ = inv.Sessions.Set(rc.TaskID, roleName, agentName, r.SessionID)
+			case spec.ResumeSessionID != "" && !r.RateLimited:
+				_ = inv.Sessions.Delete(rc.TaskID, roleName, agentName)
+			}
 		}
 		inv.logAgentRun(roleName, agentName, ag, spec, r, fallbackReason, rc)
 
@@ -266,6 +299,15 @@ func (inv *RoleInvoker) runner() AgentRunner {
 		return inv.Runner
 	}
 	return ExecRunner{}
+}
+
+// resumeSessionID returns the stored session for (task, role, agent) when
+// session resume is enabled for the role, else "".
+func (inv *RoleInvoker) resumeSessionID(role, agent, taskID string) string {
+	if inv.Sessions == nil || taskID == "" || !inv.ResumeRoles[role] {
+		return ""
+	}
+	return inv.Sessions.Get(taskID, role, agent)
 }
 
 func (inv *RoleInvoker) recordHealth(roleName, agentName string, shouldFallback bool, fallbackReason string) {
@@ -329,6 +371,10 @@ func (inv *RoleInvoker) logAgentRun(roleName, agentName string, ag config.AgentS
 		"stderr_tail":      r.StderrTail(2048),
 		"stdout_tail":      r.StdoutTail(2048),
 		"fallback_reason":  fallbackReason,
+	}
+	if spec.ResumeSessionID != "" {
+		fields["resumed"] = true
+		fields["resumed_from"] = spec.ResumeSessionID
 	}
 	if cmdLine := redactedCmdLine(ag.Cmd, spec.TemplateVars); cmdLine != "" {
 		fields["cmd_line"] = cmdLine

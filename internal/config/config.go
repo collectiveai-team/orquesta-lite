@@ -81,6 +81,17 @@ type Limits struct {
 	// verification can fail and feed its findings back as tasks before the
 	// feature is marked failed. 0 = use the default (2).
 	MaxVisualRounds int `json:"max_visual_rounds,omitempty"`
+	// ResumeSessions lets the coder resume its provider session for a task on
+	// fix-loop feedback (and after a factory --resume) when the same agent runs
+	// again, instead of starting the conversation from scratch. Defaults to true
+	// (nil = enabled); switching to a different provider always starts fresh.
+	ResumeSessions *bool `json:"resume_sessions,omitempty"`
+}
+
+// SessionResumeEnabled reports whether agents may resume a prior provider
+// session for the same task. Enabled unless explicitly set to false.
+func (l Limits) SessionResumeEnabled() bool {
+	return l.ResumeSessions == nil || *l.ResumeSessions
 }
 
 // VisualRounds returns the configured cap on browser-verify feedback rounds for
