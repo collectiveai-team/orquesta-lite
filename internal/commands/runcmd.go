@@ -702,6 +702,72 @@ func (d *liveDeps) runShell(ctx context.Context, command string, timeout time.Du
 	return string(out), err
 }
 
+// maybeCompactMemory rewrites .orquestalite/memory.md via the compactor role
+// when it has grown past the configured size, keeping durable facts and
+// shrinking what gets injected into every prompt. It is a no-op when no
+// "compactor" role is configured or memory is still under the threshold, and
+// any failure is logged and swallowed (compaction is an optimization, never a
+// gate on progress).
+func (d *liveDeps) maybeCompactMemory(ctx context.Context) {
+	if _, ok := d.inv.Specs["compactor"]; !ok {
+		return
+	}
+	info, err := os.Stat(d.memPath)
+	if err != nil {
+		return
+	}
+	before := int(info.Size())
+	if before <= d.cfg.Limits.MemoryCompactThreshold() {
+		return
+	}
+	r, err := invoke.Role(ctx, d.inv, "compactor",
+		invoke.RoleCall{Vars: map[string]string{}},
+		invoke.RunContext{TaskID: "_memory", Attempt: 1},
+		results.ParseCompactor)
+	if err != nil {
+		d.log.Log(eventlog.Event{Type: "memory_compact_failed", Fields: map[string]any{"error": err.Error()}})
+		return
+	}
+	next, ok := compactedMemory(before, r.Memory)
+	if !ok {
+		d.log.Log(eventlog.Event{Type: "memory_compact_skipped", Fields: map[string]any{
+			"before_chars": before, "reason": "result not smaller",
+		}})
+		return
+	}
+	if err := writeFileAtomic(d.memPath, []byte(next)); err != nil {
+		d.log.Log(eventlog.Event{Type: "memory_compact_failed", Fields: map[string]any{"error": err.Error()}})
+		return
+	}
+	d.log.Log(eventlog.Event{Type: "memory_compacted", Fields: map[string]any{
+		"before_chars": before, "after_chars": len(next), "kept_notes": r.KeptNotes,
+	}})
+}
+
+// compactedMemory normalizes a compactor result and reports whether it should
+// replace the existing memory: non-empty and actually smaller than before.
+func compactedMemory(before int, raw string) (string, bool) {
+	s := strings.TrimRight(raw, "\n")
+	if strings.TrimSpace(s) == "" {
+		return "", false
+	}
+	s += "\n"
+	if len(s) >= before {
+		return "", false
+	}
+	return s, true
+}
+
+// writeFileAtomic writes data to path via a temp file + rename so a crash
+// mid-write cannot leave a half-written memory file.
+func writeFileAtomic(path string, data []byte) error {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
 // liveRoleRunner implements loops.RoleRunner using real subprocess agents.
 type liveRoleRunner struct {
 	deps         *liveDeps
@@ -711,6 +777,13 @@ type liveRoleRunner struct {
 // RunCoder invokes the coder role for a single fix attempt.
 func (rr *liveRoleRunner) RunCoder(ctx context.Context, rc invoke.RunContext, fb loops.CoderFeedback) (loops.CoderOutcome, error) {
 	d := rr.deps
+	// At the start of a task's coding, shrink memory if it has grown past the
+	// threshold so the (full) memory injected into this and following prompts
+	// stays bounded. Self-throttles: after a compaction it stays under until it
+	// regrows. Skipped on fix retries to keep the memory stable within a task.
+	if rc.Attempt <= 1 {
+		d.maybeCompactMemory(ctx)
+	}
 	r, err := invoke.Role(ctx, d.inv, "coder", invoke.RoleCall{
 		AgentOverride: fb.AgentOverride,
 		Vars: map[string]string{

@@ -16,7 +16,7 @@ var orchestratedRoles = []string{"parser", "coder", "tester", "critic", "reviewe
 // "verifier" black-box-verifies the change after the critic approves.
 // "planner" extracts vertical-slice features from a plan in factory mode; it is
 // not used by `run`, so a team.json without it still works for non-factory use.
-var optionalRoles = []string{"verifier", "planner"}
+var optionalRoles = []string{"verifier", "planner", "compactor"}
 
 type Agent struct {
 	Cmd                        []string `json:"cmd,omitempty"`
@@ -86,6 +86,21 @@ type Limits struct {
 	// again, instead of starting the conversation from scratch. Defaults to true
 	// (nil = enabled); switching to a different provider always starts fresh.
 	ResumeSessions *bool `json:"resume_sessions,omitempty"`
+	// MemoryCompactChars is the size (in characters) of .orquestalite/memory.md
+	// above which the compactor role rewrites it into a smaller, deduplicated
+	// digest, so the full memory injected into every prompt stays bounded.
+	// 0 = use the default (24000 ≈ 6k tokens). Compaction only runs when a
+	// "compactor" role is configured.
+	MemoryCompactChars int `json:"memory_compact_chars,omitempty"`
+}
+
+// MemoryCompactThreshold returns the memory size above which compaction runs,
+// defaulting to 24000 characters when unset.
+func (l Limits) MemoryCompactThreshold() int {
+	if l.MemoryCompactChars <= 0 {
+		return 24000
+	}
+	return l.MemoryCompactChars
 }
 
 // SessionResumeEnabled reports whether agents may resume a prior provider

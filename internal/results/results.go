@@ -162,6 +162,17 @@ type ReviewerResult struct {
 
 func (r ReviewerResult) MemoryNote() *string { return r.NotesForMemory }
 
+// CompactorResult is the memory librarian's output: a rewritten, deduplicated
+// project memory that keeps durable facts and drops stale per-task chatter.
+type CompactorResult struct {
+	Memory    string `json:"memory"`
+	KeptNotes int    `json:"kept_notes"`
+}
+
+// MemoryNote always returns nil: the compactor must never append a note, which
+// would re-grow the memory it just shrank.
+func (r CompactorResult) MemoryNote() *string { return nil }
+
 func read(path string, into any) error {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -232,6 +243,17 @@ func ParsePlanner(path string) (*PlannerResult, error) {
 	var r PlannerResult
 	if err := read(path, &r); err != nil {
 		return nil, err
+	}
+	return &r, nil
+}
+
+func ParseCompactor(path string) (*CompactorResult, error) {
+	var r CompactorResult
+	if err := read(path, &r); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(r.Memory) == "" {
+		return nil, fmt.Errorf("compactor.memory required")
 	}
 	return &r, nil
 }
