@@ -35,6 +35,25 @@ func TestParsePlanner_FeaturesWithVisualFlag(t *testing.T) {
 	}
 }
 
+func TestParseCompactor_RequiresMemory(t *testing.T) {
+	ok := write(t, `{"memory":"## Backend\n- uses postgres","kept_notes":3}`)
+	r, err := ParseCompactor(ok)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.KeptNotes != 3 || r.Memory == "" {
+		t.Fatalf("got %+v", r)
+	}
+	if r.MemoryNote() != nil {
+		t.Error("compactor must never append a memory note")
+	}
+
+	empty := write(t, `{"memory":"   ","kept_notes":0}`)
+	if _, err := ParseCompactor(empty); err == nil {
+		t.Fatal("expected error: compactor.memory required")
+	}
+}
+
 func TestParseTester_PassNoFailures(t *testing.T) {
 	p := write(t, `{"status":"pass","command_run":"go test","failures":[],"notes_for_memory":null}`)
 	r, err := ParseTester(p)

@@ -38,6 +38,15 @@
       "timeout_seconds": 600,
       "decompose_prompt": "prompts/parser-decompose.md"
     },
+    "compactor": {
+      "agents": [
+        "claude_sonnet",
+        "claude_opus"
+      ],
+      "prompt": "prompts/memory-compactor.md",
+      "result_path": ".orquestalite/results/compactor.json",
+      "timeout_seconds": 600
+    },
     "coder": {
       "agents": [
         "codex_gpt5",
