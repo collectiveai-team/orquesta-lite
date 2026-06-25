@@ -12,6 +12,9 @@ type Summary struct {
 	TasksFailed int
 	TasksOther  int
 	CostUSD     float64
+	// FailedTaskIDs lists the tasks that ended in failed/needs_human, used by the
+	// engine's no-progress guard to decide whether a repair retry made headway.
+	FailedTaskIDs []string
 }
 
 // Config holds factory-level knobs.

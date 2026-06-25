@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -315,5 +316,29 @@ func TestFactory_StatusOutput(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("status output missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestSummarizeTasks_CollectsFailedIDs(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".orquestalite"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tl := &tasks.TaskList{Tasks: []tasks.Task{
+		{ID: "T001", Status: tasks.StatusDone},
+		{ID: "T002", Status: tasks.StatusFailed},
+		{ID: "T003", Status: tasks.StatusNeedsHuman},
+		{ID: "T004", Status: tasks.StatusPending},
+	}}
+	if err := tasks.Save(filepath.Join(dir, ".orquestalite", "tasks.json"), tl); err != nil {
+		t.Fatal(err)
+	}
+	d := &liveFactoryDeps{dir: dir}
+	sum := d.summarizeTasks()
+	if sum.TasksDone != 1 || sum.TasksFailed != 2 || sum.TasksOther != 1 {
+		t.Errorf("counts = %+v", sum)
+	}
+	if fmt.Sprint(sum.FailedTaskIDs) != "[T002 T003]" {
+		t.Errorf("FailedTaskIDs = %v, want [T002 T003]", sum.FailedTaskIDs)
 	}
 }

@@ -539,6 +539,7 @@ func (d *liveFactoryDeps) summarizeTasks() factory.Summary {
 			sum.TasksDone++
 		case tasks.StatusFailed, tasks.StatusNeedsHuman:
 			sum.TasksFailed++
+			sum.FailedTaskIDs = append(sum.FailedTaskIDs, t.ID)
 		default:
 			sum.TasksOther++
 		}
