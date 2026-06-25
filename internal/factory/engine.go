@@ -75,10 +75,12 @@ type Deps interface {
 }
 
 // Run drains the queue: each runnable feature is checked out on its own
-// branch, planned, and run. A feature failure is recorded and the engine
-// moves on; only infrastructure errors (git checkout, state persistence)
-// abort the whole factory run. The work tree is returned to the base branch
-// after every feature.
+// branch, planned, and run. Features that pass the merge gate are merged into
+// base (leaving the tree on base), then the queue continues. Features that fail
+// the gate after a bounded repair loop are left on their branch and the queue
+// stops for operator intervention (--resume). Merge conflicts likewise pause the
+// queue. Only infrastructure errors (git checkout, state persistence) abort the
+// entire factory run.
 func Run(ctx context.Context, q *Queue, cfg Config, d Deps) error {
 	// attempted guards against re-picking a feature already run this invocation
 	// — without it, --resume would re-select a feature that fails again on every

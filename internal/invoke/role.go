@@ -63,6 +63,7 @@ type RoleInvoker struct {
 	ResumeRoles map[string]bool
 	// SessionNamespace scopes session keys (e.g. the factory feature ID "F002")
 	// so identical per-feature task IDs do not resume each other's sessions.
+	// The composed key has the form "<namespace>/<taskID>" (e.g. "F002/T001").
 	// Empty (non-factory run) leaves keys as the bare task ID.
 	SessionNamespace string
 }

@@ -167,6 +167,8 @@ func CheckoutNewBranch(dir, name, base string) error {
 
 // MergeFastForward checks out base and merges branch into it. It prefers a
 // fast-forward; when base has diverged it falls back to a --no-ff merge commit.
+// A --ff-only failure is treated as needing a merge commit and falls through to
+// --no-ff; genuine git errors surface via the --no-ff attempt and abort.
 // Returns the method used ("ff" or "no-ff"). On conflict it runs `git merge
 // --abort` and returns an error, leaving base unchanged with a clean tree.
 func MergeFastForward(dir, base, branch string) (string, error) {
