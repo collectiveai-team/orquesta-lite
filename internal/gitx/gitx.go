@@ -164,3 +164,21 @@ func CheckoutNewBranch(dir, name, base string) error {
 	_, err := run(dir, "checkout", "-b", name, base)
 	return err
 }
+
+// MergeFastForward checks out base and merges branch into it. It prefers a
+// fast-forward; when base has diverged it falls back to a --no-ff merge commit.
+// Returns the method used ("ff" or "no-ff"). On conflict it runs `git merge
+// --abort` and returns an error, leaving base unchanged with a clean tree.
+func MergeFastForward(dir, base, branch string) (string, error) {
+	if err := Checkout(dir, base); err != nil {
+		return "", err
+	}
+	if _, err := run(dir, "merge", "--ff-only", branch); err == nil {
+		return "ff", nil
+	}
+	if _, err := run(dir, "merge", "--no-ff", "--no-edit", branch); err != nil {
+		_, _ = run(dir, "merge", "--abort")
+		return "", fmt.Errorf("merge %s into %s: %w", branch, base, err)
+	}
+	return "no-ff", nil
+}
