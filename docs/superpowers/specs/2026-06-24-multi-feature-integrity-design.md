@@ -1,7 +1,7 @@
 # Spec A — Multi-feature integrity (merge-to-base + per-feature sessions)
 
 Date: 2026-06-24
-Status: approved (design)
+Status: implemented
 Branch: `feat/factory-multi-feature-integrity`
 
 ## Problem
