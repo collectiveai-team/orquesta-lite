@@ -65,6 +65,12 @@ type Deps interface {
 	SaveState(q *Queue) error
 	// Logf reports human-readable progress.
 	Logf(format string, args ...any)
+	// MergeFeatureToBase merges a gate-passed feature branch into base and leaves
+	// the work tree on base. Returns the merge method ("ff" or "no-ff"). An error
+	// (e.g. a conflict) leaves base unchanged for the caller to handle.
+	MergeFeatureToBase(branch, base string) (method string, err error)
+	// Event records a structured factory event (one JSONL line in run.log).
+	Event(name string, fields map[string]any)
 }
 
 // Run drains the queue: each runnable feature is checked out on its own

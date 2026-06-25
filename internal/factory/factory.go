@@ -49,6 +49,11 @@ type Feature struct {
 	CostUSD float64 `json:"cost_usd,omitempty"`
 	// PRURL is the pull request created for the feature branch (--pr).
 	PRURL string `json:"pr_url,omitempty"`
+	// Merged records that this feature's branch was merged into the base branch
+	// (so the next feature inherits its code). Set only when the feature passed
+	// the strict merge gate.
+	Merged   bool       `json:"merged,omitempty"`
+	MergedAt *time.Time `json:"merged_at,omitempty"`
 }
 
 type Queue struct {

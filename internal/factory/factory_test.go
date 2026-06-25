@@ -152,6 +152,10 @@ type fakeDeps struct {
 	checkpoints []string // feature IDs for which CheckpointResidue ran
 	checkpoint  func(f Feature) (bool, error)
 	reusePlans  map[string]bool // feature ID -> reusePlan passed to RunFeature
+	merges      []string        // feature branches passed to MergeFeatureToBase
+	mergeMethod string          // method to return ("" -> "ff")
+	mergeErr    error           // when set, MergeFeatureToBase fails
+	events      []string        // event names recorded via Event
 }
 
 func (d *fakeDeps) CheckoutFeatureBranch(branch, base string) error {
@@ -185,6 +189,19 @@ func (d *fakeDeps) PublishFeature(ctx context.Context, f Feature, base string) (
 }
 func (d *fakeDeps) SaveState(q *Queue) error { d.saves++; return nil }
 func (d *fakeDeps) Logf(string, ...any)      {}
+func (d *fakeDeps) MergeFeatureToBase(branch, base string) (string, error) {
+	d.merges = append(d.merges, branch)
+	if d.mergeErr != nil {
+		return "", d.mergeErr
+	}
+	if d.mergeMethod != "" {
+		return d.mergeMethod, nil
+	}
+	return "ff", nil
+}
+func (d *fakeDeps) Event(name string, _ map[string]any) {
+	d.events = append(d.events, name)
+}
 
 func TestEngineRun_DrainsQueue(t *testing.T) {
 	q := &Queue{BaseBranch: "main", Features: ParseFeatures("## A\n\nbody\n\n## B\n\nbody\n")}

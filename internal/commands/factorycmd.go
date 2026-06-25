@@ -471,6 +471,23 @@ func (d *liveFactoryDeps) featureSpend(ctx context.Context, since time.Time) flo
 	return cost.SpendSince(runs, sessions, since)
 }
 
+func (d *liveFactoryDeps) MergeFeatureToBase(branch, base string) (string, error) {
+	return gitx.MergeFastForward(d.dir, base, branch)
+}
+
+// Event appends one structured event to run.log. It opens the eventlog with a
+// discarded pretty writer so the human stdout stream (driven by Logf) is not
+// duplicated. Best-effort: a log-open failure is silently ignored.
+func (d *liveFactoryDeps) Event(name string, fields map[string]any) {
+	logPath := filepath.Join(d.dir, ".orquestalite", "run.log")
+	logger, err := eventlog.OpenWithFormat(logPath, io.Discard, eventlog.FormatVerbose)
+	if err != nil {
+		return
+	}
+	defer logger.Close()
+	logger.Log(eventlog.Event{Type: name, Fields: fields})
+}
+
 // PublishFeature pushes the feature branch and opens a PR via the gh CLI.
 // Disabled unless the factory was started with --pr.
 func (d *liveFactoryDeps) PublishFeature(ctx context.Context, f factory.Feature, base string) (string, error) {

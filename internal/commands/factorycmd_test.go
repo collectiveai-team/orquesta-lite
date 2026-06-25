@@ -319,6 +319,22 @@ func TestFactory_StatusOutput(t *testing.T) {
 	}
 }
 
+func TestLiveDeps_EventAppendsToRunLog(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".orquestalite"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	d := &liveFactoryDeps{dir: dir, out: io.Discard}
+	d.Event("feature_merged", map[string]any{"feature": "F001", "method": "ff"})
+	raw, err := os.ReadFile(filepath.Join(dir, ".orquestalite", "run.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"feature_merged"`) || !strings.Contains(string(raw), "F001") {
+		t.Errorf("run.log missing event: %s", raw)
+	}
+}
+
 func TestSummarizeTasks_CollectsFailedIDs(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, ".orquestalite"), 0o755); err != nil {
