@@ -67,6 +67,7 @@ func Factory(ctx context.Context, opts FactoryOptions) error {
 	fcfg := factory.Config{Resume: opts.Resume, Replan: opts.Replan}
 	if cfg, cfgErr := config.Load(filepath.Join(opts.ProjectDir, "team.json")); cfgErr == nil {
 		fcfg.BudgetUSD = cfg.Limits.FactoryBudgetUSD
+		fcfg.MaxFeatureRetries = cfg.Limits.FeatureRetries()
 	}
 
 	deps := &liveFactoryDeps{dir: opts.ProjectDir, logFormat: opts.LogFormat, out: opts.Out, createPR: opts.CreatePR}
