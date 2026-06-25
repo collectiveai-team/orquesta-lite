@@ -559,3 +559,12 @@ func TestConfig_ConventionsFileRoundTrips(t *testing.T) {
 		t.Errorf("ConventionsFile = %q", cfg.ConventionsFile)
 	}
 }
+
+func TestLimitsFeatureRetries(t *testing.T) {
+	if got := (Limits{}).FeatureRetries(); got != 1 {
+		t.Errorf("default FeatureRetries = %d, want 1", got)
+	}
+	if got := (Limits{MaxFeatureRetries: 3}).FeatureRetries(); got != 3 {
+		t.Errorf("explicit FeatureRetries = %d, want 3", got)
+	}
+}

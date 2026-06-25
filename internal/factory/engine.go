@@ -30,6 +30,10 @@ type Config struct {
 	// discarding the persisted tasks-<ID>.json. Without it, an already-planned
 	// feature reuses its task list (the default).
 	Replan bool
+	// MaxFeatureRetries is the number of EXTRA feature-level runs attempted when
+	// a feature fails the merge gate (the no-progress guard may stop sooner).
+	// Populated from limits.max_feature_retries; 0 means stop on first failure.
+	MaxFeatureRetries int
 }
 
 // Deps abstracts everything the engine needs from the outside world so the
