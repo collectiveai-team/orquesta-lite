@@ -15,6 +15,7 @@ import (
 	"github.com/lionelchamorro/orquestalite/internal/eventlog"
 	"github.com/lionelchamorro/orquestalite/internal/fallback"
 	"github.com/lionelchamorro/orquestalite/internal/runner"
+	"github.com/lionelchamorro/orquestalite/internal/sessions"
 )
 
 type fakeRoleResult struct {
@@ -297,5 +298,30 @@ func TestRoleConventionsFallbackWhenUnset(t *testing.T) {
 	}
 	if !strings.Contains(fake.specs[0].Prompt, "infer the house style") {
 		t.Fatalf("fallback guidance missing: %q", fake.specs[0].Prompt)
+	}
+}
+
+func TestSessionTaskKey_NamespacesByFeature(t *testing.T) {
+	if got := (&RoleInvoker{}).sessionTaskKey("T001"); got != "T001" {
+		t.Errorf("no namespace: got %q, want T001", got)
+	}
+	if got := (&RoleInvoker{SessionNamespace: "F002"}).sessionTaskKey("T001"); got != "F002/T001" {
+		t.Errorf("namespaced: got %q, want F002/T001", got)
+	}
+}
+
+func TestSessionNamespaceIsolatesFeatures(t *testing.T) {
+	dir := t.TempDir()
+	st := sessions.Load(dir)
+	invA := &RoleInvoker{Sessions: st, ResumeRoles: map[string]bool{"coder": true}, SessionNamespace: "F001"}
+	invB := &RoleInvoker{Sessions: st, ResumeRoles: map[string]bool{"coder": true}, SessionNamespace: "F002"}
+	if err := st.Set(invA.sessionTaskKey("T001"), "coder", "claude_sonnet", "sid-A"); err != nil {
+		t.Fatal(err)
+	}
+	if got := invB.resumeSessionID("coder", "claude_sonnet", "T001"); got != "" {
+		t.Errorf("F002 must not see F001's session, got %q", got)
+	}
+	if got := invA.resumeSessionID("coder", "claude_sonnet", "T001"); got != "sid-A" {
+		t.Errorf("F001 should resume its own session, got %q", got)
 	}
 }

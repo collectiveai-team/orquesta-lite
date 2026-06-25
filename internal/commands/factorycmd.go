@@ -335,6 +335,7 @@ func (d *liveFactoryDeps) RunFeature(ctx context.Context, f factory.Feature, reu
 			ProjectDir: d.dir,
 			TeamPath:   filepath.Join(d.dir, "team.json"),
 			LogFormat:  d.logFormat,
+			FeatureID:  f.ID,
 		})
 		syncTasks()
 		if runErr != nil || !f.Visual {

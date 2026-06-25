@@ -46,6 +46,9 @@ type RunOptions struct {
 	// (default; one line per event with all fields) or eventlog.FormatHuman
 	// (compact, one summary per agent transition). The JSONL file is unaffected.
 	LogFormat eventlog.Format
+	// FeatureID, when set (factory mode), namespaces provider session keys so
+	// identical per-feature task IDs do not resume each other's sessions.
+	FeatureID string
 }
 
 // Run loads the config and tasks, wires up all components, and drives the
@@ -56,6 +59,7 @@ func Run(ctx context.Context, opts RunOptions) error {
 		TeamPath:   opts.TeamPath,
 		LogFormat:  opts.LogFormat,
 		Roles:      staticRunPreflightRoles,
+		FeatureID:  opts.FeatureID,
 	})
 	if err != nil {
 		return err
@@ -70,6 +74,7 @@ type liveDepsOptions struct {
 	TeamPath   string
 	LogFormat  eventlog.Format
 	Roles      []string
+	FeatureID  string
 }
 
 // resolveLogFormat turns an explicit/auto format choice into a concrete one.
@@ -187,6 +192,7 @@ func newLiveDeps(opts liveDepsOptions) (*liveDeps, func() error, error) {
 			}
 		},
 	}
+	inv.SessionNamespace = opts.FeatureID
 	// Let the coder resume its provider session across fix-loop iterations (and
 	// across a factory --resume) when the same agent runs again on the same task.
 	if cfg.Limits.SessionResumeEnabled() {
