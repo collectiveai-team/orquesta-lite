@@ -668,6 +668,9 @@ func (d *liveDeps) RunSingle(ctx context.Context, role string, rc invoke.RunCont
 			},
 		}, rc)
 		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return loops.SingleOutcome{}, err
+			}
 			lastErr = err
 			continue
 		}

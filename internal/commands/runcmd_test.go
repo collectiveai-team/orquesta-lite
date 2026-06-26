@@ -1290,3 +1290,57 @@ func TestLiveDeps_HasRole(t *testing.T) {
 		t.Error("HasRole(nonexistent) should be false")
 	}
 }
+
+// ctxCanceledRunner is a stub AgentRunner that always returns context.Canceled.
+type ctxCanceledRunner struct{}
+
+func (ctxCanceledRunner) Run(_ context.Context, _ runner.Spec) (*runner.Result, error) {
+	return nil, context.Canceled
+}
+
+// TestRunSingle_PropagatesContextCancellation verifies that when RunOnce
+// returns context.Canceled (e.g. SIGINT or timeout), RunSingle propagates it
+// as a hard error rather than mapping it to a "failed" outcome.
+func TestRunSingle_PropagatesContextCancellation(t *testing.T) {
+	dir := t.TempDir()
+	promptDir := filepath.Join(dir, "prompts")
+	if err := os.MkdirAll(promptDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(promptDir, "generic.md"), []byte("task: {{TASK_ID}}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	d := &liveDeps{
+		dir:       dir,
+		memPath:   filepath.Join(dir, ".orquestalite", "memory.md"),
+		tasksPath: filepath.Join(dir, ".orquestalite", "tasks.json"),
+		tl:        &tasks.TaskList{},
+		inv: &invoke.RoleInvoker{
+			Dir:     dir,
+			MemPath: filepath.Join(dir, ".orquestalite", "memory.md"),
+			Runner:  ctxCanceledRunner{},
+			Specs: map[string]config.RoleSpec{
+				"generic": {
+					Agents: []config.AgentSpec{{
+						Name: "fake_agent",
+						Cmd:  []string{"fake"},
+					}},
+					PromptPath: "prompts/generic.md",
+					ResultPath: ".orquestalite/results/generic.json",
+				},
+			},
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // pre-cancel so RunOnce returns context.Canceled immediately
+
+	outcome, err := d.RunSingle(ctx, "generic", invoke.RunContext{TaskID: "t1", Cycle: 1})
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("RunSingle: want context.Canceled error, got err=%v outcome=%+v", err, outcome)
+	}
+	if outcome.Status != "" {
+		t.Errorf("RunSingle: want empty outcome on context cancel, got Status=%q", outcome.Status)
+	}
+}
