@@ -47,6 +47,34 @@ func TestAnyPending(t *testing.T) {
 	}
 }
 
+func TestResetFailedToPending(t *testing.T) {
+	reason := ReasonCommitRejected
+	tl := &TaskList{Tasks: []Task{
+		{ID: "T1", Status: StatusDone, VerifyState: VerifyCommitOK},
+		{ID: "T2", Status: StatusFailed, FailureReason: &reason, VerifyState: VerifyCommitRejected,
+			FailureDetails: &FailureDetails{Reason: reason}},
+		{ID: "T3", Status: StatusPending},
+	}}
+
+	n := tl.ResetFailedToPending()
+
+	if n != 1 {
+		t.Fatalf("ResetFailedToPending = %d, want 1", n)
+	}
+	if tl.Tasks[1].Status != StatusPending {
+		t.Errorf("failed task should be pending, got %s", tl.Tasks[1].Status)
+	}
+	if tl.Tasks[1].FailureReason != nil || tl.Tasks[1].FailureDetails != nil {
+		t.Errorf("failed task should have its failure bookkeeping cleared")
+	}
+	if tl.Tasks[1].VerifyState != VerifyUnknown {
+		t.Errorf("failed task verify_state should be cleared, got %q", tl.Tasks[1].VerifyState)
+	}
+	if tl.Tasks[0].Status != StatusDone {
+		t.Errorf("done task must be left untouched, got %s", tl.Tasks[0].Status)
+	}
+}
+
 func TestNextID(t *testing.T) {
 	tl := &TaskList{Tasks: []Task{{ID: "T001"}, {ID: "T007"}, {ID: "T003"}}}
 	if got := tl.NextID(); got != "T008" {

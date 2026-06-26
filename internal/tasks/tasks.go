@@ -148,6 +148,26 @@ func (tl *TaskList) NextPending() *Task {
 	return &tl.Tasks[pending[0]]
 }
 
+// ResetFailedToPending flips every failed task back to pending so a feature
+// retry — the in-run repair loop or an explicit `factory --resume` — re-attempts
+// it instead of skipping it (the task loop only runs pending/in-progress tasks).
+// It clears the failure bookkeeping but leaves attempt history and last feedback
+// so the next attempt still has context. Returns the number of tasks reset.
+func (tl *TaskList) ResetFailedToPending() int {
+	n := 0
+	for i := range tl.Tasks {
+		if tl.Tasks[i].Status != StatusFailed {
+			continue
+		}
+		tl.Tasks[i].Status = StatusPending
+		tl.Tasks[i].FailureReason = nil
+		tl.Tasks[i].FailureDetails = nil
+		tl.Tasks[i].VerifyState = VerifyUnknown
+		n++
+	}
+	return n
+}
+
 func (tl *TaskList) NextID() string {
 	max := 0
 	for _, t := range tl.Tasks {

@@ -302,6 +302,20 @@ func (d *liveFactoryDeps) RunFeature(ctx context.Context, f factory.Feature, reu
 		if err := copyFileAtomic(featureTasks, canonical); err != nil {
 			return factory.Summary{}, err
 		}
+		// A retry — the repair loop or `factory --resume` — must re-attempt tasks
+		// that previously failed. The task loop only runs pending/in-progress
+		// tasks, so reset any failed ones here; otherwise the feature can never
+		// recover (the failed task keeps blocking the merge gate untouched).
+		tl, err := tasks.Load(canonical)
+		if err != nil {
+			return factory.Summary{}, err
+		}
+		if n := tl.ResetFailedToPending(); n > 0 {
+			if err := tasks.Save(canonical, tl); err != nil {
+				return factory.Summary{}, err
+			}
+			d.Logf("factory: %s retrying %d previously-failed task(s)", f.ID, n)
+		}
 		d.Logf("factory: %s reusing task list from %s (skipping plan)", f.ID, filepath.Base(featureTasks))
 	} else {
 		planPath := filepath.Join(d.dir, ".orquestalite", "factory-plan-"+f.ID+".md")
