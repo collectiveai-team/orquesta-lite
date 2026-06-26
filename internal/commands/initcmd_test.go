@@ -310,6 +310,25 @@ func TestInit_UnknownLangClearsTestCommand(t *testing.T) {
 	}
 }
 
+// TestInit_ScaffoldsGeneralistRole verifies that Init writes a generalist role
+// to team.json and materialises prompts/generalist.md.
+func TestInit_ScaffoldsGeneralistRole(t *testing.T) {
+	dir := t.TempDir()
+	if err := InitWithOptions(dir, InitOptions{Lang: "python"}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "team.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"generalist"`) {
+		t.Errorf("scaffolded team.json missing generalist role:\n%s", raw)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "prompts", "generalist.md")); err != nil {
+		t.Errorf("prompts/generalist.md not scaffolded: %v", err)
+	}
+}
+
 // TestInitWithOptions_LangOverride verifies that an explicit --lang argument
 // overrides autodetection even when the directory looks like a different
 // language.

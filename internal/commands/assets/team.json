@@ -93,6 +93,15 @@
       "prompt": "prompts/reviewer.md",
       "result_path": ".orquestalite/results/reviewer.json",
       "timeout_seconds": 900
+    },
+    "generalist": {
+      "agents": [
+        "claude_sonnet",
+        "claude_opus"
+      ],
+      "prompt": "prompts/generalist.md",
+      "result_path": ".orquestalite/results/generalist.json",
+      "timeout_seconds": 1800
     }
   },
   "limits": {
