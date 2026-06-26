@@ -1278,3 +1278,15 @@ func TestLiveDeps_CommitNothingToCommitReturnsSentinel(t *testing.T) {
 		t.Fatalf("expected loops.ErrNothingToCommit, got %v", err)
 	}
 }
+
+func TestLiveDeps_HasRole(t *testing.T) {
+	d := &liveDeps{inv: &invoke.RoleInvoker{Specs: map[string]config.RoleSpec{
+		"coder": {}, "generalist": {},
+	}}}
+	if !d.HasRole("generalist") {
+		t.Error("HasRole(generalist) should be true")
+	}
+	if d.HasRole("nonexistent") {
+		t.Error("HasRole(nonexistent) should be false")
+	}
+}

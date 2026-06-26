@@ -623,20 +623,57 @@ func (d *liveDeps) PreflightEnabled() bool {
 	return d.cfg.Limits.PreflightEnabled
 }
 
-// RunSingle is an interim stub until the live squad-routing implementation lands.
-// It always returns a "failed" outcome, meaning setup tasks (which call RunSingle
-// directly, bypassing HasRole) will fail in production until this is replaced.
-func (d *liveDeps) RunSingle(_ context.Context, role string, _ invoke.RunContext) (loops.SingleOutcome, error) {
-	return loops.SingleOutcome{Status: "failed", Summary: "RunSingle not yet implemented for role: " + role}, nil
+// HasRole reports whether the named role is configured in the team roster.
+// Used by the generic-squad dispatcher to fall back to the full fix lane when
+// no generalist role is present.
+func (d *liveDeps) HasRole(role string) bool {
+	_, ok := d.inv.Specs[role]
+	return ok
 }
 
-// HasRole is an interim stub until the live squad-routing implementation lands.
-// It always returns false. For generic tasks this triggers a fallback to the full
-// fix lane; for setup tasks HasRole is not consulted (setup calls RunSingle
-// directly, which currently returns failed — so setup tasks do not function in
-// production until both stubs are replaced).
-func (d *liveDeps) HasRole(_ string) bool {
-	return false
+// RunSingle invokes one role once (with one retry when the agent writes no
+// result), and maps a written result file to done, an absent result after
+// retries to failed. No tester / critic / verifier loop runs; this is the lean
+// path for the setup and generic squads.
+func (d *liveDeps) RunSingle(ctx context.Context, role string, rc invoke.RunContext) (loops.SingleOutcome, error) {
+	if _, ok := d.inv.Specs[role]; !ok {
+		return loops.SingleOutcome{Status: "failed", Summary: "role not configured: " + role}, nil
+	}
+
+	// Mirror RunFix: find the current task so prompt vars resolve correctly.
+	for i, t := range d.tl.Tasks {
+		if t.ID == rc.TaskID {
+			d.currentTask = &d.tl.Tasks[i]
+			break
+		}
+	}
+	d.captureRollbackBase()
+	d.currentCycle = rc.Cycle
+
+	var lastErr error
+	for attempt := 1; attempt <= 2; attempt++ {
+		rc.Attempt = attempt
+		err := d.inv.RunOnce(ctx, role, invoke.RoleCall{
+			Vars: map[string]string{
+				"TASK_ID":                  rc.TaskID,
+				"TASK_TITLE":               d.currentTaskTitle(),
+				"TASK_DESCRIPTION":         d.currentTaskDescription(),
+				"ATTEMPT_NUMBER":           strconv.Itoa(attempt),
+				"TESTER_FEEDBACK":          "",
+				"CRITIC_FEEDBACK":          "",
+				"VERIFIER_FEEDBACK":        "",
+				"LINT_FEEDBACK":            "",
+				"PREVIOUS_ATTEMPT_SUMMARY": "",
+				"FILES_CHANGED_SO_FAR":     "",
+			},
+		}, rc)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		return loops.SingleOutcome{Status: "done"}, nil
+	}
+	return loops.SingleOutcome{Status: "failed", Summary: fmt.Sprintf("%v", lastErr)}, nil
 }
 
 // Preflight runs a lightweight validity check on the task.

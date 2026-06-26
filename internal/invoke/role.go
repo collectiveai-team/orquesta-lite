@@ -148,6 +148,45 @@ func Role[T MemoryNoting](
 	return parsed, nil
 }
 
+// RunOnce invokes a role exactly once, building the prompt from the spec and the
+// provided RoleCall vars (memory and conventions are injected automatically). It
+// returns nil when the agent wrote a result file, otherwise an error (including
+// fallback.ErrAllAgentsFailed when every configured agent produced no result).
+// Callers that need bounded retry should loop themselves; RunOnce itself does
+// not retry.
+func (inv *RoleInvoker) RunOnce(ctx context.Context, roleName string, call RoleCall, rc RunContext) error {
+	if inv == nil {
+		return fmt.Errorf("role invoker is nil")
+	}
+	spec, ok := inv.Specs[roleName]
+	if !ok {
+		return fmt.Errorf("role %q is not configured", roleName)
+	}
+
+	roleVars := call.templateVars()
+	promptPath := call.PromptPath
+	if promptPath == "" {
+		promptPath = spec.PromptPath
+	}
+	resultPath := call.ResultPath
+	if resultPath == "" {
+		resultPath = spec.ResultPath
+	}
+
+	mem, _ := memory.ReadAll(inv.MemPath)
+	roleVars["MEMORY"] = mem
+	roleVars["CONVENTIONS"] = inv.readConventions()
+
+	tmpl, err := prompts.Load(absPath(inv.Dir, promptPath))
+	if err != nil {
+		return err
+	}
+	prompt := prompts.Interpolate(tmpl, roleVars)
+	resultAbs := absPath(inv.Dir, resultPath)
+
+	return inv.run(ctx, roleName, spec, call.AgentOverride, prompt, resultPath, resultAbs, rc)
+}
+
 // readConventions returns the house-style document injected as {{CONVENTIONS}},
 // or a placeholder telling the agent to infer conventions from the codebase
 // when none is configured or the file is missing/empty.
