@@ -41,6 +41,10 @@ func (s *stubReviewDeps) PreflightEnabled() bool { return s.taskDeps.PreflightEn
 func (s *stubReviewDeps) Preflight(ctx context.Context, t *tasks.Task) preflight.Verdict {
 	return s.taskDeps.Preflight(ctx, t)
 }
+func (s *stubReviewDeps) RunSingle(ctx context.Context, role string, rc invoke.RunContext) (SingleOutcome, error) {
+	return s.taskDeps.RunSingle(ctx, role, rc)
+}
+func (s *stubReviewDeps) HasRole(role string) bool { return s.taskDeps.HasRole(role) }
 func (s *stubReviewDeps) CycleBaseSHA(ctx context.Context) (string, error) {
 	if s.cycleBaseSHA != nil {
 		return s.cycleBaseSHA()
