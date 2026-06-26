@@ -21,6 +21,13 @@ const (
 	StatusNeedsClarification Status = "needs_clarification"
 )
 
+// Squad constants select the role lane that runs a task.
+const (
+	SquadSetup   = "setup"
+	SquadFull    = "full"
+	SquadGeneric = "generic"
+)
+
 type FailureReason string
 
 const (
@@ -97,6 +104,22 @@ type Task struct {
 	// DecompositionDepth counts how many decomposition generations produced
 	// this task (0 = from the plan or reviewer). Caps recursive decomposition.
 	DecompositionDepth int `json:"decomposition_depth,omitempty"`
+	// Squad selects the role lane that runs this task: "setup" (coder only),
+	// "full" (coder→tester→critic→verifier, the default), or "generic"
+	// (generalist only). Empty or unknown is treated as "full".
+	Squad string `json:"squad,omitempty"`
+}
+
+// SquadOrDefault returns the task's squad, defaulting to SquadFull when the
+// field is empty or holds an unrecognized value (fail-safe: unknown work gets
+// the full review lane).
+func (t *Task) SquadOrDefault() string {
+	switch t.Squad {
+	case SquadSetup, SquadGeneric:
+		return t.Squad
+	default:
+		return SquadFull
+	}
 }
 
 type TaskList struct {

@@ -99,3 +99,37 @@ func TestAppendAssignsIDs(t *testing.T) {
 		t.Errorf("Append did not initialise status/cycle: %+v", added[0])
 	}
 }
+
+func TestSquadOrDefault(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"", SquadFull},
+		{"full", SquadFull},
+		{"setup", SquadSetup},
+		{"generic", SquadGeneric},
+		{"bogus", SquadFull}, // unknown is fail-safe
+	}
+	for _, c := range cases {
+		task := Task{Squad: c.in}
+		if got := task.SquadOrDefault(); got != c.want {
+			t.Errorf("SquadOrDefault(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestSquadRoundTrips(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "tasks.json")
+	want := &TaskList{Tasks: []Task{{ID: "T1", Squad: SquadSetup}}}
+	if err := Save(p, want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Tasks[0].Squad != SquadSetup {
+		t.Errorf("squad did not round-trip: %q", got.Tasks[0].Squad)
+	}
+}
