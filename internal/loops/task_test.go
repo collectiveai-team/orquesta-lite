@@ -530,6 +530,9 @@ func TestTaskLoop_GenericSquadRunsGeneralist(t *testing.T) {
 	if d.fullSuiteCalls != 0 {
 		t.Errorf("generic must skip FullSuite")
 	}
+	if len(d.commits) != 1 {
+		t.Errorf("generic should commit once, got %d", len(d.commits))
+	}
 	if tl.Tasks[0].Status != tasks.StatusDone {
 		t.Errorf("generic task should be Done, got %s", tl.Tasks[0].Status)
 	}

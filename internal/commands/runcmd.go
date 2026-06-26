@@ -623,16 +623,18 @@ func (d *liveDeps) PreflightEnabled() bool {
 	return d.cfg.Limits.PreflightEnabled
 }
 
-// RunSingle is a stub that will be implemented in Task 3 (squad routing).
-// It satisfies loops.TaskDeps so the build succeeds while the full implementation
-// is pending.
+// RunSingle is an interim stub until the live squad-routing implementation lands.
+// It always returns a "failed" outcome, meaning setup tasks (which call RunSingle
+// directly, bypassing HasRole) will fail in production until this is replaced.
 func (d *liveDeps) RunSingle(_ context.Context, role string, _ invoke.RunContext) (loops.SingleOutcome, error) {
 	return loops.SingleOutcome{Status: "failed", Summary: "RunSingle not yet implemented for role: " + role}, nil
 }
 
-// HasRole is a stub that will be implemented in Task 3 (squad routing).
-// It always returns false so setup/generic tasks fall back to the full lane
-// until the real implementation lands.
+// HasRole is an interim stub until the live squad-routing implementation lands.
+// It always returns false. For generic tasks this triggers a fallback to the full
+// fix lane; for setup tasks HasRole is not consulted (setup calls RunSingle
+// directly, which currently returns failed — so setup tasks do not function in
+// production until both stubs are replaced).
 func (d *liveDeps) HasRole(_ string) bool {
 	return false
 }
