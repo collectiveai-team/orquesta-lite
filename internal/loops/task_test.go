@@ -86,6 +86,37 @@ func TestTaskLoop_HappyPath(t *testing.T) {
 	}
 }
 
+func TestTaskLoop_NothingToCommitMarksDoneNoOp(t *testing.T) {
+	tl := &tasks.TaskList{Tasks: []tasks.Task{
+		{ID: "T001", Title: "already satisfied", Status: tasks.StatusPending, Priority: 1},
+	}}
+	d := &stubTaskDeps{
+		fix:       func(id string) *FixResult { return &FixResult{Status: FixDone, Iterations: 1} },
+		fullSuite: func() error { return nil },
+		// Coder ran and tests passed, but a prior task already produced these
+		// files: there is no net diff, so Commit reports ErrNothingToCommit.
+		commit:    func(msg string) (string, error) { return "", ErrNothingToCommit },
+		rollback:  func() error { return nil },
+		saveTasks: func(*tasks.TaskList) error { return nil },
+	}
+
+	if err := RunTaskLoop(context.Background(), tl, d); err != nil {
+		t.Fatal(err)
+	}
+	if tl.Tasks[0].Status != tasks.StatusDone {
+		t.Errorf("no-op task should be Done (work already satisfied), got %s", tl.Tasks[0].Status)
+	}
+	if tl.Tasks[0].VerifyState != tasks.VerifyCommitEmpty {
+		t.Errorf("expected verify=commit_empty, got %q", tl.Tasks[0].VerifyState)
+	}
+	if tl.Tasks[0].FailureReason != nil {
+		t.Errorf("no-op should have no failure_reason, got %v", *tl.Tasks[0].FailureReason)
+	}
+	if d.rollbacks != 0 {
+		t.Errorf("no-op must not roll back work, got %d rollbacks", d.rollbacks)
+	}
+}
+
 func TestTaskLoop_FullSuiteFailureRollsBack(t *testing.T) {
 	tl := &tasks.TaskList{Tasks: []tasks.Task{
 		{ID: "T001", Status: tasks.StatusPending, Priority: 1},

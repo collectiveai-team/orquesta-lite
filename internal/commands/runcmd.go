@@ -449,6 +449,20 @@ func (d *liveDeps) Commit(ctx context.Context, msg string) (string, error) {
 		return "", loops.ErrCommitSkipped
 	}
 	sha, err := gitx.CommitAll(d.dir, msg)
+	if errors.Is(err, gitx.ErrNothingToCommit) {
+		// No net diff: an earlier task already produced this task's files. Map to
+		// the loops sentinel so the task loop records a no-op (commit_empty) and
+		// keeps the task done, instead of a commit_rejected hard failure.
+		taskID := ""
+		if d.currentTask != nil {
+			taskID = d.currentTask.ID
+		}
+		d.log.Log(eventlog.Event{Type: "task_done_no_commit", Fields: map[string]any{
+			"task_id": taskID,
+			"reason":  "nothing_to_commit",
+		}})
+		return "", loops.ErrNothingToCommit
+	}
 	if err != nil {
 		return "", err
 	}

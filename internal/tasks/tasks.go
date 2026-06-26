@@ -69,6 +69,10 @@ const (
 	VerifyCommitOK       VerifyState = "commit_ok"
 	VerifyCommitSkipped  VerifyState = "commit_skipped"
 	VerifyCommitRejected VerifyState = "commit_rejected"
+	// VerifyCommitEmpty marks a task that finished with no net diff to commit
+	// because an earlier task already produced its files. The work status is
+	// done (tests passed, end-state present); it just did not author a commit.
+	VerifyCommitEmpty VerifyState = "commit_empty"
 )
 
 type Task struct {

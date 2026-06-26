@@ -1,6 +1,7 @@
 package gitx
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -69,6 +70,22 @@ func TestCommitAll_CreatesCommit(t *testing.T) {
 	}
 	if len(sha) < 7 {
 		t.Errorf("sha too short: %q", sha)
+	}
+}
+
+func TestCommitAll_NothingToCommitReturnsSentinel(t *testing.T) {
+	gitOrSkip(t)
+	dir := initRepo(t)
+	// No changes since the initial commit: the work tree is clean, so there is
+	// nothing to stage. CommitAll must surface this as ErrNothingToCommit (not a
+	// generic git error) so a no-op task — one whose files a prior task already
+	// produced — is treated as done rather than a hard commit failure.
+	sha, err := CommitAll(dir, "noop")
+	if !errors.Is(err, ErrNothingToCommit) {
+		t.Fatalf("expected ErrNothingToCommit, got err=%v sha=%q", err, sha)
+	}
+	if sha != "" {
+		t.Errorf("expected empty sha on no-op, got %q", sha)
 	}
 }
 

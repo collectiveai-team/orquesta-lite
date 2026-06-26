@@ -29,6 +29,13 @@ var ErrNoDecomposer = errors.New("no decomposer configured")
 // than as a hard failure: the work shipped, only the bookkeeping was absent.
 var ErrCommitSkipped = errors.New("commit skipped: not a git repository")
 
+// ErrNothingToCommit is returned by Commit implementations when, after a passing
+// test suite, there is no net diff to commit because an earlier task already
+// produced this task's files (overlapping decomposition). The task loop treats
+// this as a successful no-op (VerifyState=commit_empty), not a hard failure: the
+// desired end-state already exists on the branch.
+var ErrNothingToCommit = errors.New("commit skipped: nothing to commit")
+
 type TaskDeps interface {
 	RunFix(ctx context.Context, taskID string, rc invoke.RunContext) (*FixResult, error)
 	FullSuite(ctx context.Context) error
@@ -195,6 +202,12 @@ func RunTaskLoopWithContext(ctx context.Context, tl *tasks.TaskList, d TaskDeps,
 			// the task failed. status will show WORK=done VERIFY=commit_skipped
 			// so the operator knows to `git init` (or accept the no-repo flow).
 			t.VerifyState = tasks.VerifyCommitSkipped
+		case errors.Is(commitErr, ErrNothingToCommit):
+			// No net diff: an earlier task already produced this task's files
+			// (overlapping decomposition). Tests passed above, so the desired
+			// end-state exists — mark done (no-op) instead of commit_rejected,
+			// which would wrongly fail the feature's merge gate.
+			t.VerifyState = tasks.VerifyCommitEmpty
 		default:
 			t.Status = tasks.StatusFailed
 			r := tasks.ReasonCommitRejected
