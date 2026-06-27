@@ -746,6 +746,7 @@ func (d *liveDeps) Decompose(ctx context.Context, t *tasks.Task, fx *loops.FixRe
 			Description:        pt.Description,
 			Priority:           pt.Priority,
 			DecompositionDepth: t.DecompositionDepth + 1,
+			Squad:              pt.Squad,
 		})
 	}
 	return subtasks, nil
