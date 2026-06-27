@@ -69,6 +69,9 @@ type TaskDeps interface {
 	// HasRole reports whether the named role is configured in team.json. Used to
 	// fall a generic task back to the full lane when no generalist role exists.
 	HasRole(role string) bool
+	// RouteEvent emits an observability event recording which squad a task was
+	// routed to. Called once per task, after the no-generalist fallback is resolved.
+	RouteEvent(taskID, squad string)
 }
 
 // commitTask commits the task's work and sets its VerifyState/Status. It treats
@@ -140,6 +143,7 @@ func RunTaskLoopWithContext(ctx context.Context, tl *tasks.TaskList, d TaskDeps,
 		if squad == tasks.SquadGeneric && !d.HasRole("generalist") {
 			squad = tasks.SquadFull // no generalist configured: use the full lane
 		}
+		d.RouteEvent(taskID, squad)
 		if squad == tasks.SquadSetup || squad == tasks.SquadGeneric {
 			role := "coder"
 			if squad == tasks.SquadGeneric {

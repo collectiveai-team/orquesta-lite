@@ -45,6 +45,9 @@ func (s *stubReviewDeps) RunSingle(ctx context.Context, role string, rc invoke.R
 	return s.taskDeps.RunSingle(ctx, role, rc)
 }
 func (s *stubReviewDeps) HasRole(role string) bool { return s.taskDeps.HasRole(role) }
+func (s *stubReviewDeps) RouteEvent(taskID, squad string) {
+	s.taskDeps.RouteEvent(taskID, squad)
+}
 func (s *stubReviewDeps) CycleBaseSHA(ctx context.Context) (string, error) {
 	if s.cycleBaseSHA != nil {
 		return s.cycleBaseSHA()

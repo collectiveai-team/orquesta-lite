@@ -631,6 +631,14 @@ func (d *liveDeps) HasRole(role string) bool {
 	return ok
 }
 
+// RouteEvent emits a task_routed observability event recording which squad the
+// task was assigned to. The event lands in the run event log (JSONL + pretty).
+func (d *liveDeps) RouteEvent(taskID, squad string) {
+	d.log.Log(eventlog.Event{Type: "task_routed", Fields: map[string]any{
+		"task_id": taskID, "squad": squad,
+	}})
+}
+
 // RunSingle invokes one role once (with one retry when the agent writes no
 // result), and maps a written result file to done, an absent result after
 // retries to failed. No tester / critic / verifier loop runs; this is the lean

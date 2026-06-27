@@ -29,6 +29,7 @@ type stubTaskDeps struct {
 	singleCalls        []string // roles passed to RunSingle
 	fullSuiteCalls     int
 	lastDecomposeFiles []string // captures filesChangedSoFar passed to Decompose
+	routeEvents        []string // records taskID+":"+squad from RouteEvent calls
 }
 
 func (s *stubTaskDeps) PreflightEnabled() bool { return s.preflightEnabled }
@@ -78,6 +79,9 @@ func (s *stubTaskDeps) Handoff(ctx context.Context, t *tasks.Task) (string, erro
 		return s.handoff(t)
 	}
 	return "/tmp/handoff-" + t.ID + ".md", nil
+}
+func (s *stubTaskDeps) RouteEvent(taskID, squad string) {
+	s.routeEvents = append(s.routeEvents, taskID+":"+squad)
 }
 
 func TestTaskLoop_HappyPath(t *testing.T) {
@@ -507,6 +511,9 @@ func TestTaskLoop_SetupSquadRunsCoderOnlyNoFullSuite(t *testing.T) {
 	}
 	if tl.Tasks[0].Status != tasks.StatusDone {
 		t.Errorf("setup task should be Done, got %s", tl.Tasks[0].Status)
+	}
+	if len(d.routeEvents) != 1 || d.routeEvents[0] != "T001:setup" {
+		t.Errorf("expected route event T001:setup, got %v", d.routeEvents)
 	}
 }
 
