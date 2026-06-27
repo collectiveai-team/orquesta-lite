@@ -35,6 +35,15 @@ You are the **parser** in a Ralph orchestrator, running in DECOMPOSITION mode. A
 - Do not re-state the original task. The orchestrator will mark the original as `decomposed` and these subtasks will replace it in the queue.
 - Each subtask's `description` must end with explicit acceptance criteria.
 
+## Squad (role lane) per task
+
+Set "squad" on every task:
+- "setup" — creating project structure, dependency manifests, lock files, config,
+  or ignore files. No runtime behavior to assert. Runs a coder only (no tests).
+- "generic" — non-code reconciliation, documentation, chores, file moves.
+- "full" — anything that adds or changes code behavior. This is the default; use
+  it whenever you are unsure.
+
 ## Output contract
 
 Write `.orquestalite/results/parser-decompose.json` with the exact shape:
@@ -42,7 +51,7 @@ Write `.orquestalite/results/parser-decompose.json` with the exact shape:
 ```json
 {
   "tasks": [
-    { "title": "...", "description": "... acceptance: ...", "priority": 1 }
+    { "title": "...", "description": "... acceptance: ...", "priority": 1, "squad": "full" }
   ],
   "notes_for_memory": null
 }
