@@ -1,7 +1,7 @@
 # Spec B — Squad routing (per-task role lanes)
 
 Date: 2026-06-26
-Status: approved (brainstormed)
+Status: implemented
 Branch: `feat/factory-squad-routing`
 
 ## Problem
