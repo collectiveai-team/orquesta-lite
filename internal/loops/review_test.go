@@ -190,3 +190,35 @@ func TestReview_PassesVerificationReportToReviewer(t *testing.T) {
 		t.Fatalf("reports = %v", d.reports)
 	}
 }
+
+func TestReview_AppendedTasksDefaultGeneric(t *testing.T) {
+	tl := &tasks.TaskList{Tasks: []tasks.Task{{ID: "T001", Status: tasks.StatusPending, Priority: 1}}}
+	td := &stubTaskDeps{
+		fix:       func(string) *FixResult { return &FixResult{Status: FixDone, Iterations: 1} },
+		fullSuite: func() error { return nil },
+		commit:    func(string) (string, error) { return "x", nil },
+		rollback:  func() error { return nil },
+		saveTasks: func(*tasks.TaskList) error { return nil },
+	}
+	called := false
+	d := &stubReviewDeps{
+		taskDeps: td,
+		reviewer: func(c int) results.ReviewerResult {
+			if !called {
+				called = true
+				// propose one new task with no squad set
+				return results.ReviewerResult{ShouldStop: boolPtr(false), NewTasks: []results.ReviewerNewTask{
+					{Title: "reconcile config", Description: "update project config", Priority: 3},
+				}}
+			}
+			return results.ReviewerResult{ShouldStop: boolPtr(true)}
+		},
+	}
+	_ = RunReviewLoop(context.Background(), tl, ReviewConfig{MaxCycles: 5}, d)
+	if len(tl.Tasks) != 2 {
+		t.Fatalf("expected 2 tasks after append, got %d", len(tl.Tasks))
+	}
+	if tl.Tasks[1].Squad != tasks.SquadGeneric {
+		t.Errorf("reviewer-created task Squad = %q, want %q", tl.Tasks[1].Squad, tasks.SquadGeneric)
+	}
+}
