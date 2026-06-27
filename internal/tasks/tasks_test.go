@@ -47,6 +47,34 @@ func TestAnyPending(t *testing.T) {
 	}
 }
 
+func TestResetFailedToPending(t *testing.T) {
+	reason := ReasonCommitRejected
+	tl := &TaskList{Tasks: []Task{
+		{ID: "T1", Status: StatusDone, VerifyState: VerifyCommitOK},
+		{ID: "T2", Status: StatusFailed, FailureReason: &reason, VerifyState: VerifyCommitRejected,
+			FailureDetails: &FailureDetails{Reason: reason}},
+		{ID: "T3", Status: StatusPending},
+	}}
+
+	n := tl.ResetFailedToPending()
+
+	if n != 1 {
+		t.Fatalf("ResetFailedToPending = %d, want 1", n)
+	}
+	if tl.Tasks[1].Status != StatusPending {
+		t.Errorf("failed task should be pending, got %s", tl.Tasks[1].Status)
+	}
+	if tl.Tasks[1].FailureReason != nil || tl.Tasks[1].FailureDetails != nil {
+		t.Errorf("failed task should have its failure bookkeeping cleared")
+	}
+	if tl.Tasks[1].VerifyState != VerifyUnknown {
+		t.Errorf("failed task verify_state should be cleared, got %q", tl.Tasks[1].VerifyState)
+	}
+	if tl.Tasks[0].Status != StatusDone {
+		t.Errorf("done task must be left untouched, got %s", tl.Tasks[0].Status)
+	}
+}
+
 func TestNextID(t *testing.T) {
 	tl := &TaskList{Tasks: []Task{{ID: "T001"}, {ID: "T007"}, {ID: "T003"}}}
 	if got := tl.NextID(); got != "T008" {
@@ -69,5 +97,39 @@ func TestAppendAssignsIDs(t *testing.T) {
 	}
 	if added[0].Status != StatusPending || added[0].CreatedInReviewCycle != 1 {
 		t.Errorf("Append did not initialise status/cycle: %+v", added[0])
+	}
+}
+
+func TestSquadOrDefault(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"", SquadFull},
+		{"full", SquadFull},
+		{"setup", SquadSetup},
+		{"generic", SquadGeneric},
+		{"bogus", SquadFull}, // unknown is fail-safe
+	}
+	for _, c := range cases {
+		task := Task{Squad: c.in}
+		if got := task.SquadOrDefault(); got != c.want {
+			t.Errorf("SquadOrDefault(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestSquadRoundTrips(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "tasks.json")
+	want := &TaskList{Tasks: []Task{{ID: "T1", Squad: SquadSetup}}}
+	if err := Save(p, want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Tasks[0].Squad != SquadSetup {
+		t.Errorf("squad did not round-trip: %q", got.Tasks[0].Squad)
 	}
 }

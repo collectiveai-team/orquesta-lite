@@ -29,6 +29,20 @@ var ErrNoDecomposer = errors.New("no decomposer configured")
 // than as a hard failure: the work shipped, only the bookkeeping was absent.
 var ErrCommitSkipped = errors.New("commit skipped: not a git repository")
 
+// ErrNothingToCommit is returned by Commit implementations when, after a passing
+// test suite, there is no net diff to commit because an earlier task already
+// produced this task's files (overlapping decomposition). The task loop treats
+// this as a successful no-op (VerifyState=commit_empty), not a hard failure: the
+// desired end-state already exists on the branch.
+var ErrNothingToCommit = errors.New("commit skipped: nothing to commit")
+
+// SingleOutcome is the result of a single-role squad (setup/generic).
+type SingleOutcome struct {
+	Status       string // "done" | "failed"
+	Summary      string
+	FilesChanged []string
+}
+
 type TaskDeps interface {
 	RunFix(ctx context.Context, taskID string, rc invoke.RunContext) (*FixResult, error)
 	FullSuite(ctx context.Context) error
@@ -48,6 +62,42 @@ type TaskDeps interface {
 	// Preflight runs a lightweight validity check on the task before any fix
 	// attempt. Only called when PreflightEnabled() returns true.
 	Preflight(ctx context.Context, t *tasks.Task) preflight.Verdict
+	// RunSingle runs exactly one role once (with bounded retry on transient
+	// agent failure), with no tester/critic/verifier loop. Used by the setup
+	// and generic squads.
+	RunSingle(ctx context.Context, role string, rc invoke.RunContext) (SingleOutcome, error)
+	// HasRole reports whether the named role is configured in team.json. Used to
+	// fall a generic task back to the full lane when no generalist role exists.
+	HasRole(role string) bool
+	// RouteEvent emits an observability event recording which squad a task was
+	// routed to. Called once per task, after the no-generalist fallback is resolved.
+	RouteEvent(taskID, squad string)
+}
+
+// commitTask commits the task's work and sets its VerifyState/Status. It treats
+// a no-git-repo (ErrCommitSkipped) and an empty no-op commit (ErrNothingToCommit)
+// as success, any other commit error as a hard failure (rolled back by caller).
+// Returns true when the task is done, false when it failed.
+func commitTask(ctx context.Context, d TaskDeps, t *tasks.Task) bool {
+	msg := fmt.Sprintf("feat(%s): %s", t.ID, t.Title)
+	_, commitErr := d.Commit(ctx, msg)
+	switch {
+	case commitErr == nil:
+		t.VerifyState = tasks.VerifyCommitOK
+	case errors.Is(commitErr, ErrCommitSkipped):
+		t.VerifyState = tasks.VerifyCommitSkipped
+	case errors.Is(commitErr, ErrNothingToCommit):
+		t.VerifyState = tasks.VerifyCommitEmpty
+	default:
+		t.Status = tasks.StatusFailed
+		r := tasks.ReasonCommitRejected
+		t.FailureReason = &r
+		t.VerifyState = tasks.VerifyCommitRejected
+		t.LastFeedback = strPtr(commitErr.Error())
+		return false
+	}
+	t.Status = tasks.StatusDone
+	return true
 }
 
 // findTaskIdx returns the index of the task with the given ID, or -1 if not found.
@@ -88,6 +138,40 @@ func RunTaskLoopWithContext(ctx context.Context, tl *tasks.TaskList, d TaskDeps,
 
 		taskRC := baseRC
 		taskRC.TaskID = taskID
+
+		squad := t.SquadOrDefault()
+		if squad == tasks.SquadGeneric && !d.HasRole("generalist") {
+			squad = tasks.SquadFull // no generalist configured: use the full lane
+		}
+		d.RouteEvent(taskID, squad)
+		if squad == tasks.SquadSetup || squad == tasks.SquadGeneric {
+			role := "coder"
+			if squad == tasks.SquadGeneric {
+				role = "generalist"
+			}
+			out, err := d.RunSingle(ctx, role, taskRC)
+			if err != nil {
+				return err
+			}
+			if out.Status != "done" {
+				t.Status = tasks.StatusFailed
+				r := tasks.ReasonAgentRepeatedFail
+				t.FailureReason = &r
+				t.LastFeedback = strPtr(out.Summary)
+				_ = d.Rollback(ctx)
+				_ = d.SaveTasks(ctx, tl)
+				continue
+			}
+			if !commitTask(ctx, d, t) {
+				_ = d.Rollback(ctx)
+				_ = d.SaveTasks(ctx, tl)
+				continue
+			}
+			_ = d.SaveTasks(ctx, tl)
+			continue
+		}
+
+		// full lane (default): existing RunFix path below, unchanged.
 		fx, err := d.RunFix(ctx, taskID, taskRC)
 		if err != nil {
 			return err
@@ -185,28 +269,11 @@ func RunTaskLoopWithContext(ctx context.Context, tl *tasks.TaskList, d TaskDeps,
 		}
 		t.VerifyState = tasks.VerifyTestsPass
 
-		msg := fmt.Sprintf("feat(%s): %s", t.ID, t.Title)
-		_, commitErr := d.Commit(ctx, msg)
-		switch {
-		case commitErr == nil:
-			t.VerifyState = tasks.VerifyCommitOK
-		case errors.Is(commitErr, ErrCommitSkipped):
-			// Work shipped, but the directory is not a git repo: do not mark
-			// the task failed. status will show WORK=done VERIFY=commit_skipped
-			// so the operator knows to `git init` (or accept the no-repo flow).
-			t.VerifyState = tasks.VerifyCommitSkipped
-		default:
-			t.Status = tasks.StatusFailed
-			r := tasks.ReasonCommitRejected
-			t.FailureReason = &r
-			t.VerifyState = tasks.VerifyCommitRejected
-			t.LastFeedback = strPtr(commitErr.Error())
+		if !commitTask(ctx, d, t) {
 			_ = d.Rollback(ctx)
 			_ = d.SaveTasks(ctx, tl)
 			continue
 		}
-
-		t.Status = tasks.StatusDone
 		_ = d.SaveTasks(ctx, tl)
 	}
 }

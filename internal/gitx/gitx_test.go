@@ -1,6 +1,7 @@
 package gitx
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -69,6 +70,22 @@ func TestCommitAll_CreatesCommit(t *testing.T) {
 	}
 	if len(sha) < 7 {
 		t.Errorf("sha too short: %q", sha)
+	}
+}
+
+func TestCommitAll_NothingToCommitReturnsSentinel(t *testing.T) {
+	gitOrSkip(t)
+	dir := initRepo(t)
+	// No changes since the initial commit: the work tree is clean, so there is
+	// nothing to stage. CommitAll must surface this as ErrNothingToCommit (not a
+	// generic git error) so a no-op task — one whose files a prior task already
+	// produced — is treated as done rather than a hard commit failure.
+	sha, err := CommitAll(dir, "noop")
+	if !errors.Is(err, ErrNothingToCommit) {
+		t.Fatalf("expected ErrNothingToCommit, got err=%v sha=%q", err, sha)
+	}
+	if sha != "" {
+		t.Errorf("expected empty sha on no-op, got %q", sha)
 	}
 }
 
@@ -169,5 +186,94 @@ func TestLogStatSinceHead(t *testing.T) {
 	}
 	if !strings.Contains(out, "add a") {
 		t.Errorf("log missing commit message: %q", out)
+	}
+}
+
+func TestMergeFastForward_FastForwards(t *testing.T) {
+	gitOrSkip(t)
+	dir := initRepo(t)
+	base, err := CurrentBranch(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckoutNewBranch(dir, "feat-x", base); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CommitAll(dir, "feat: f"); err != nil {
+		t.Fatal(err)
+	}
+	method, err := MergeFastForward(dir, base, "feat-x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if method != "ff" {
+		t.Errorf("method = %q, want ff", method)
+	}
+	if cur, _ := CurrentBranch(dir); cur != base {
+		t.Errorf("current branch = %q, want %q", cur, base)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "f.txt")); err != nil {
+		t.Errorf("merged file missing on base: %v", err)
+	}
+}
+
+func TestMergeFastForward_NonFFCreatesMergeCommit(t *testing.T) {
+	gitOrSkip(t)
+	dir := initRepo(t)
+	base, _ := CurrentBranch(dir)
+	if err := CheckoutNewBranch(dir, "feat-y", base); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(dir, "y.txt"), []byte("y"), 0o644)
+	if _, err := CommitAll(dir, "feat: y"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Checkout(dir, base); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(dir, "b.txt"), []byte("b"), 0o644)
+	if _, err := CommitAll(dir, "chore: b"); err != nil {
+		t.Fatal(err)
+	}
+	method, err := MergeFastForward(dir, base, "feat-y")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if method != "no-ff" {
+		t.Errorf("method = %q, want no-ff", method)
+	}
+	for _, f := range []string{"y.txt", "b.txt"} {
+		if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
+			t.Errorf("missing %s after merge: %v", f, err)
+		}
+	}
+}
+
+func TestMergeFastForward_ConflictAborts(t *testing.T) {
+	gitOrSkip(t)
+	dir := initRepo(t)
+	base, _ := CurrentBranch(dir)
+	if err := CheckoutNewBranch(dir, "feat-z", base); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(dir, "c.txt"), []byte("feat\n"), 0o644)
+	if _, err := CommitAll(dir, "feat: c"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Checkout(dir, base); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(dir, "c.txt"), []byte("base\n"), 0o644)
+	if _, err := CommitAll(dir, "chore: c"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := MergeFastForward(dir, base, "feat-z"); err == nil {
+		t.Fatal("expected a conflict error")
+	}
+	if clean, _ := IsCleanTree(dir); !clean {
+		t.Errorf("tree must be clean after merge --abort")
 	}
 }

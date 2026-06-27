@@ -67,6 +67,7 @@ func Factory(ctx context.Context, opts FactoryOptions) error {
 	fcfg := factory.Config{Resume: opts.Resume, Replan: opts.Replan}
 	if cfg, cfgErr := config.Load(filepath.Join(opts.ProjectDir, "team.json")); cfgErr == nil {
 		fcfg.BudgetUSD = cfg.Limits.FactoryBudgetUSD
+		fcfg.MaxFeatureRetries = cfg.Limits.FeatureRetries()
 	}
 
 	deps := &liveFactoryDeps{dir: opts.ProjectDir, logFormat: opts.LogFormat, out: opts.Out, createPR: opts.CreatePR}
@@ -301,6 +302,20 @@ func (d *liveFactoryDeps) RunFeature(ctx context.Context, f factory.Feature, reu
 		if err := copyFileAtomic(featureTasks, canonical); err != nil {
 			return factory.Summary{}, err
 		}
+		// A retry — the repair loop or `factory --resume` — must re-attempt tasks
+		// that previously failed. The task loop only runs pending/in-progress
+		// tasks, so reset any failed ones here; otherwise the feature can never
+		// recover (the failed task keeps blocking the merge gate untouched).
+		tl, err := tasks.Load(canonical)
+		if err != nil {
+			return factory.Summary{}, err
+		}
+		if n := tl.ResetFailedToPending(); n > 0 {
+			if err := tasks.Save(canonical, tl); err != nil {
+				return factory.Summary{}, err
+			}
+			d.Logf("factory: %s retrying %d previously-failed task(s)", f.ID, n)
+		}
 		d.Logf("factory: %s reusing task list from %s (skipping plan)", f.ID, filepath.Base(featureTasks))
 	} else {
 		planPath := filepath.Join(d.dir, ".orquestalite", "factory-plan-"+f.ID+".md")
@@ -335,6 +350,7 @@ func (d *liveFactoryDeps) RunFeature(ctx context.Context, f factory.Feature, reu
 			ProjectDir: d.dir,
 			TeamPath:   filepath.Join(d.dir, "team.json"),
 			LogFormat:  d.logFormat,
+			FeatureID:  f.ID,
 		})
 		syncTasks()
 		if runErr != nil || !f.Visual {
@@ -470,6 +486,23 @@ func (d *liveFactoryDeps) featureSpend(ctx context.Context, since time.Time) flo
 	return cost.SpendSince(runs, sessions, since)
 }
 
+func (d *liveFactoryDeps) MergeFeatureToBase(branch, base string) (string, error) {
+	return gitx.MergeFastForward(d.dir, base, branch)
+}
+
+// Event appends one structured event to run.log. It opens the eventlog with a
+// discarded pretty writer so the human stdout stream (driven by Logf) is not
+// duplicated. Best-effort: a log-open failure is silently ignored.
+func (d *liveFactoryDeps) Event(name string, fields map[string]any) {
+	logPath := filepath.Join(d.dir, ".orquestalite", "run.log")
+	logger, err := eventlog.OpenWithFormat(logPath, io.Discard, eventlog.FormatVerbose)
+	if err != nil {
+		return
+	}
+	defer logger.Close()
+	logger.Log(eventlog.Event{Type: name, Fields: fields})
+}
+
 // PublishFeature pushes the feature branch and opens a PR via the gh CLI.
 // Disabled unless the factory was started with --pr.
 func (d *liveFactoryDeps) PublishFeature(ctx context.Context, f factory.Feature, base string) (string, error) {
@@ -539,6 +572,7 @@ func (d *liveFactoryDeps) summarizeTasks() factory.Summary {
 			sum.TasksDone++
 		case tasks.StatusFailed, tasks.StatusNeedsHuman:
 			sum.TasksFailed++
+			sum.FailedTaskIDs = append(sum.FailedTaskIDs, t.ID)
 		default:
 			sum.TasksOther++
 		}

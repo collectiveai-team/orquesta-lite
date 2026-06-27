@@ -65,6 +65,11 @@ func RunReviewLoop(ctx context.Context, tl *tasks.TaskList, cfg ReviewConfig, d 
 				Priority:    n.Priority,
 			})
 		}
+		for i := range newOnes {
+			if newOnes[i].Squad == "" {
+				newOnes[i].Squad = tasks.SquadGeneric
+			}
+		}
 		tl.Append(newOnes, cycle)
 		_ = d.SaveTasks(ctx, tl)
 

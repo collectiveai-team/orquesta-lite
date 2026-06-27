@@ -10,7 +10,8 @@
         "properties": {
           "title":       { "type": "string" },
           "description": { "type": "string" },
-          "priority":    { "type": "integer" }
+          "priority":    { "type": "integer" },
+          "squad":       { "type": "string", "enum": ["setup", "full", "generic"] }
         },
         "required": ["title", "description", "priority"]
       }

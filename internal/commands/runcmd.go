@@ -46,6 +46,9 @@ type RunOptions struct {
 	// (default; one line per event with all fields) or eventlog.FormatHuman
 	// (compact, one summary per agent transition). The JSONL file is unaffected.
 	LogFormat eventlog.Format
+	// FeatureID, when set (factory mode), namespaces provider session keys so
+	// identical per-feature task IDs do not resume each other's sessions.
+	FeatureID string
 }
 
 // Run loads the config and tasks, wires up all components, and drives the
@@ -56,6 +59,7 @@ func Run(ctx context.Context, opts RunOptions) error {
 		TeamPath:   opts.TeamPath,
 		LogFormat:  opts.LogFormat,
 		Roles:      staticRunPreflightRoles,
+		FeatureID:  opts.FeatureID,
 	})
 	if err != nil {
 		return err
@@ -70,6 +74,7 @@ type liveDepsOptions struct {
 	TeamPath   string
 	LogFormat  eventlog.Format
 	Roles      []string
+	FeatureID  string
 }
 
 // resolveLogFormat turns an explicit/auto format choice into a concrete one.
@@ -187,6 +192,7 @@ func newLiveDeps(opts liveDepsOptions) (*liveDeps, func() error, error) {
 			}
 		},
 	}
+	inv.SessionNamespace = opts.FeatureID
 	// Let the coder resume its provider session across fix-loop iterations (and
 	// across a factory --resume) when the same agent runs again on the same task.
 	if cfg.Limits.SessionResumeEnabled() {
@@ -443,6 +449,20 @@ func (d *liveDeps) Commit(ctx context.Context, msg string) (string, error) {
 		return "", loops.ErrCommitSkipped
 	}
 	sha, err := gitx.CommitAll(d.dir, msg)
+	if errors.Is(err, gitx.ErrNothingToCommit) {
+		// No net diff: an earlier task already produced this task's files. Map to
+		// the loops sentinel so the task loop records a no-op (commit_empty) and
+		// keeps the task done, instead of a commit_rejected hard failure.
+		taskID := ""
+		if d.currentTask != nil {
+			taskID = d.currentTask.ID
+		}
+		d.log.Log(eventlog.Event{Type: "task_done_no_commit", Fields: map[string]any{
+			"task_id": taskID,
+			"reason":  "nothing_to_commit",
+		}})
+		return "", loops.ErrNothingToCommit
+	}
 	if err != nil {
 		return "", err
 	}
@@ -603,6 +623,70 @@ func (d *liveDeps) PreflightEnabled() bool {
 	return d.cfg.Limits.PreflightEnabled
 }
 
+// HasRole reports whether the named role is configured in the team roster.
+// Used by the generic-squad dispatcher to fall back to the full fix lane when
+// no generalist role is present.
+func (d *liveDeps) HasRole(role string) bool {
+	_, ok := d.inv.Specs[role]
+	return ok
+}
+
+// RouteEvent emits a task_routed observability event recording which squad the
+// task was assigned to. The event lands in the run event log (JSONL + pretty).
+func (d *liveDeps) RouteEvent(taskID, squad string) {
+	d.log.Log(eventlog.Event{Type: "task_routed", Fields: map[string]any{
+		"task_id": taskID, "squad": squad,
+	}})
+}
+
+// RunSingle invokes one role once (with one retry when the agent writes no
+// result), and maps a written result file to done, an absent result after
+// retries to failed. No tester / critic / verifier loop runs; this is the lean
+// path for the setup and generic squads.
+func (d *liveDeps) RunSingle(ctx context.Context, role string, rc invoke.RunContext) (loops.SingleOutcome, error) {
+	if _, ok := d.inv.Specs[role]; !ok {
+		return loops.SingleOutcome{Status: "failed", Summary: "role not configured: " + role}, nil
+	}
+
+	// Mirror RunFix: find the current task so prompt vars resolve correctly.
+	for i, t := range d.tl.Tasks {
+		if t.ID == rc.TaskID {
+			d.currentTask = &d.tl.Tasks[i]
+			break
+		}
+	}
+	d.captureRollbackBase()
+	d.currentCycle = rc.Cycle
+
+	var lastErr error
+	for attempt := 1; attempt <= 2; attempt++ {
+		rc.Attempt = attempt
+		err := d.inv.RunOnce(ctx, role, invoke.RoleCall{
+			Vars: map[string]string{
+				"TASK_ID":                  rc.TaskID,
+				"TASK_TITLE":               d.currentTaskTitle(),
+				"TASK_DESCRIPTION":         d.currentTaskDescription(),
+				"ATTEMPT_NUMBER":           strconv.Itoa(attempt),
+				"TESTER_FEEDBACK":          "",
+				"CRITIC_FEEDBACK":          "",
+				"VERIFIER_FEEDBACK":        "",
+				"LINT_FEEDBACK":            "",
+				"PREVIOUS_ATTEMPT_SUMMARY": "",
+				"FILES_CHANGED_SO_FAR":     "",
+			},
+		}, rc)
+		if err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return loops.SingleOutcome{}, err
+			}
+			lastErr = err
+			continue
+		}
+		return loops.SingleOutcome{Status: "done"}, nil
+	}
+	return loops.SingleOutcome{Status: "failed", Summary: fmt.Sprintf("%v", lastErr)}, nil
+}
+
 // Preflight runs a lightweight validity check on the task.
 func (d *liveDeps) Preflight(_ context.Context, t *tasks.Task) preflight.Verdict {
 	return preflight.Check(d.dir, t)
@@ -670,6 +754,7 @@ func (d *liveDeps) Decompose(ctx context.Context, t *tasks.Task, fx *loops.FixRe
 			Description:        pt.Description,
 			Priority:           pt.Priority,
 			DecompositionDepth: t.DecompositionDepth + 1,
+			Squad:              pt.Squad,
 		})
 	}
 	return subtasks, nil

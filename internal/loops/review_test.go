@@ -41,6 +41,13 @@ func (s *stubReviewDeps) PreflightEnabled() bool { return s.taskDeps.PreflightEn
 func (s *stubReviewDeps) Preflight(ctx context.Context, t *tasks.Task) preflight.Verdict {
 	return s.taskDeps.Preflight(ctx, t)
 }
+func (s *stubReviewDeps) RunSingle(ctx context.Context, role string, rc invoke.RunContext) (SingleOutcome, error) {
+	return s.taskDeps.RunSingle(ctx, role, rc)
+}
+func (s *stubReviewDeps) HasRole(role string) bool { return s.taskDeps.HasRole(role) }
+func (s *stubReviewDeps) RouteEvent(taskID, squad string) {
+	s.taskDeps.RouteEvent(taskID, squad)
+}
 func (s *stubReviewDeps) CycleBaseSHA(ctx context.Context) (string, error) {
 	if s.cycleBaseSHA != nil {
 		return s.cycleBaseSHA()
@@ -184,5 +191,37 @@ func TestReview_PassesVerificationReportToReviewer(t *testing.T) {
 	}
 	if len(d.reports) != 1 || d.reports[0] != "FAIL: /healthz returned 500" {
 		t.Fatalf("reports = %v", d.reports)
+	}
+}
+
+func TestReview_AppendedTasksDefaultGeneric(t *testing.T) {
+	tl := &tasks.TaskList{Tasks: []tasks.Task{{ID: "T001", Status: tasks.StatusPending, Priority: 1}}}
+	td := &stubTaskDeps{
+		fix:       func(string) *FixResult { return &FixResult{Status: FixDone, Iterations: 1} },
+		fullSuite: func() error { return nil },
+		commit:    func(string) (string, error) { return "x", nil },
+		rollback:  func() error { return nil },
+		saveTasks: func(*tasks.TaskList) error { return nil },
+	}
+	called := false
+	d := &stubReviewDeps{
+		taskDeps: td,
+		reviewer: func(c int) results.ReviewerResult {
+			if !called {
+				called = true
+				// propose one new task with no squad set
+				return results.ReviewerResult{ShouldStop: boolPtr(false), NewTasks: []results.ReviewerNewTask{
+					{Title: "reconcile config", Description: "update project config", Priority: 3},
+				}}
+			}
+			return results.ReviewerResult{ShouldStop: boolPtr(true)}
+		},
+	}
+	_ = RunReviewLoop(context.Background(), tl, ReviewConfig{MaxCycles: 5}, d)
+	if len(tl.Tasks) != 2 {
+		t.Fatalf("expected 2 tasks after append, got %d", len(tl.Tasks))
+	}
+	if tl.Tasks[1].Squad != tasks.SquadGeneric {
+		t.Errorf("reviewer-created task Squad = %q, want %q", tl.Tasks[1].Squad, tasks.SquadGeneric)
 	}
 }

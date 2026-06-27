@@ -81,6 +81,7 @@ type ParserTask struct {
 	Title       string `json:"title"`
 	Description string `json:"description"`
 	Priority    int    `json:"priority"`
+	Squad       string `json:"squad,omitempty"`
 }
 
 type ParserResult struct {

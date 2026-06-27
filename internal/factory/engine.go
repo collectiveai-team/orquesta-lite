@@ -3,6 +3,7 @@ package factory
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -12,6 +13,9 @@ type Summary struct {
 	TasksFailed int
 	TasksOther  int
 	CostUSD     float64
+	// FailedTaskIDs lists the tasks that ended in failed/needs_human, used by the
+	// engine's no-progress guard to decide whether a repair retry made headway.
+	FailedTaskIDs []string
 }
 
 // Config holds factory-level knobs.
@@ -30,6 +34,10 @@ type Config struct {
 	// discarding the persisted tasks-<ID>.json. Without it, an already-planned
 	// feature reuses its task list (the default).
 	Replan bool
+	// MaxFeatureRetries is the number of EXTRA feature-level runs attempted when
+	// a feature fails the merge gate (the no-progress guard may stop sooner).
+	// Populated from limits.max_feature_retries; 0 means stop on first failure.
+	MaxFeatureRetries int
 }
 
 // Deps abstracts everything the engine needs from the outside world so the
@@ -58,13 +66,21 @@ type Deps interface {
 	SaveState(q *Queue) error
 	// Logf reports human-readable progress.
 	Logf(format string, args ...any)
+	// MergeFeatureToBase merges a gate-passed feature branch into base and leaves
+	// the work tree on base. Returns the merge method ("ff" or "no-ff"). An error
+	// (e.g. a conflict) leaves base unchanged for the caller to handle.
+	MergeFeatureToBase(branch, base string) (method string, err error)
+	// Event records a structured factory event (one JSONL line in run.log).
+	Event(name string, fields map[string]any)
 }
 
 // Run drains the queue: each runnable feature is checked out on its own
-// branch, planned, and run. A feature failure is recorded and the engine
-// moves on; only infrastructure errors (git checkout, state persistence)
-// abort the whole factory run. The work tree is returned to the base branch
-// after every feature.
+// branch, planned, and run. Features that pass the merge gate are merged into
+// base (leaving the tree on base), then the queue continues. Features that fail
+// the gate after a bounded repair loop are left on their branch and the queue
+// stops for operator intervention (--resume). Merge conflicts likewise pause the
+// queue. Only infrastructure errors (git checkout, state persistence) abort the
+// entire factory run.
 func Run(ctx context.Context, q *Queue, cfg Config, d Deps) error {
 	// attempted guards against re-picking a feature already run this invocation
 	// — without it, --resume would re-select a feature that fails again on every
@@ -115,41 +131,98 @@ func Run(ctx context.Context, q *Queue, cfg Config, d Deps) error {
 		}
 
 		sum, runErr := d.RunFeature(ctx, *f, reusePlan)
+
+		// Feature-level repair loop: when the feature does not pass the merge gate,
+		// re-run it (reusing its task list) up to cfg.MaxFeatureRetries times,
+		// stopping early once the set of failing tasks stops shrinking so a
+		// structurally-unfixable feature cannot loop-fail.
+		failedPrev := len(sum.FailedTaskIDs)
+		for attempt := 0; !featureGatePassed(sum, runErr) && attempt < cfg.MaxFeatureRetries; attempt++ {
+			if ctx.Err() != nil {
+				break
+			}
+			d.Logf("factory: %s did not pass the merge gate (%d task(s) failing) — repair attempt %d/%d",
+				f.ID, len(sum.FailedTaskIDs), attempt+1, cfg.MaxFeatureRetries)
+			sum, runErr = d.RunFeature(ctx, *f, true)
+			if featureGatePassed(sum, runErr) {
+				break
+			}
+			if len(sum.FailedTaskIDs) >= failedPrev {
+				d.Logf("factory: %s repair made no progress (%d task(s) still failing) — stopping retries",
+					f.ID, len(sum.FailedTaskIDs))
+				break
+			}
+			failedPrev = len(sum.FailedTaskIDs)
+		}
+
 		f.TasksDone, f.TasksFailed, f.TasksOther = sum.TasksDone, sum.TasksFailed, sum.TasksOther
 		f.CostUSD = sum.CostUSD
 		end := time.Now().UTC()
 		f.FinishedAt = &end
-		if runErr != nil {
-			f.Status = StatusFailed
-			f.Error = runErr.Error()
-			d.Logf("factory: %s failed: %v", f.ID, runErr)
-		} else if sum.TasksDone == 0 && sum.TasksFailed > 0 {
-			f.Status = StatusFailed
-			f.Error = "no task completed"
-			d.Logf("factory: %s failed: no task completed", f.ID)
-		} else {
+
+		if featureGatePassed(sum, runErr) {
+			method, mErr := d.MergeFeatureToBase(f.Branch, q.BaseBranch)
+			if mErr != nil {
+				// Conflict or git failure: keep the feature on its branch, return to
+				// base, and stop the queue for the operator.
+				f.Status = StatusFailed
+				f.Error = "merge to base failed: " + mErr.Error()
+				d.Event("feature_merge_blocked", map[string]any{
+					"feature": f.ID, "branch": f.Branch, "reason": "merge_failed", "error": mErr.Error(),
+				})
+				d.Logf("factory: %s merge to base failed: %v — left on branch %s; resolve and `orq-lite factory --resume`",
+					f.ID, mErr, f.Branch)
+				if err := d.CheckoutBase(q.BaseBranch); err != nil {
+					_ = d.SaveState(q)
+					return fmt.Errorf("checkout base %s: %w", q.BaseBranch, err)
+				}
+				return d.SaveState(q)
+			}
+			merged := time.Now().UTC()
 			f.Status = StatusDone
-			d.Logf("factory: %s done (%d tasks done, %d failed, $%.2f)", f.ID, sum.TasksDone, sum.TasksFailed, sum.CostUSD)
+			f.Merged = true
+			f.MergedAt = &merged
+			d.Event("feature_merged", map[string]any{
+				"feature": f.ID, "branch": f.Branch, "base": q.BaseBranch, "method": method,
+			})
+			d.Logf("factory: %s done (%d tasks done, $%.2f) — merged to %s (%s)",
+				f.ID, sum.TasksDone, sum.CostUSD, q.BaseBranch, method)
 			if url, err := d.PublishFeature(ctx, *f, q.BaseBranch); err != nil {
 				d.Logf("factory: %s PR not created: %v", f.ID, err)
 			} else if url != "" {
 				f.PRURL = url
 				d.Logf("factory: %s PR %s", f.ID, url)
 			}
+			if err := d.SaveState(q); err != nil {
+				return err
+			}
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			continue
 		}
 
-		// Preserve any half-done residue (e.g. an interrupted task whose hard
-		// failure skipped task-level rollback) as a WIP commit on the feature
-		// branch before switching away — otherwise the work is lost AND the
-		// checkout would abort on a dirty tree. The branch keeps the work; base
-		// stays clean.
+		// Gate not passed: record the failure, preserve any residue on the feature
+		// branch, return to base WITHOUT merging, and stop the queue.
+		f.Status = StatusFailed
+		if runErr != nil {
+			f.Error = runErr.Error()
+		} else {
+			f.Error = fmt.Sprintf("%d task(s) did not pass the gate: %s",
+				len(sum.FailedTaskIDs), strings.Join(sum.FailedTaskIDs, ", "))
+		}
+		d.Event("feature_merge_blocked", map[string]any{
+			"feature": f.ID, "branch": f.Branch, "failed_tasks": sum.FailedTaskIDs, "reason": "gate_failed",
+		})
+		d.Logf("factory: %s did not pass the merge gate — %s; left on branch %s, not merged. Fix and `orq-lite factory --resume`.",
+			f.ID, f.Error, f.Branch)
+
 		if checkpointed, err := d.CheckpointResidue(*f); err != nil {
 			_ = d.SaveState(q)
 			return fmt.Errorf("checkpoint residue for %s: %w", f.ID, err)
 		} else if checkpointed {
 			d.Logf("factory: %s checkpointed uncommitted residue to %s (wip commit)", f.ID, f.Branch)
 		}
-
 		if err := d.CheckoutBase(q.BaseBranch); err != nil {
 			_ = d.SaveState(q)
 			return fmt.Errorf("checkout base %s: %w", q.BaseBranch, err)
@@ -157,13 +230,14 @@ func Run(ctx context.Context, q *Queue, cfg Config, d Deps) error {
 		if err := d.SaveState(q); err != nil {
 			return err
 		}
-
-		// Context cancellation during the run surfaces here; stop cleanly with
-		// the feature state already persisted.
-		if runErr != nil && ctx.Err() != nil {
-			return ctx.Err()
-		}
+		return nil // stop the queue; operator fixes and resumes
 	}
+}
+
+// featureGatePassed reports whether a feature run is clean enough to merge into
+// base: no run error, no failed tasks, and no tasks left in a non-terminal state.
+func featureGatePassed(sum Summary, runErr error) bool {
+	return runErr == nil && sum.TasksFailed == 0 && sum.TasksOther == 0
 }
 
 // SpentUSD sums the recorded cost of features that finished (done or failed).

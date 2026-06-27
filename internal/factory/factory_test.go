@@ -152,6 +152,10 @@ type fakeDeps struct {
 	checkpoints []string // feature IDs for which CheckpointResidue ran
 	checkpoint  func(f Feature) (bool, error)
 	reusePlans  map[string]bool // feature ID -> reusePlan passed to RunFeature
+	merges      []string        // feature branches passed to MergeFeatureToBase
+	mergeMethod string          // method to return ("" -> "ff")
+	mergeErr    error           // when set, MergeFeatureToBase fails
+	events      []string        // event names recorded via Event
 }
 
 func (d *fakeDeps) CheckoutFeatureBranch(branch, base string) error {
@@ -185,6 +189,19 @@ func (d *fakeDeps) PublishFeature(ctx context.Context, f Feature, base string) (
 }
 func (d *fakeDeps) SaveState(q *Queue) error { d.saves++; return nil }
 func (d *fakeDeps) Logf(string, ...any)      {}
+func (d *fakeDeps) MergeFeatureToBase(branch, base string) (string, error) {
+	d.merges = append(d.merges, branch)
+	if d.mergeErr != nil {
+		return "", d.mergeErr
+	}
+	if d.mergeMethod != "" {
+		return d.mergeMethod, nil
+	}
+	return "ff", nil
+}
+func (d *fakeDeps) Event(name string, _ map[string]any) {
+	d.events = append(d.events, name)
+}
 
 func TestEngineRun_DrainsQueue(t *testing.T) {
 	q := &Queue{BaseBranch: "main", Features: ParseFeatures("## A\n\nbody\n\n## B\n\nbody\n")}
@@ -192,20 +209,20 @@ func TestEngineRun_DrainsQueue(t *testing.T) {
 	if err := Run(context.Background(), q, Config{}, d); err != nil {
 		t.Fatal(err)
 	}
-	if len(d.runs) != 2 || d.bases != 2 {
-		t.Errorf("runs=%v bases=%d", d.runs, d.bases)
+	if len(d.runs) != 2 || len(d.merges) != 2 {
+		t.Errorf("runs=%v merges=%v", d.runs, d.merges)
 	}
 	for _, f := range q.Features {
-		if f.Status != StatusDone {
-			t.Errorf("%s = %q", f.ID, f.Status)
+		if f.Status != StatusDone || !f.Merged {
+			t.Errorf("%s = %+v", f.ID, f)
 		}
-		if f.StartedAt == nil || f.FinishedAt == nil {
+		if f.StartedAt == nil || f.FinishedAt == nil || f.MergedAt == nil {
 			t.Errorf("%s missing timestamps", f.ID)
 		}
 	}
 }
 
-func TestEngineRun_FeatureFailureContinues(t *testing.T) {
+func TestEngineRun_FeatureFailureStopsQueue(t *testing.T) {
 	q := &Queue{BaseBranch: "main", Features: ParseFeatures("## A\n\nbody\n\n## B\n\nbody\n")}
 	d := &fakeDeps{runResult: func(f Feature) (Summary, error) {
 		if f.ID == "F001" {
@@ -216,11 +233,14 @@ func TestEngineRun_FeatureFailureContinues(t *testing.T) {
 	if err := Run(context.Background(), q, Config{}, d); err != nil {
 		t.Fatal(err)
 	}
-	if q.Features[0].Status != StatusFailed || q.Features[0].Error == "" {
-		t.Errorf("f0 = %+v", q.Features[0])
+	if fmt.Sprint(d.runs) != "[F001]" {
+		t.Errorf("runs = %v, want only [F001] (queue stops on failure)", d.runs)
 	}
-	if q.Features[1].Status != StatusDone || q.Features[1].TasksDone != 2 {
-		t.Errorf("f1 = %+v", q.Features[1])
+	if len(d.merges) != 0 {
+		t.Errorf("merges = %v, want none", d.merges)
+	}
+	if q.Features[0].Status != StatusFailed || q.Features[1].Status != StatusPending {
+		t.Errorf("statuses: F001=%q F002=%q", q.Features[0].Status, q.Features[1].Status)
 	}
 }
 
@@ -266,9 +286,12 @@ func TestEngineRun_CheckpointsResidueBeforeReturningToBase(t *testing.T) {
 
 func TestEngineRun_CheckpointErrorAbortsQueue(t *testing.T) {
 	q := &Queue{BaseBranch: "main", Features: ParseFeatures("## A\n\nbody\n")}
-	d := &fakeDeps{checkpoint: func(Feature) (bool, error) {
-		return false, fmt.Errorf("commit failed")
-	}}
+	d := &fakeDeps{
+		runResult: func(Feature) (Summary, error) {
+			return Summary{TasksFailed: 1, FailedTaskIDs: []string{"T001"}}, nil
+		},
+		checkpoint: func(Feature) (bool, error) { return false, fmt.Errorf("commit failed") },
+	}
 	err := Run(context.Background(), q, Config{}, d)
 	if err == nil || d.bases != 0 {
 		t.Fatalf("err=%v bases=%d; a checkpoint failure must abort before checking out base", err, d.bases)
@@ -348,23 +371,20 @@ func TestEngineRun_WithoutResumeSkipsFailedFeature(t *testing.T) {
 	}
 }
 
-func TestEngineRun_ResumeDoesNotLoopOnRepeatedFailure(t *testing.T) {
-	// A feature that keeps failing must be attempted once and then passed over,
-	// not re-selected forever.
+func TestEngineRun_ResumeStopsOnRepeatedFailure(t *testing.T) {
 	q := &Queue{BaseBranch: "main", Features: ParseFeatures("## A\n\nbody\n\n## B\n\nbody\n")}
 	q.Features[0].Status = StatusFailed
 	d := &fakeDeps{runResult: func(f Feature) (Summary, error) {
 		if f.ID == "F001" {
-			return Summary{}, errors.New("still broken")
+			return Summary{TasksFailed: 1, FailedTaskIDs: []string{"T001"}}, nil
 		}
 		return Summary{TasksDone: 1}, nil
 	}}
 	if err := Run(context.Background(), q, Config{Resume: true}, d); err != nil {
 		t.Fatal(err)
 	}
-	// F001 attempted exactly once despite re-failing; F002 still gets its turn.
-	if fmt.Sprint(d.runs) != "[F001 F002]" {
-		t.Fatalf("runs = %v, want [F001 F002] (no infinite retry of F001)", d.runs)
+	if fmt.Sprint(d.runs) != "[F001]" {
+		t.Fatalf("runs = %v, want [F001] (failed feature stops the queue)", d.runs)
 	}
 }
 
@@ -416,4 +436,95 @@ func TestEngineRun_PublishesDoneFeatures(t *testing.T) {
 	if q.Features[0].PRURL != "https://github.com/x/y/pull/1" {
 		t.Errorf("PRURL = %q", q.Features[0].PRURL)
 	}
+}
+
+func TestEngineRun_MergesGatePassedFeature(t *testing.T) {
+	q := &Queue{BaseBranch: "main", Features: ParseFeatures("## A\n\nbody\n")}
+	d := &fakeDeps{mergeMethod: "no-ff"}
+	if err := Run(context.Background(), q, Config{}, d); err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(d.merges) != "[factory/001-a]" {
+		t.Errorf("merges = %v", d.merges)
+	}
+	if !contains(d.events, "feature_merged") {
+		t.Errorf("events = %v, want feature_merged", d.events)
+	}
+}
+
+func TestEngineRun_GateFailStopsAndDoesNotMerge(t *testing.T) {
+	q := &Queue{BaseBranch: "main", Features: ParseFeatures("## A\n\nbody\n")}
+	d := &fakeDeps{runResult: func(Feature) (Summary, error) {
+		return Summary{TasksDone: 1, TasksFailed: 1, FailedTaskIDs: []string{"T002"}}, nil
+	}}
+	if err := Run(context.Background(), q, Config{}, d); err != nil {
+		t.Fatal(err)
+	}
+	if len(d.merges) != 0 || q.Features[0].Status != StatusFailed {
+		t.Errorf("merges=%v status=%q", d.merges, q.Features[0].Status)
+	}
+	if !contains(d.events, "feature_merge_blocked") {
+		t.Errorf("events = %v, want feature_merge_blocked", d.events)
+	}
+}
+
+func TestEngineRun_RepairLoopRetriesThenMerges(t *testing.T) {
+	q := &Queue{BaseBranch: "main", Features: ParseFeatures("## A\n\nbody\n")}
+	call := 0
+	d := &fakeDeps{runResult: func(Feature) (Summary, error) {
+		call++
+		if call == 1 {
+			return Summary{TasksFailed: 1, FailedTaskIDs: []string{"T001"}}, nil
+		}
+		return Summary{TasksDone: 2}, nil
+	}}
+	if err := Run(context.Background(), q, Config{MaxFeatureRetries: 2}, d); err != nil {
+		t.Fatal(err)
+	}
+	if call != 2 || len(d.merges) != 1 || q.Features[0].Status != StatusDone {
+		t.Errorf("call=%d merges=%v status=%q", call, d.merges, q.Features[0].Status)
+	}
+}
+
+func TestEngineRun_RepairLoopStopsOnNoProgress(t *testing.T) {
+	q := &Queue{BaseBranch: "main", Features: ParseFeatures("## A\n\nbody\n")}
+	call := 0
+	d := &fakeDeps{runResult: func(Feature) (Summary, error) {
+		call++
+		return Summary{TasksFailed: 2, FailedTaskIDs: []string{"T001", "T002"}}, nil
+	}}
+	if err := Run(context.Background(), q, Config{MaxFeatureRetries: 5}, d); err != nil {
+		t.Fatal(err)
+	}
+	// Initial run + exactly one retry, then the no-progress guard stops it.
+	if call != 2 {
+		t.Errorf("RunFeature calls = %d, want 2 (no-progress guard)", call)
+	}
+	if len(d.merges) != 0 || q.Features[0].Status != StatusFailed {
+		t.Errorf("merges=%v status=%q", d.merges, q.Features[0].Status)
+	}
+}
+
+func TestEngineRun_MergeConflictStopsQueue(t *testing.T) {
+	q := &Queue{BaseBranch: "main", Features: ParseFeatures("## A\n\nbody\n\n## B\n\nbody\n")}
+	d := &fakeDeps{mergeErr: errors.New("conflict")}
+	if err := Run(context.Background(), q, Config{}, d); err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(d.runs) != "[F001]" || q.Features[0].Status != StatusFailed {
+		t.Errorf("runs=%v status=%q", d.runs, q.Features[0].Status)
+	}
+	if !contains(d.events, "feature_merge_blocked") {
+		t.Errorf("events = %v, want feature_merge_blocked", d.events)
+	}
+}
+
+// contains is a small test helper.
+func contains(xs []string, want string) bool {
+	for _, x := range xs {
+		if x == want {
+			return true
+		}
+	}
+	return false
 }

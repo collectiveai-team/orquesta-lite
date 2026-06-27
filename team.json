@@ -4,73 +4,80 @@
       "provider": "claude",
       "model": "claude-sonnet-4-6",
       "dangerously_skip_permissions": true,
-      "rate_limit_pattern": "rate_?limit|429|quota"
+      "rate_limit_pattern": "(?i)(rate_?limit|429|quota|session limit|usage limit)"
     },
     "claude_opus": {
       "provider": "claude",
       "model": "claude-opus-4-8",
       "dangerously_skip_permissions": true,
-      "rate_limit_pattern": "rate_?limit|429|quota"
+      "rate_limit_pattern": "(?i)(rate_?limit|429|quota|session limit|usage limit)"
     },
-    "codex_gpt55": {
+    "codex_gpt5": {
       "provider": "codex",
       "model": "gpt-5.5",
-      "effort": "high",
+      "effort": "medium",
       "rate_limit_pattern": "(?i)(429|usage limit reached|rate_?limit_exceeded|quota.*exceeded|usage limit)"
-    },
-    "gemini_pro": {
-      "provider": "gemini",
-      "model": "gemini-2.5-pro",
-      "dangerously_skip_permissions": true,
-      "rate_limit_pattern": "(?i)(429|rate_?limit|quota.*exceeded|resource.*exhausted)"
     }
   },
   "roles": {
+    "planner": {
+      "agents": [
+        "claude_sonnet",
+        "claude_opus"
+      ],
+      "prompt": "prompts/factory-planner.md",
+      "result_path": ".orquestalite/results/planner.json",
+      "timeout_seconds": 900
+    },
     "parser": {
       "agents": [
         "claude_opus"
       ],
       "prompt": "prompts/parser.md",
       "result_path": ".orquestalite/results/parser.json",
-      "timeout_seconds": 300,
+      "timeout_seconds": 600,
       "decompose_prompt": "prompts/parser-decompose.md"
+    },
+    "compactor": {
+      "agents": [
+        "claude_sonnet",
+        "claude_opus"
+      ],
+      "prompt": "prompts/memory-compactor.md",
+      "result_path": ".orquestalite/results/compactor.json",
+      "timeout_seconds": 600
     },
     "coder": {
       "agents": [
-        "codex_gpt55",
-        "claude_opus",
+        "codex_gpt5",
         "claude_sonnet"
       ],
       "prompt": "prompts/coder.md",
       "result_path": ".orquestalite/results/coder.json",
-      "timeout_seconds": 1200,
-      "escalation_ladder": [
-        "claude_opus"
-      ]
+      "timeout_seconds": 1800
     },
     "tester": {
       "agents": [
         "claude_sonnet",
-        "claude_opus",
-        "gemini_pro"
+        "codex_gpt5"
       ],
       "prompt": "prompts/tester.md",
       "result_path": ".orquestalite/results/tester.json",
-      "timeout_seconds": 600
+      "timeout_seconds": 900
     },
     "critic": {
       "agents": [
         "claude_opus",
-        "claude_sonnet"
+        "codex_gpt5"
       ],
       "prompt": "prompts/critic.md",
       "result_path": ".orquestalite/results/critic.json",
-      "timeout_seconds": 300
+      "timeout_seconds": 600
     },
     "verifier": {
       "agents": [
         "claude_sonnet",
-        "claude_opus"
+        "codex_gpt5"
       ],
       "prompt": "prompts/verifier.md",
       "result_path": ".orquestalite/results/verifier.json",
@@ -81,11 +88,11 @@
     "reviewer": {
       "agents": [
         "claude_opus",
-        "claude_sonnet"
+        "codex_gpt5"
       ],
       "prompt": "prompts/reviewer.md",
       "result_path": ".orquestalite/results/reviewer.json",
-      "timeout_seconds": 600
+      "timeout_seconds": 900
     }
   },
   "limits": {
@@ -97,7 +104,7 @@
     "initial_seconds": 30,
     "factor": 2,
     "max_seconds": 1800,
-    "default_pattern": "rate_?limit|429|quota|too many requests"
+    "default_pattern": "(?i)(rate_?limit|429|quota|too many requests|session limit|usage limit)"
   },
   "full_test_command": "go test ./...",
   "lint_command": ""

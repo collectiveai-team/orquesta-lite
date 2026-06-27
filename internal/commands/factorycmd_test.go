@@ -2,6 +2,7 @@ package commands
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -315,5 +316,45 @@ func TestFactory_StatusOutput(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("status output missing %q:\n%s", want, out)
 		}
+	}
+}
+
+func TestLiveDeps_EventAppendsToRunLog(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".orquestalite"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	d := &liveFactoryDeps{dir: dir, out: io.Discard}
+	d.Event("feature_merged", map[string]any{"feature": "F001", "method": "ff"})
+	raw, err := os.ReadFile(filepath.Join(dir, ".orquestalite", "run.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"feature_merged"`) || !strings.Contains(string(raw), "F001") {
+		t.Errorf("run.log missing event: %s", raw)
+	}
+}
+
+func TestSummarizeTasks_CollectsFailedIDs(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".orquestalite"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tl := &tasks.TaskList{Tasks: []tasks.Task{
+		{ID: "T001", Status: tasks.StatusDone},
+		{ID: "T002", Status: tasks.StatusFailed},
+		{ID: "T003", Status: tasks.StatusNeedsHuman},
+		{ID: "T004", Status: tasks.StatusPending},
+	}}
+	if err := tasks.Save(filepath.Join(dir, ".orquestalite", "tasks.json"), tl); err != nil {
+		t.Fatal(err)
+	}
+	d := &liveFactoryDeps{dir: dir}
+	sum := d.summarizeTasks()
+	if sum.TasksDone != 1 || sum.TasksFailed != 2 || sum.TasksOther != 1 {
+		t.Errorf("counts = %+v", sum)
+	}
+	if fmt.Sprint(sum.FailedTaskIDs) != "[T002 T003]" {
+		t.Errorf("FailedTaskIDs = %v, want [T002 T003]", sum.FailedTaskIDs)
 	}
 }

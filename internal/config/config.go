@@ -92,6 +92,10 @@ type Limits struct {
 	// 0 = use the default (24000 ≈ 6k tokens). Compaction only runs when a
 	// "compactor" role is configured.
 	MemoryCompactChars int `json:"memory_compact_chars,omitempty"`
+	// MaxFeatureRetries caps how many extra times the factory re-runs a feature
+	// that did not pass the merge gate before giving up and stopping the queue.
+	// The no-progress guard can stop earlier. 0 = use the default (1).
+	MaxFeatureRetries int `json:"max_feature_retries,omitempty"`
 }
 
 // MemoryCompactThreshold returns the memory size above which compaction runs,
@@ -116,6 +120,15 @@ func (l Limits) VisualRounds() int {
 		return 2
 	}
 	return l.MaxVisualRounds
+}
+
+// FeatureRetries returns the extra feature-level retry budget on a merge-gate
+// failure, defaulting to 1 when unset.
+func (l Limits) FeatureRetries() int {
+	if l.MaxFeatureRetries <= 0 {
+		return 1
+	}
+	return l.MaxFeatureRetries
 }
 
 // TesterVerificationEnabled reports whether the orchestrator should re-run the

@@ -71,6 +71,34 @@ func TestPlan_AppendPreservesExisting(t *testing.T) {
 	}
 }
 
+func TestPlan_MapsSquadFromParserTask(t *testing.T) {
+	dir := t.TempDir()
+	planPath := filepath.Join(dir, "plan.md")
+	_ = os.WriteFile(planPath, []byte("plan"), 0o644)
+	_ = os.MkdirAll(filepath.Join(dir, ".orquestalite"), 0o755)
+
+	stub := &stubParserCaller{out: results.ParserResult{Tasks: []results.ParserTask{
+		{Title: "scaffold", Description: "set up repo", Priority: 1, Squad: tasks.SquadSetup},
+		{Title: "add feature", Description: "feature", Priority: 2},
+	}}}
+
+	if err := Plan(context.Background(), dir, planPath, false, stub); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, _ := os.ReadFile(filepath.Join(dir, ".orquestalite", "tasks.json"))
+	var tl tasks.TaskList
+	if err := json.Unmarshal(raw, &tl); err != nil {
+		t.Fatal(err)
+	}
+	if tl.Tasks[0].Squad != tasks.SquadSetup {
+		t.Errorf("T001 squad = %q, want %q", tl.Tasks[0].Squad, tasks.SquadSetup)
+	}
+	if tl.Tasks[1].SquadOrDefault() != tasks.SquadFull {
+		t.Errorf("T002 should default to full, got %q", tl.Tasks[1].SquadOrDefault())
+	}
+}
+
 func TestPlanWithLiveCallerPreflightsOnlyParserAgents(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("posix shell script test, skipping on windows")

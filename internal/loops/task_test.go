@@ -19,12 +19,17 @@ type stubTaskDeps struct {
 	saveTasks          func(*tasks.TaskList) error
 	decompose          func(t *tasks.Task, fx *FixResult) ([]tasks.Task, error)
 	handoff            func(t *tasks.Task) (string, error)
+	runSingle          func(role string) (SingleOutcome, error)
+	hasRole            func(role string) bool
 	preflightEnabled   bool
 	preflightVerdict   preflight.Verdict
 	commits            []string
 	rollbacks          int
 	fixCalled          int
+	singleCalls        []string // roles passed to RunSingle
+	fullSuiteCalls     int
 	lastDecomposeFiles []string // captures filesChangedSoFar passed to Decompose
+	routeEvents        []string // records taskID+":"+squad from RouteEvent calls
 }
 
 func (s *stubTaskDeps) PreflightEnabled() bool { return s.preflightEnabled }
@@ -36,7 +41,20 @@ func (s *stubTaskDeps) RunFix(ctx context.Context, taskID string, rc invoke.RunC
 	s.fixCalled++
 	return s.fix(taskID), nil
 }
-func (s *stubTaskDeps) FullSuite(ctx context.Context) error { return s.fullSuite() }
+func (s *stubTaskDeps) FullSuite(ctx context.Context) error { s.fullSuiteCalls++; return s.fullSuite() }
+func (s *stubTaskDeps) RunSingle(ctx context.Context, role string, rc invoke.RunContext) (SingleOutcome, error) {
+	s.singleCalls = append(s.singleCalls, role)
+	if s.runSingle != nil {
+		return s.runSingle(role)
+	}
+	return SingleOutcome{Status: "done"}, nil
+}
+func (s *stubTaskDeps) HasRole(role string) bool {
+	if s.hasRole != nil {
+		return s.hasRole(role)
+	}
+	return true
+}
 func (s *stubTaskDeps) Commit(ctx context.Context, msg string) (string, error) {
 	sha, err := s.commit(msg)
 	s.commits = append(s.commits, msg)
@@ -62,6 +80,9 @@ func (s *stubTaskDeps) Handoff(ctx context.Context, t *tasks.Task) (string, erro
 	}
 	return "/tmp/handoff-" + t.ID + ".md", nil
 }
+func (s *stubTaskDeps) RouteEvent(taskID, squad string) {
+	s.routeEvents = append(s.routeEvents, taskID+":"+squad)
+}
 
 func TestTaskLoop_HappyPath(t *testing.T) {
 	tl := &tasks.TaskList{Tasks: []tasks.Task{
@@ -83,6 +104,37 @@ func TestTaskLoop_HappyPath(t *testing.T) {
 	}
 	if len(d.commits) != 1 {
 		t.Errorf("commits=%d", len(d.commits))
+	}
+}
+
+func TestTaskLoop_NothingToCommitMarksDoneNoOp(t *testing.T) {
+	tl := &tasks.TaskList{Tasks: []tasks.Task{
+		{ID: "T001", Title: "already satisfied", Status: tasks.StatusPending, Priority: 1},
+	}}
+	d := &stubTaskDeps{
+		fix:       func(id string) *FixResult { return &FixResult{Status: FixDone, Iterations: 1} },
+		fullSuite: func() error { return nil },
+		// Coder ran and tests passed, but a prior task already produced these
+		// files: there is no net diff, so Commit reports ErrNothingToCommit.
+		commit:    func(msg string) (string, error) { return "", ErrNothingToCommit },
+		rollback:  func() error { return nil },
+		saveTasks: func(*tasks.TaskList) error { return nil },
+	}
+
+	if err := RunTaskLoop(context.Background(), tl, d); err != nil {
+		t.Fatal(err)
+	}
+	if tl.Tasks[0].Status != tasks.StatusDone {
+		t.Errorf("no-op task should be Done (work already satisfied), got %s", tl.Tasks[0].Status)
+	}
+	if tl.Tasks[0].VerifyState != tasks.VerifyCommitEmpty {
+		t.Errorf("expected verify=commit_empty, got %q", tl.Tasks[0].VerifyState)
+	}
+	if tl.Tasks[0].FailureReason != nil {
+		t.Errorf("no-op should have no failure_reason, got %v", *tl.Tasks[0].FailureReason)
+	}
+	if d.rollbacks != 0 {
+		t.Errorf("no-op must not roll back work, got %d rollbacks", d.rollbacks)
 	}
 }
 
@@ -431,5 +483,115 @@ func TestRunTaskLoop_FilesChangedSoFarPassedToDecompose(t *testing.T) {
 		if d.lastDecomposeFiles[i] != f {
 			t.Errorf("Decompose files[%d] = %q, want %q", i, d.lastDecomposeFiles[i], f)
 		}
+	}
+}
+
+func TestTaskLoop_SetupSquadRunsCoderOnlyNoFullSuite(t *testing.T) {
+	tl := &tasks.TaskList{Tasks: []tasks.Task{
+		{ID: "T001", Squad: tasks.SquadSetup, Status: tasks.StatusPending, Priority: 1},
+	}}
+	d := &stubTaskDeps{
+		fix:       func(id string) *FixResult { t.Fatalf("RunFix must not run for setup"); return nil },
+		fullSuite: func() error { return nil },
+		commit:    func(msg string) (string, error) { return "sha", nil },
+		rollback:  func() error { return nil },
+		saveTasks: func(*tasks.TaskList) error { return nil },
+	}
+	if err := RunTaskLoop(context.Background(), tl, d); err != nil {
+		t.Fatal(err)
+	}
+	if len(d.singleCalls) != 1 || d.singleCalls[0] != "coder" {
+		t.Errorf("setup should call RunSingle(coder), got %v", d.singleCalls)
+	}
+	if d.fullSuiteCalls != 0 {
+		t.Errorf("setup must skip FullSuite, got %d calls", d.fullSuiteCalls)
+	}
+	if len(d.commits) != 1 {
+		t.Errorf("setup should commit once, got %d", len(d.commits))
+	}
+	if tl.Tasks[0].Status != tasks.StatusDone {
+		t.Errorf("setup task should be Done, got %s", tl.Tasks[0].Status)
+	}
+	if len(d.routeEvents) != 1 || d.routeEvents[0] != "T001:setup" {
+		t.Errorf("expected route event T001:setup, got %v", d.routeEvents)
+	}
+}
+
+func TestTaskLoop_GenericSquadRunsGeneralist(t *testing.T) {
+	tl := &tasks.TaskList{Tasks: []tasks.Task{
+		{ID: "T001", Squad: tasks.SquadGeneric, Status: tasks.StatusPending, Priority: 1},
+	}}
+	d := &stubTaskDeps{
+		fix:       func(id string) *FixResult { t.Fatalf("RunFix must not run for generic"); return nil },
+		fullSuite: func() error { return nil },
+		commit:    func(msg string) (string, error) { return "sha", nil },
+		rollback:  func() error { return nil },
+		saveTasks: func(*tasks.TaskList) error { return nil },
+	}
+	if err := RunTaskLoop(context.Background(), tl, d); err != nil {
+		t.Fatal(err)
+	}
+	if len(d.singleCalls) != 1 || d.singleCalls[0] != "generalist" {
+		t.Errorf("generic should call RunSingle(generalist), got %v", d.singleCalls)
+	}
+	if d.fullSuiteCalls != 0 {
+		t.Errorf("generic must skip FullSuite")
+	}
+	if len(d.commits) != 1 {
+		t.Errorf("generic should commit once, got %d", len(d.commits))
+	}
+	if tl.Tasks[0].Status != tasks.StatusDone {
+		t.Errorf("generic task should be Done, got %s", tl.Tasks[0].Status)
+	}
+}
+
+func TestTaskLoop_GenericFallsBackToFullWhenNoGeneralist(t *testing.T) {
+	tl := &tasks.TaskList{Tasks: []tasks.Task{
+		{ID: "T001", Squad: tasks.SquadGeneric, Status: tasks.StatusPending, Priority: 1},
+	}}
+	d := &stubTaskDeps{
+		fix:       func(id string) *FixResult { return &FixResult{Status: FixDone, Iterations: 1} },
+		fullSuite: func() error { return nil },
+		commit:    func(msg string) (string, error) { return "sha", nil },
+		rollback:  func() error { return nil },
+		saveTasks: func(*tasks.TaskList) error { return nil },
+		hasRole:   func(role string) bool { return role != "generalist" },
+	}
+	if err := RunTaskLoop(context.Background(), tl, d); err != nil {
+		t.Fatal(err)
+	}
+	if len(d.singleCalls) != 0 {
+		t.Errorf("no generalist → must not call RunSingle, got %v", d.singleCalls)
+	}
+	if d.fixCalled != 1 {
+		t.Errorf("no generalist → generic falls back to RunFix, fixCalled=%d", d.fixCalled)
+	}
+	if tl.Tasks[0].Status != tasks.StatusDone {
+		t.Errorf("fallback task should be Done, got %s", tl.Tasks[0].Status)
+	}
+}
+
+func TestTaskLoop_SingleRoleFailureMarksFailed(t *testing.T) {
+	tl := &tasks.TaskList{Tasks: []tasks.Task{
+		{ID: "T001", Squad: tasks.SquadSetup, Status: tasks.StatusPending, Priority: 1},
+	}}
+	d := &stubTaskDeps{
+		runSingle: func(role string) (SingleOutcome, error) {
+			return SingleOutcome{Status: "failed", Summary: "blocked"}, nil
+		},
+		fullSuite: func() error { return nil },
+		commit:    func(msg string) (string, error) { return "sha", nil },
+		rollback:  func() error { return nil },
+		saveTasks: func(*tasks.TaskList) error { return nil },
+	}
+	_ = RunTaskLoop(context.Background(), tl, d)
+	if tl.Tasks[0].Status != tasks.StatusFailed {
+		t.Errorf("failed RunSingle → task Failed, got %s", tl.Tasks[0].Status)
+	}
+	if len(d.commits) != 0 {
+		t.Errorf("failed single-role task must not commit")
+	}
+	if d.rollbacks != 1 {
+		t.Errorf("failed single-role task should roll back, got %d", d.rollbacks)
 	}
 }

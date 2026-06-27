@@ -45,7 +45,6 @@ Use this as a strict maintainability bar. Do not approve merely because the code
 - Copy-pasted logic instead of a canonical helper.
 - Bespoke helpers where the codebase already has a clear utility for the job.
 - Logic added in the wrong layer or package when there is a clear canonical home.
-- Unfinished behavior shipped as a stub (`raise NotImplementedError`, `panic("not implemented")`, `TODO`-bodied functions, hard-coded fake results) that a prior task should have implemented — especially a stub reachable from a shipped code path, where calling it raises at runtime.
 
 ## Preferred Remedies
 

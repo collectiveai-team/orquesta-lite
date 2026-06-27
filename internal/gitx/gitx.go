@@ -1,12 +1,19 @@
 package gitx
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 )
+
+// ErrNothingToCommit is returned by CommitAll when there is nothing staged to
+// commit (the work tree is clean). Callers treat this as a no-op rather than a
+// failure: it happens when a task's files were already produced by an earlier
+// task (overlapping decomposition), so the desired end-state already exists.
+var ErrNothingToCommit = errors.New("nothing to commit: work tree clean")
 
 func run(dir string, args ...string) (string, error) {
 	c := exec.Command("git", args...)
@@ -42,6 +49,12 @@ func IsRepo(dir string) bool {
 func CommitAll(dir, message string) (string, error) {
 	if _, err := run(dir, "add", "-A"); err != nil {
 		return "", err
+	}
+	// `git diff --cached --quiet` exits 0 when nothing is staged. In that case a
+	// commit would fail with "nothing to commit"; surface ErrNothingToCommit so
+	// the caller can treat the no-op as done instead of a hard commit failure.
+	if _, err := run(dir, "diff", "--cached", "--quiet"); err == nil {
+		return "", ErrNothingToCommit
 	}
 	if _, err := run(dir, "commit", "-m", message); err != nil {
 		return "", err
@@ -163,4 +176,24 @@ func Checkout(dir, name string) error {
 func CheckoutNewBranch(dir, name, base string) error {
 	_, err := run(dir, "checkout", "-b", name, base)
 	return err
+}
+
+// MergeFastForward checks out base and merges branch into it. It prefers a
+// fast-forward; when base has diverged it falls back to a --no-ff merge commit.
+// A --ff-only failure is treated as needing a merge commit and falls through to
+// --no-ff; genuine git errors surface via the --no-ff attempt and abort.
+// Returns the method used ("ff" or "no-ff"). On conflict it runs `git merge
+// --abort` and returns an error, leaving base unchanged with a clean tree.
+func MergeFastForward(dir, base, branch string) (string, error) {
+	if err := Checkout(dir, base); err != nil {
+		return "", err
+	}
+	if _, err := run(dir, "merge", "--ff-only", branch); err == nil {
+		return "ff", nil
+	}
+	if _, err := run(dir, "merge", "--no-ff", "--no-edit", branch); err != nil {
+		_, _ = run(dir, "merge", "--abort")
+		return "", fmt.Errorf("merge %s into %s: %w", branch, base, err)
+	}
+	return "no-ff", nil
 }

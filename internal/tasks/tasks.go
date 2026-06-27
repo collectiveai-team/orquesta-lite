@@ -21,6 +21,13 @@ const (
 	StatusNeedsClarification Status = "needs_clarification"
 )
 
+// Squad constants select the role lane that runs a task.
+const (
+	SquadSetup   = "setup"
+	SquadFull    = "full"
+	SquadGeneric = "generic"
+)
+
 type FailureReason string
 
 const (
@@ -69,6 +76,10 @@ const (
 	VerifyCommitOK       VerifyState = "commit_ok"
 	VerifyCommitSkipped  VerifyState = "commit_skipped"
 	VerifyCommitRejected VerifyState = "commit_rejected"
+	// VerifyCommitEmpty marks a task that finished with no net diff to commit
+	// because an earlier task already produced its files. The work status is
+	// done (tests passed, end-state present); it just did not author a commit.
+	VerifyCommitEmpty VerifyState = "commit_empty"
 )
 
 type Task struct {
@@ -93,6 +104,22 @@ type Task struct {
 	// DecompositionDepth counts how many decomposition generations produced
 	// this task (0 = from the plan or reviewer). Caps recursive decomposition.
 	DecompositionDepth int `json:"decomposition_depth,omitempty"`
+	// Squad selects the role lane that runs this task: "setup" (coder only),
+	// "full" (coder→tester→critic→verifier, the default), or "generic"
+	// (generalist only). Empty or unknown is treated as "full".
+	Squad string `json:"squad,omitempty"`
+}
+
+// SquadOrDefault returns the task's squad, defaulting to SquadFull when the
+// field is empty or holds an unrecognized value (fail-safe: unknown work gets
+// the full review lane).
+func (t *Task) SquadOrDefault() string {
+	switch t.Squad {
+	case SquadSetup, SquadGeneric:
+		return t.Squad
+	default:
+		return SquadFull
+	}
 }
 
 type TaskList struct {
@@ -142,6 +169,26 @@ func (tl *TaskList) NextPending() *Task {
 		return tl.Tasks[pending[a]].Priority < tl.Tasks[pending[b]].Priority
 	})
 	return &tl.Tasks[pending[0]]
+}
+
+// ResetFailedToPending flips every failed task back to pending so a feature
+// retry — the in-run repair loop or an explicit `factory --resume` — re-attempts
+// it instead of skipping it (the task loop only runs pending/in-progress tasks).
+// It clears the failure bookkeeping but leaves attempt history and last feedback
+// so the next attempt still has context. Returns the number of tasks reset.
+func (tl *TaskList) ResetFailedToPending() int {
+	n := 0
+	for i := range tl.Tasks {
+		if tl.Tasks[i].Status != StatusFailed {
+			continue
+		}
+		tl.Tasks[i].Status = StatusPending
+		tl.Tasks[i].FailureReason = nil
+		tl.Tasks[i].FailureDetails = nil
+		tl.Tasks[i].VerifyState = VerifyUnknown
+		n++
+	}
+	return n
 }
 
 func (tl *TaskList) NextID() string {

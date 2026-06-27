@@ -61,6 +61,11 @@ type RoleInvoker struct {
 	// ResumeRoles is the set of roles allowed to resume a prior session. Empty
 	// or nil means no role resumes (tracking still happens for all roles).
 	ResumeRoles map[string]bool
+	// SessionNamespace scopes session keys (e.g. the factory feature ID "F002")
+	// so identical per-feature task IDs do not resume each other's sessions.
+	// The composed key has the form "<namespace>/<taskID>" (e.g. "F002/T001").
+	// Empty (non-factory run) leaves keys as the bare task ID.
+	SessionNamespace string
 }
 
 type RoleCall struct {
@@ -141,6 +146,45 @@ func Role[T MemoryNoting](
 		})
 	}
 	return parsed, nil
+}
+
+// RunOnce invokes a role exactly once, building the prompt from the spec and the
+// provided RoleCall vars (memory and conventions are injected automatically). It
+// returns nil when the agent wrote a result file, otherwise an error (including
+// fallback.ErrAllAgentsFailed when every configured agent produced no result).
+// Callers that need bounded retry should loop themselves; RunOnce itself does
+// not retry.
+func (inv *RoleInvoker) RunOnce(ctx context.Context, roleName string, call RoleCall, rc RunContext) error {
+	if inv == nil {
+		return fmt.Errorf("role invoker is nil")
+	}
+	spec, ok := inv.Specs[roleName]
+	if !ok {
+		return fmt.Errorf("role %q is not configured", roleName)
+	}
+
+	roleVars := call.templateVars()
+	promptPath := call.PromptPath
+	if promptPath == "" {
+		promptPath = spec.PromptPath
+	}
+	resultPath := call.ResultPath
+	if resultPath == "" {
+		resultPath = spec.ResultPath
+	}
+
+	mem, _ := memory.ReadAll(inv.MemPath)
+	roleVars["MEMORY"] = mem
+	roleVars["CONVENTIONS"] = inv.readConventions()
+
+	tmpl, err := prompts.Load(absPath(inv.Dir, promptPath))
+	if err != nil {
+		return err
+	}
+	prompt := prompts.Interpolate(tmpl, roleVars)
+	resultAbs := absPath(inv.Dir, resultPath)
+
+	return inv.run(ctx, roleName, spec, call.AgentOverride, prompt, resultPath, resultAbs, rc)
 }
 
 // readConventions returns the house-style document injected as {{CONVENTIONS}},
@@ -254,11 +298,12 @@ func (inv *RoleInvoker) run(ctx context.Context, roleName string, role config.Ro
 		// of a resumed run, drop the stored session so a stale/expired id is not
 		// retried on every subsequent attempt.
 		if inv.Sessions != nil && inv.ResumeRoles[roleName] && rc.TaskID != "" {
+			key := inv.sessionTaskKey(rc.TaskID)
 			switch {
 			case !shouldFallback:
-				_ = inv.Sessions.Set(rc.TaskID, roleName, agentName, r.SessionID)
+				_ = inv.Sessions.Set(key, roleName, agentName, r.SessionID)
 			case spec.ResumeSessionID != "" && !r.RateLimited:
-				_ = inv.Sessions.Delete(rc.TaskID, roleName, agentName)
+				_ = inv.Sessions.Delete(key, roleName, agentName)
 			}
 		}
 		inv.logAgentRun(roleName, agentName, ag, spec, r, fallbackReason, rc)
@@ -301,13 +346,23 @@ func (inv *RoleInvoker) runner() AgentRunner {
 	return ExecRunner{}
 }
 
+// sessionTaskKey scopes a task ID by the current SessionNamespace so the session
+// store never collides identical task IDs across features. Empty namespace
+// returns the task ID unchanged (non-factory runs are unaffected).
+func (inv *RoleInvoker) sessionTaskKey(taskID string) string {
+	if inv.SessionNamespace == "" {
+		return taskID
+	}
+	return inv.SessionNamespace + "/" + taskID
+}
+
 // resumeSessionID returns the stored session for (task, role, agent) when
 // session resume is enabled for the role, else "".
 func (inv *RoleInvoker) resumeSessionID(role, agent, taskID string) string {
 	if inv.Sessions == nil || taskID == "" || !inv.ResumeRoles[role] {
 		return ""
 	}
-	return inv.Sessions.Get(taskID, role, agent)
+	return inv.Sessions.Get(inv.sessionTaskKey(taskID), role, agent)
 }
 
 func (inv *RoleInvoker) recordHealth(roleName, agentName string, shouldFallback bool, fallbackReason string) {

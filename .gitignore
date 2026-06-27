@@ -18,3 +18,7 @@ coverage.txt
 
 # local planning docs (not committed)
 plan*.md
+.orquestalite/
+team.json
+prompts/
+schemas/
