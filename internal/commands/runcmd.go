@@ -219,6 +219,7 @@ func newLiveDeps(opts liveDepsOptions) (*liveDeps, func() error, error) {
 		currentCycle: 0,
 		health:       tracker,
 		inv:          inv,
+		featureID:    opts.FeatureID,
 	}
 
 	ok = true
@@ -303,6 +304,10 @@ type liveDeps struct {
 	currentTask  *tasks.Task
 	health       *agenthealth.Tracker
 	inv          *invoke.RoleInvoker
+	// featureID names the factory feature this run belongs to ("" in single-run
+	// mode). The reviewer uses it to scope its analysis to this feature's own
+	// plan slice instead of the whole-product PRD.
+	featureID string
 
 	// Rollback baseline captured at the start of each task (in RunFix). On
 	// failure, Rollback resets tracked files to taskBaseSHA and removes only
@@ -579,6 +584,25 @@ func (d *liveDeps) CycleVerification(ctx context.Context, rc invoke.RunContext) 
 	return b.String(), nil
 }
 
+// featurePlanForReview returns the current feature's own plan markdown so the
+// reviewer can be scoped to THIS feature's slice rather than the whole-product
+// PRD. In factory mode each feature's decomposition source is persisted at
+// .orquestalite/factory-plan-<ID>.md; the reviewer must judge the cycle against
+// that slice alone, or it pulls later features' work into the current feature
+// (e.g. queuing the /events SSE endpoint while reviewing the /healthz-only
+// slice). Returns "" when featureID is empty (single-run mode) or the plan file
+// is absent — the reviewer then falls back to its non-scoped behavior.
+func featurePlanForReview(dir, featureID string) string {
+	if featureID == "" {
+		return ""
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, ".orquestalite", "factory-plan-"+featureID+".md"))
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
+
 // RunReviewer invokes the reviewer role and returns its parsed result.
 func (d *liveDeps) RunReviewer(ctx context.Context, rc invoke.RunContext, verificationReport string) (results.ReviewerResult, error) {
 	d.currentCycle = rc.Cycle
@@ -591,6 +615,10 @@ func (d *liveDeps) RunReviewer(ctx context.Context, rc invoke.RunContext, verifi
 	if verificationReport == "" {
 		verificationReport = "(no end-of-cycle verification configured)"
 	}
+	featurePlan := featurePlanForReview(d.dir, d.featureID)
+	if featurePlan == "" {
+		featurePlan = "(no feature-scoped plan; this is a single-run review — judge against the task state and commits above)"
+	}
 
 	r, err := invoke.Role(ctx, d.inv, "reviewer", invoke.RoleCall{Vars: map[string]string{
 		"REVIEW_CYCLE":        fmt.Sprintf("%d", rc.Cycle),
@@ -598,6 +626,7 @@ func (d *liveDeps) RunReviewer(ctx context.Context, rc invoke.RunContext, verifi
 		"TASKS_JSON":          string(tasksRaw),
 		"GIT_LOG":             gitLog,
 		"VERIFICATION_REPORT": verificationReport,
+		"FEATURE_PLAN":        featurePlan,
 	}}, rc, results.ParseReviewer)
 	if err != nil {
 		return results.ReviewerResult{}, err

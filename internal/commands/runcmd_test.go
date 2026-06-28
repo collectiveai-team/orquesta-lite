@@ -239,6 +239,100 @@ func TestRunReviewerPassesCycleBaseSHAToPrompt(t *testing.T) {
 	}
 }
 
+func TestFeaturePlanForReview(t *testing.T) {
+	dir := t.TempDir()
+	planDir := filepath.Join(dir, ".orquestalite")
+	if err := os.MkdirAll(planDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(planDir, "factory-plan-F001.md"),
+		[]byte("Implement ONLY /healthz. Leave /events for the next slice."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := featurePlanForReview(dir, "F001"); !strings.Contains(got, "ONLY /healthz") {
+		t.Errorf("featurePlanForReview(F001) = %q, want the feature's own plan", got)
+	}
+	// Single-run mode (no feature) must not scope to any plan file.
+	if got := featurePlanForReview(dir, ""); got != "" {
+		t.Errorf("featurePlanForReview(\"\") = %q, want empty", got)
+	}
+	// A feature with no persisted plan file falls back to non-scoped review.
+	if got := featurePlanForReview(dir, "F999"); got != "" {
+		t.Errorf("featurePlanForReview(missing) = %q, want empty", got)
+	}
+}
+
+func TestRunReviewerScopesPromptToCurrentFeaturePlan(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+
+	dir := t.TempDir()
+	for _, args := range [][]string{
+		{"init", "-q"},
+		{"config", "user.email", "test@example.com"},
+		{"config", "user.name", "Test User"},
+		{"config", "commit.gpgsign", "false"},
+		{"commit", "--allow-empty", "-m", "init"},
+	} {
+		c := exec.Command("git", args...)
+		c.Dir = dir
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+
+	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "prompts", "reviewer.md"), []byte("scope={{FEATURE_PLAN}}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".orquestalite"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".orquestalite", "factory-plan-F001.md"),
+		[]byte("Implement ONLY /healthz. Leave /events for the next slice."), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tasksPath := filepath.Join(dir, ".orquestalite", "tasks.json")
+	if err := os.WriteFile(tasksPath, []byte(`{"tasks":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	runner := &reviewerPromptRunner{}
+	d := &liveDeps{
+		dir:       dir,
+		featureID: "F001",
+		tasksPath: tasksPath,
+		memPath:   filepath.Join(dir, ".orquestalite", "memory.md"),
+		inv: &invoke.RoleInvoker{
+			Dir:     dir,
+			MemPath: filepath.Join(dir, ".orquestalite", "memory.md"),
+			Runner:  runner,
+			Specs: map[string]config.RoleSpec{
+				"reviewer": {
+					Agents:     []config.AgentSpec{{Name: "fake_reviewer", Cmd: []string{"fake"}}},
+					PromptPath: "prompts/reviewer.md",
+					ResultPath: ".orquestalite/results/reviewer.json",
+					Timeout:    time.Minute,
+				},
+			},
+		},
+	}
+
+	if _, err := d.RunReviewer(context.Background(), invoke.RunContext{Cycle: 1, Attempt: 1}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(runner.prompt, "ONLY /healthz") {
+		t.Fatalf("reviewer prompt not scoped to the current feature's plan: %q", runner.prompt)
+	}
+	if strings.Contains(runner.prompt, "{{FEATURE_PLAN}}") {
+		t.Fatalf("FEATURE_PLAN was left uninterpolated: %q", runner.prompt)
+	}
+}
+
 func TestDecomposeArchivesPerSourceTaskAtSameAttempt(t *testing.T) {
 	dir := t.TempDir()
 	promptPath := filepath.Join(dir, "prompts", "parser-decompose.md")
