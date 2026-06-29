@@ -96,6 +96,10 @@ type Limits struct {
 	// that did not pass the merge gate before giving up and stopping the queue.
 	// The no-progress guard can stop earlier. 0 = use the default (1).
 	MaxFeatureRetries int `json:"max_feature_retries,omitempty"`
+	// FastMode raises orchestration from task-level to feature-level batching:
+	// coder implements the whole feature/task list, then tester and critic run
+	// once for the batch. CLI flags can override this per invocation.
+	FastMode bool `json:"fast_mode,omitempty"`
 }
 
 // MemoryCompactThreshold returns the memory size above which compaction runs,

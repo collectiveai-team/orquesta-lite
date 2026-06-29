@@ -49,6 +49,7 @@ func main() {
 	case "run":
 		fs := flag.NewFlagSet("run", flag.ExitOnError)
 		logFormat := fs.String("log-format", "auto", "stdout log format: auto|verbose|human")
+		fast := fs.Bool("fast", false, "batch all pending tasks through coder once, then tester/critic once")
 		serve := fs.Bool("serve", false, "also host the web dashboard while running")
 		addr := fs.String("addr", "127.0.0.1:4173", "dashboard address (with --serve)")
 		_ = fs.Parse(args)
@@ -60,6 +61,7 @@ func main() {
 			ProjectDir: ".",
 			TeamPath:   teamPath,
 			LogFormat:  eventlog.Format(*logFormat),
+			FastMode:   *fast,
 		}))
 
 	case "factory":
@@ -70,6 +72,7 @@ func main() {
 		resume := fs.Bool("resume", false, "retry failed features (reuses their persisted task lists)")
 		replan := fs.Bool("replan", false, "force fresh task decomposition for every feature (discards tasks-F*.json)")
 		logFormat := fs.String("log-format", "auto", "stdout log format: auto|verbose|human")
+		fast := fs.Bool("fast", false, "run coder/tester/critic once per feature, then final global review")
 		serve := fs.Bool("serve", true, "host the web dashboard while running (on by default)")
 		addr := fs.String("addr", "127.0.0.1:4173", "dashboard address")
 		_ = fs.Parse(args)
@@ -92,6 +95,7 @@ func main() {
 			Resume:       *resume,
 			Replan:       *replan,
 			LogFormat:    eventlog.Format(*logFormat),
+			FastMode:     *fast,
 			Out:          os.Stdout,
 		}))
 
@@ -240,8 +244,8 @@ func usage() {
 Commands:
   init [--lang L] [dir] scaffold .orquestalite, team.json, prompts/ (--lang: python|node|go|auto; --precommit writes .pre-commit-config + lint_command)
   plan <plan.md>        invoke parser, write tasks.json (--append to add)
-  run [--log-format F]  run review/task/fix loops over existing tasks.json (--log-format: auto|verbose|human)
-  factory <features.md> develop each feature on its own branch (no args: resume queue; --resume: retry failed features; --replan: fresh decomposition; --status; --force; --serve; --pr)
+  run [--log-format F]  run review/task/fix loops over existing tasks.json (--log-format: auto|verbose|human; --fast batches pending tasks)
+  factory <features.md> develop each feature on its own branch (--fast batches each feature; no args: resume queue; --resume: retry failed features; --replan: fresh decomposition; --status; --force; --serve; --pr)
   precommit [dir]       write .pre-commit-config + set team.json lint_command for the detected language
   review [--pr N|--base B --head H] [--publish] critic-review a PR diff and post the verdict via gh
   intake --issue <file> triage a GitHub issue: plan+run, or write missing_info (--no-run)

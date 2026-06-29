@@ -49,6 +49,9 @@ type RunOptions struct {
 	// FeatureID, when set (factory mode), namespaces provider session keys so
 	// identical per-feature task IDs do not resume each other's sessions.
 	FeatureID string
+	// FastMode batches all pending tasks through one coder/tester/critic lane.
+	// It can also be enabled by limits.fast_mode in team.json.
+	FastMode bool
 }
 
 // Run loads the config and tasks, wires up all components, and drives the
@@ -65,6 +68,19 @@ func Run(ctx context.Context, opts RunOptions) error {
 		return err
 	}
 	defer cleanup()
+
+	if opts.FastMode || deps.cfg.Limits.FastMode {
+		if err := deps.RunFastBatch(ctx, FastBatchOptions{
+			TaskID:      "_fast",
+			Title:       "Fast-mode task batch",
+			Plan:        "Run all pending tasks in .orquestalite/tasks.json as one coherent batch.",
+			CommitMsg:   "feat(fast): complete task batch",
+			FinalReview: true,
+		}); err != nil {
+			return err
+		}
+		return nil
+	}
 
 	return loops.RunReviewLoop(ctx, deps.tl, loops.ReviewConfig{MaxCycles: deps.cfg.Limits.MaxReviewCycles}, deps)
 }
@@ -223,6 +239,7 @@ func newLiveDeps(opts liveDepsOptions) (*liveDeps, func() error, error) {
 		currentCycle: 0,
 		health:       tracker,
 		inv:          inv,
+		featureID:    opts.FeatureID,
 	}
 
 	ok = true
@@ -307,6 +324,10 @@ type liveDeps struct {
 	currentTask  *tasks.Task
 	health       *agenthealth.Tracker
 	inv          *invoke.RoleInvoker
+	// featureID names the factory feature this run belongs to ("" in single-run
+	// mode). The reviewer uses it to scope its analysis to this feature's own
+	// plan slice instead of the whole-product PRD.
+	featureID string
 
 	// Rollback baseline captured at the start of each task (in RunFix). On
 	// failure, Rollback resets tracked files to taskBaseSHA and removes only
@@ -338,6 +359,295 @@ func (d *liveDeps) captureRollbackBase() {
 	}
 	d.taskBaseSHA = sha
 	d.taskUntracked = set
+}
+
+
+// FastBatchOptions describes one fast-mode batch: a feature in factory mode, or
+// all pending tasks in plain `orq-lite run --fast`.
+type FastBatchOptions struct {
+	TaskID      string
+	Title       string
+	Plan        string
+	CommitMsg   string
+	FinalReview bool
+}
+
+// RunFastBatch raises orchestration from task-level to batch-level: one coder
+// implements the whole checklist, then tester and critic validate the batch.
+func (d *liveDeps) RunFastBatch(ctx context.Context, opts FastBatchOptions) error {
+	if opts.TaskID == "" {
+		opts.TaskID = "_fast"
+	}
+	if opts.Title == "" {
+		opts.Title = "Fast-mode batch"
+	}
+	if opts.CommitMsg == "" {
+		opts.CommitMsg = "feat(fast): complete batch"
+	}
+	batchIndexes := d.fastBatchTaskIndexes()
+	if len(batchIndexes) == 0 {
+		return nil
+	}
+
+	d.currentTask = nil
+	d.currentCycle = 1
+	d.captureRollbackBase()
+	reviewBaseSHA, _ := d.CycleBaseSHA(ctx)
+	d.log.Log(eventlog.Event{Type: "feature_fast_start", Fields: map[string]any{
+		"task_id": opts.TaskID,
+		"title":   opts.Title,
+		"tasks":   len(batchIndexes),
+	}})
+
+	description := d.fastBatchDescription(opts.Plan, batchIndexes)
+	var testerFeedback, criticFeedback, lintFeedback, previousSummary string
+	var filesChanged []string
+
+	for attempt := 1; attempt <= d.cfg.Limits.MaxFixIterations; attempt++ {
+		rc := invoke.RunContext{TaskID: opts.TaskID, Cycle: 1, Attempt: attempt}
+		if attempt == 1 {
+			d.maybeCompactMemory(ctx)
+		}
+		coder, err := invoke.Role(ctx, d.inv, "coder", invoke.RoleCall{
+			ArchiveRole: "feature-coder",
+			Vars: map[string]string{
+				"TASK_ID":                  opts.TaskID,
+				"TASK_TITLE":               opts.Title,
+				"TASK_DESCRIPTION":         description,
+				"ATTEMPT_NUMBER":           strconv.Itoa(attempt),
+				"TESTER_FEEDBACK":          testerFeedback,
+				"CRITIC_FEEDBACK":          criticFeedback,
+				"VERIFIER_FEEDBACK":        "",
+				"LINT_FEEDBACK":            lintFeedback,
+				"PREVIOUS_ATTEMPT_SUMMARY": previousSummary,
+				"FILES_CHANGED_SO_FAR":     strings.Join(filesChanged, "\n"),
+			},
+		}, rc, results.ParseCoder)
+		if err != nil {
+			return err
+		}
+		previousSummary = coder.Summary
+		filesChanged = appendUniqueStrings(filesChanged, coder.FilesChanged)
+		if coder.Status == "blocked" {
+			if attempt >= d.cfg.Limits.MaxFixIterations {
+				d.markFastBatchFailed(batchIndexes, tasks.ReasonFeatureFastFailed, coder.Summary)
+				_ = d.Rollback(ctx)
+				return fmt.Errorf("fast batch blocked: %s", coder.Summary)
+			}
+			criticFeedback = "Coder reported blocked; unblock or complete the batch: " + coder.Summary
+			testerFeedback, lintFeedback = "", ""
+			continue
+		}
+
+		if ok, fb := d.lintGateOutcome(ctx); !ok {
+			d.log.Log(eventlog.Event{Type: "feature_fast_lint_failed", Fields: map[string]any{"task_id": opts.TaskID, "attempt": attempt}})
+			if attempt >= d.cfg.Limits.MaxFixIterations {
+				d.markFastBatchFailed(batchIndexes, tasks.ReasonFeatureLintFailed, fb)
+				_ = d.Rollback(ctx)
+				return fmt.Errorf("fast batch lint failed: %s", fb)
+			}
+			lintFeedback = fb
+			testerFeedback, criticFeedback = "", ""
+			continue
+		}
+		lintFeedback = ""
+
+		tester, err := d.runFastTester(ctx, rc, opts.Title, description, filesChanged)
+		if err != nil {
+			return err
+		}
+		if tester.Status == "fail" {
+			d.log.Log(eventlog.Event{Type: "feature_fast_tester_failed", Fields: map[string]any{"task_id": opts.TaskID, "attempt": attempt}})
+			if attempt >= d.cfg.Limits.MaxFixIterations {
+				d.markFastBatchFailed(batchIndexes, tasks.ReasonFeatureTestsFailed, tester.Feedback)
+				_ = d.Rollback(ctx)
+				return fmt.Errorf("fast batch tester failed: %s", tester.Feedback)
+			}
+			testerFeedback = tester.Feedback
+			criticFeedback = ""
+			continue
+		}
+		testerFeedback = ""
+
+		critic, err := d.runFastCritic(ctx, rc, opts.Title, description, filesChanged)
+		if err != nil {
+			return err
+		}
+		if critic.Status == "rejected" {
+			d.log.Log(eventlog.Event{Type: "feature_fast_critic_rejected", Fields: map[string]any{"task_id": opts.TaskID, "attempt": attempt}})
+			if attempt >= d.cfg.Limits.MaxFixIterations {
+				d.markFastBatchFailed(batchIndexes, tasks.ReasonFeatureCriticRejected, critic.Feedback)
+				_ = d.Rollback(ctx)
+				return fmt.Errorf("fast batch critic rejected: %s", critic.Feedback)
+			}
+			criticFeedback = critic.Feedback
+			continue
+		}
+
+		if err := d.FullSuite(ctx); err != nil {
+			d.markFastBatchFailed(batchIndexes, tasks.ReasonFeatureTestsFailed, err.Error())
+			_ = d.Rollback(ctx)
+			return err
+		}
+
+		if !d.commitFastBatch(ctx, opts.CommitMsg) {
+			_ = d.Rollback(ctx)
+			return fmt.Errorf("fast batch commit failed")
+		}
+		d.markFastBatchDone(batchIndexes)
+		if err := d.SaveTasks(ctx, d.tl); err != nil {
+			return err
+		}
+		d.log.Log(eventlog.Event{Type: "feature_fast_done", Fields: map[string]any{
+			"task_id": opts.TaskID, "attempt": attempt, "tasks": len(batchIndexes),
+		}})
+
+		if opts.FinalReview {
+			return d.runFastFinalReview(ctx, reviewBaseSHA)
+		}
+		return nil
+	}
+	return nil
+}
+
+func (d *liveDeps) runFastTester(ctx context.Context, rc invoke.RunContext, title, description string, files []string) (loops.TesterOutcome, error) {
+	r, err := invoke.Role(ctx, d.inv, "tester", invoke.RoleCall{ArchiveRole: "feature-tester", Vars: map[string]string{
+		"TASK_ID":          rc.TaskID,
+		"TASK_TITLE":       title,
+		"TASK_DESCRIPTION": description,
+		"ATTEMPT_NUMBER":   strconv.Itoa(rc.Attempt),
+		"FILES_CHANGED":    strings.Join(files, "\n"),
+	}}, rc, results.ParseTester)
+	if err != nil {
+		return loops.TesterOutcome{}, err
+	}
+	var fb strings.Builder
+	for _, f := range r.Failures {
+		fb.WriteString(fmt.Sprintf("- %s: %s (hint: %s)\n", f.Test, f.Message, f.Hint))
+	}
+	if r.Status == "pass" && d.cfg.Limits.TesterVerificationEnabled() {
+		if out, err := d.runShell(ctx, r.CommandRun, d.inv.Specs["tester"].Timeout); err != nil {
+			tail := runner.TailString(out, 1024)
+			d.log.Log(eventlog.Event{Type: "tester_verification_failed", Fields: map[string]any{
+				"task_id": rc.TaskID, "command": r.CommandRun, "output_tail": tail,
+			}})
+			return loops.TesterOutcome{Status: "fail", Feedback: fmt.Sprintf("Tester reported pass, but %q failed:\n%s\n", r.CommandRun, tail)}, nil
+		}
+	}
+	return loops.TesterOutcome{Status: r.Status, Feedback: fb.String()}, nil
+}
+
+func (d *liveDeps) runFastCritic(ctx context.Context, rc invoke.RunContext, title, description string, files []string) (loops.CriticOutcome, error) {
+	r, err := invoke.Role(ctx, d.inv, "critic", invoke.RoleCall{ArchiveRole: "feature-critic", Vars: map[string]string{
+		"TASK_ID":          rc.TaskID,
+		"TASK_TITLE":       title,
+		"TASK_DESCRIPTION": description,
+		"ATTEMPT_NUMBER":   strconv.Itoa(rc.Attempt),
+		"FILES_CHANGED":    strings.Join(files, "\n"),
+	}}, rc, results.ParseCritic)
+	if err != nil {
+		return loops.CriticOutcome{}, err
+	}
+	var fb strings.Builder
+	for _, c := range r.Concerns {
+		fb.WriteString(fmt.Sprintf("- [%s] %s: %s (suggestion: %s)\n", c.Severity, c.Where, c.Issue, c.Suggestion))
+	}
+	return loops.CriticOutcome{Status: r.Status, Feedback: fb.String()}, nil
+}
+
+func (d *liveDeps) fastBatchTaskIndexes() []int {
+	var indexes []int
+	for i, t := range d.tl.Tasks {
+		if t.Status == tasks.StatusPending || t.Status == tasks.StatusInProgress {
+			indexes = append(indexes, i)
+		}
+	}
+	return indexes
+}
+
+func (d *liveDeps) fastBatchDescription(plan string, indexes []int) string {
+	var b strings.Builder
+	if strings.TrimSpace(plan) != "" {
+		b.WriteString("Feature plan:\n")
+		b.WriteString(strings.TrimSpace(plan))
+		b.WriteString("\n\n")
+	}
+	b.WriteString("Implement all of the following tasks as one coherent batch. Do not stop after the first item; use this list as the acceptance checklist.\n")
+	for _, i := range indexes {
+		t := d.tl.Tasks[i]
+		fmt.Fprintf(&b, "\n- %s: %s\n%s\n", t.ID, t.Title, t.Description)
+	}
+	return b.String()
+}
+
+func (d *liveDeps) markFastBatchDone(indexes []int) {
+	for _, i := range indexes {
+		d.tl.Tasks[i].Status = tasks.StatusDone
+		d.tl.Tasks[i].VerifyState = tasks.VerifyFeatureCommitOK
+		d.tl.Tasks[i].FailureReason = nil
+		d.tl.Tasks[i].LastFeedback = nil
+	}
+}
+
+func (d *liveDeps) markFastBatchFailed(indexes []int, reason tasks.FailureReason, feedback string) {
+	for _, i := range indexes {
+		fb := feedback
+		d.tl.Tasks[i].Status = tasks.StatusFailed
+		d.tl.Tasks[i].FailureReason = &reason
+		d.tl.Tasks[i].LastFeedback = &fb
+	}
+	_ = d.SaveTasks(context.Background(), d.tl)
+	if d.log != nil {
+		d.log.Log(eventlog.Event{Type: "feature_fast_failed", Fields: map[string]any{"reason": string(reason)}})
+	}
+}
+
+func (d *liveDeps) commitFastBatch(ctx context.Context, msg string) bool {
+	_, err := d.Commit(ctx, msg)
+	switch {
+	case err == nil, errors.Is(err, loops.ErrCommitSkipped), errors.Is(err, loops.ErrNothingToCommit):
+		return true
+	default:
+		for _, i := range d.fastBatchTaskIndexes() {
+			d.tl.Tasks[i].Status = tasks.StatusFailed
+			r := tasks.ReasonCommitRejected
+			fb := err.Error()
+			d.tl.Tasks[i].FailureReason = &r
+			d.tl.Tasks[i].LastFeedback = &fb
+		}
+		_ = d.SaveTasks(ctx, d.tl)
+		return false
+	}
+}
+
+func (d *liveDeps) runFastFinalReview(ctx context.Context, baseSHA string) error {
+	rc := invoke.RunContext{Cycle: 1, Attempt: 1, CycleBaseSHA: baseSHA}
+	verification, err := d.CycleVerification(ctx, rc)
+	if err != nil {
+		return err
+	}
+	_, err = d.RunReviewer(ctx, rc, verification)
+	return err
+}
+
+func appendUniqueStrings(dst []string, src []string) []string {
+	seen := make(map[string]bool, len(dst)+len(src))
+	out := make([]string, 0, len(dst)+len(src))
+	for _, v := range dst {
+		if v == "" || seen[v] {
+			continue
+		}
+		seen[v] = true
+		out = append(out, v)
+	}
+	for _, v := range src {
+		if v == "" || seen[v] {
+			continue
+		}
+		seen[v] = true
+		out = append(out, v)
+	}
+	return out
 }
 
 // RunFix sets up the current task and runs the fix loop.
@@ -601,6 +911,25 @@ func (d *liveDeps) CycleVerification(ctx context.Context, rc invoke.RunContext) 
 	return b.String(), nil
 }
 
+// featurePlanForReview returns the current feature's own plan markdown so the
+// reviewer can be scoped to THIS feature's slice rather than the whole-product
+// PRD. In factory mode each feature's decomposition source is persisted at
+// .orquestalite/factory-plan-<ID>.md; the reviewer must judge the cycle against
+// that slice alone, or it pulls later features' work into the current feature
+// (e.g. queuing the /events SSE endpoint while reviewing the /healthz-only
+// slice). Returns "" when featureID is empty (single-run mode) or the plan file
+// is absent — the reviewer then falls back to its non-scoped behavior.
+func featurePlanForReview(dir, featureID string) string {
+	if featureID == "" {
+		return ""
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, ".orquestalite", "factory-plan-"+featureID+".md"))
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
+
 // RunReviewer invokes the reviewer role and returns its parsed result.
 func (d *liveDeps) RunReviewer(ctx context.Context, rc invoke.RunContext, verificationReport string) (results.ReviewerResult, error) {
 	d.currentCycle = rc.Cycle
@@ -613,6 +942,10 @@ func (d *liveDeps) RunReviewer(ctx context.Context, rc invoke.RunContext, verifi
 	if verificationReport == "" {
 		verificationReport = "(no end-of-cycle verification configured)"
 	}
+	featurePlan := featurePlanForReview(d.dir, d.featureID)
+	if featurePlan == "" {
+		featurePlan = "(no feature-scoped plan; this is a single-run review — judge against the task state and commits above)"
+	}
 
 	r, err := invoke.Role(ctx, d.inv, "reviewer", invoke.RoleCall{Vars: map[string]string{
 		"REVIEW_CYCLE":        fmt.Sprintf("%d", rc.Cycle),
@@ -620,6 +953,7 @@ func (d *liveDeps) RunReviewer(ctx context.Context, rc invoke.RunContext, verifi
 		"TASKS_JSON":          string(tasksRaw),
 		"GIT_LOG":             gitLog,
 		"VERIFICATION_REPORT": verificationReport,
+		"FEATURE_PLAN":        featurePlan,
 	}}, rc, results.ParseReviewer)
 	if err != nil {
 		return results.ReviewerResult{}, err

@@ -31,6 +31,7 @@ type FactoryOptions struct {
 	Resume       bool   // retry failed features (reuses their persisted task lists)
 	Replan       bool   // force fresh task decomposition for every feature
 	LogFormat    eventlog.Format
+	FastMode     bool
 	Out          io.Writer
 }
 
@@ -62,16 +63,29 @@ func Factory(ctx context.Context, opts FactoryOptions) error {
 		return err
 	}
 
-	// Budget is optional and read from team.json; a missing or invalid
-	// team.json surfaces later (and more precisely) when the run starts.
+	baseSHA := ""
+	if sha, shaErr := gitx.HeadSHA(opts.ProjectDir); shaErr == nil {
+		baseSHA = sha
+	}
+
+	// Budget and fast mode are optional and read from team.json; a missing or
+	// invalid team.json surfaces later (and more precisely) when the run starts.
 	fcfg := factory.Config{Resume: opts.Resume, Replan: opts.Replan}
+	fastMode := opts.FastMode
 	if cfg, cfgErr := config.Load(filepath.Join(opts.ProjectDir, "team.json")); cfgErr == nil {
 		fcfg.BudgetUSD = cfg.Limits.FactoryBudgetUSD
 		fcfg.MaxFeatureRetries = cfg.Limits.FeatureRetries()
+		fastMode = fastMode || cfg.Limits.FastMode
 	}
 
-	deps := &liveFactoryDeps{dir: opts.ProjectDir, logFormat: opts.LogFormat, out: opts.Out, createPR: opts.CreatePR}
-	return factory.Run(ctx, q, fcfg, deps)
+	deps := &liveFactoryDeps{dir: opts.ProjectDir, logFormat: opts.LogFormat, out: opts.Out, createPR: opts.CreatePR, fastMode: fastMode}
+	if err := factory.Run(ctx, q, fcfg, deps); err != nil {
+		return err
+	}
+	if fastMode && queueAllDone(q) {
+		return runFactoryGlobalFinalReview(ctx, opts, baseSHA)
+	}
+	return nil
 }
 
 // featureExtractor turns raw plan markdown into queued features. The production
@@ -242,6 +256,7 @@ type liveFactoryDeps struct {
 	logFormat eventlog.Format
 	out       io.Writer
 	createPR  bool
+	fastMode  bool
 }
 
 func (d *liveFactoryDeps) CheckoutFeatureBranch(branch, base string) error {
@@ -339,6 +354,14 @@ func (d *liveFactoryDeps) RunFeature(ctx context.Context, f factory.Feature, reu
 		}
 	}
 
+	if d.fastMode {
+		runErr := d.RunFeatureFast(ctx, f)
+		syncTasks()
+		sum := d.summarizeTasks()
+		sum.CostUSD = d.featureSpend(ctx, start)
+		return sum, runErr
+	}
+
 	maxRounds := 1
 	if f.Visual {
 		maxRounds = d.visualRounds()
@@ -385,6 +408,30 @@ func (d *liveFactoryDeps) RunFeature(ctx context.Context, f factory.Feature, reu
 	sum := d.summarizeTasks()
 	sum.CostUSD = d.featureSpend(ctx, start)
 	return sum, runErr
+}
+
+// RunFeatureFast implements fast mode for one feature: the parsed task list is
+// treated as a checklist and the role pipeline runs once at feature scope.
+func (d *liveFactoryDeps) RunFeatureFast(ctx context.Context, f factory.Feature) error {
+	deps, cleanup, err := newLiveDeps(liveDepsOptions{
+		ProjectDir: d.dir,
+		TeamPath:   filepath.Join(d.dir, "team.json"),
+		LogFormat:  d.logFormat,
+		Roles:      staticRunPreflightRoles,
+		FeatureID:  f.ID,
+	})
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	d.Logf("factory: %s fast mode: batching parsed tasks through feature-level coder/tester/critic", f.ID)
+	return deps.RunFastBatch(ctx, FastBatchOptions{
+		TaskID:    "_feature",
+		Title:     "Feature " + f.ID + ": " + f.Title,
+		Plan:      f.Plan,
+		CommitMsg: fmt.Sprintf("feat(%s): %s", f.ID, f.Title),
+	})
 }
 
 // visualRounds is the configured cap on browser-verify feedback rounds for a
@@ -533,6 +580,45 @@ func (d *liveFactoryDeps) PublishFeature(ctx context.Context, f factory.Feature,
 		return "", fmt.Errorf("gh pr create: %w\n%s", err, out)
 	}
 	return strings.TrimSpace(string(out)), nil
+}
+
+func queueAllDone(q *factory.Queue) bool {
+	for _, f := range q.Features {
+		if f.Status != factory.StatusDone {
+			return false
+		}
+	}
+	return len(q.Features) > 0
+}
+
+func runFactoryGlobalFinalReview(ctx context.Context, opts FactoryOptions, baseSHA string) error {
+	deps, cleanup, err := newLiveDeps(liveDepsOptions{
+		ProjectDir: opts.ProjectDir,
+		TeamPath:   filepath.Join(opts.ProjectDir, "team.json"),
+		LogFormat:  opts.LogFormat,
+		Roles:      []string{"verifier", "reviewer"},
+		FeatureID:  "_factory",
+	})
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	rc := invoke.RunContext{TaskID: "_factory", Cycle: 1, Attempt: 1, CycleBaseSHA: baseSHA}
+	verification, err := deps.CycleVerification(ctx, rc)
+	if err != nil {
+		return err
+	}
+	deps.log.Log(eventlog.Event{Type: "factory_global_verification", Fields: map[string]any{
+		"base_sha": baseSHA,
+	}})
+	if _, err := deps.RunReviewer(ctx, rc, verification); err != nil {
+		return err
+	}
+	deps.log.Log(eventlog.Event{Type: "factory_global_review", Fields: map[string]any{
+		"base_sha": baseSHA,
+	}})
+	return nil
 }
 
 // fileExists reports whether path is a readable existing file.
