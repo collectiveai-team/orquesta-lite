@@ -31,13 +31,17 @@ const (
 type FailureReason string
 
 const (
-	ReasonMaxIterations      FailureReason = "max_iterations"
-	ReasonAgentRepeatedFail  FailureReason = "agent_repeated_failure"
-	ReasonRateLimitExhausted FailureReason = "rate_limit_exhausted"
-	ReasonCommitRejected     FailureReason = "commit_rejected"
-	ReasonFullSuiteFailed    FailureReason = "full_suite_failed"
-	ReasonAgentCrashed       FailureReason = "agent_crashed"
-	ReasonInvalidResultJSON  FailureReason = "invalid_result_json"
+	ReasonMaxIterations         FailureReason = "max_iterations"
+	ReasonAgentRepeatedFail     FailureReason = "agent_repeated_failure"
+	ReasonRateLimitExhausted    FailureReason = "rate_limit_exhausted"
+	ReasonCommitRejected        FailureReason = "commit_rejected"
+	ReasonFullSuiteFailed       FailureReason = "full_suite_failed"
+	ReasonAgentCrashed          FailureReason = "agent_crashed"
+	ReasonInvalidResultJSON     FailureReason = "invalid_result_json"
+	ReasonFeatureFastFailed     FailureReason = "feature_fast_failed"
+	ReasonFeatureLintFailed     FailureReason = "feature_lint_failed"
+	ReasonFeatureTestsFailed    FailureReason = "feature_tests_failed"
+	ReasonFeatureCriticRejected FailureReason = "feature_critic_rejected"
 )
 
 // AgentRun captures a single agent execution within a fix attempt.
@@ -80,6 +84,9 @@ const (
 	// because an earlier task already produced its files. The work status is
 	// done (tests passed, end-state present); it just did not author a commit.
 	VerifyCommitEmpty VerifyState = "commit_empty"
+	// VerifyFeatureCommitOK marks a task accepted as part of a fast-mode feature
+	// batch. The feature-level gates passed and the batch commit landed.
+	VerifyFeatureCommitOK VerifyState = "feature_commit_ok"
 )
 
 type Task struct {
