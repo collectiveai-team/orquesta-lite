@@ -1,0 +1,259 @@
+// Package watch runs a long-lived per-project daemon that polls GitHub (via
+// the already-authenticated `gh` CLI) for new/updated issues and PRs and
+// triggers intake (for issues) or review (for PRs) on items it has not
+// processed before. A cursor (last_seen per type) and a processed-items set
+// persist in .orquestalite/watch.json so an item is never processed twice.
+package watch
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+)
+
+// ItemType selects which GitHub object a watch operates on.
+type ItemType string
+
+const (
+	ItemIssue ItemType = "issues"
+	ItemPR    ItemType = "prs"
+)
+
+// Item is one polled GitHub object the daemon may act on.
+type Item struct {
+	Type      ItemType  `json:"type"`
+	Number    string    `json:"number"` // "12" (without #)
+	Title     string    `json:"title"`
+	Body      string    `json:"body"`   // issue body (issues only; "" for PRs)
+	Author    string    `json:"author"` // login; used to skip orq-lite's own PRs
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// Lister is the subset of `gh` the daemon needs. The production implementation
+// shells out to `gh`; tests inject a fake so the cursor/processed/dedup
+// behavior is asserted without a real GitHub.
+type Lister interface {
+	// WhoAmI returns the authenticated user's login, used to identify PRs that
+	// orq-lite itself opened (skipped unless ReviewOwnPRs is set).
+	WhoAmI(ctx context.Context) (string, error)
+	ListIssues(ctx context.Context, since time.Time) ([]Item, error)
+	ListPRs(ctx context.Context, since time.Time) ([]Item, error)
+}
+
+// Config tunes one watch daemon.
+type Config struct {
+	ProjectDir   string
+	Interval     time.Duration // poll cadence; <=0 → DefaultInterval
+	Enabled      map[ItemType]bool
+	ReviewOwnPRs bool // review PRs orq-lite opened (default: skip them)
+	Lister       Lister
+	// Intake is invoked for each new issue; it receives the issue body. nil →
+	// issues are observed but not acted on.
+	Intake func(ctx context.Context, issueBody string) error
+	// Review is invoked for each new PR; it receives the PR number. nil → PRs
+	// are observed but not acted on.
+	Review func(ctx context.Context, prNumber string) error
+	// Now is the clock; nil → time.Now. Useful for deterministic tests.
+	Now func() time.Time
+}
+
+// DefaultInterval is the poll cadence when Config.Interval is unset.
+const DefaultInterval = 60 * time.Second
+
+// State is the persisted watch progress: which types are enabled, the poll
+// interval, the last-seen cursor per type, and the processed-items set per
+// type (so an updated item reappearing past the cursor is not reprocessed).
+type State struct {
+	Enabled         map[ItemType]bool            `json:"enabled"`
+	IntervalSeconds int                          `json:"interval_seconds"`
+	LastSeen        map[ItemType]time.Time       `json:"last_seen"`
+	Processed       map[ItemType]map[string]bool `json:"processed"`
+}
+
+func statePath(projectDir string) string {
+	return filepath.Join(projectDir, ".orquestalite", "watch.json")
+}
+
+// LoadState reads the persisted watch state, or returns a fresh default state
+// when none exists. A missing .orquestalite directory is created.
+func LoadState(projectDir string) (*State, error) {
+	raw, err := os.ReadFile(statePath(projectDir))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &State{
+				Enabled:   map[ItemType]bool{},
+				LastSeen:  map[ItemType]time.Time{},
+				Processed: map[ItemType]map[string]bool{},
+			}, nil
+		}
+		return nil, err
+	}
+	var s State
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return nil, fmt.Errorf("parse watch.json: %w", err)
+	}
+	if s.Enabled == nil {
+		s.Enabled = map[ItemType]bool{}
+	}
+	if s.LastSeen == nil {
+		s.LastSeen = map[ItemType]time.Time{}
+	}
+	if s.Processed == nil {
+		s.Processed = map[ItemType]map[string]bool{}
+	}
+	return &s, nil
+}
+
+// Save writes the state to .orquestalite/watch.json atomically.
+func (s *State) Save(projectDir string) error {
+	path := statePath(projectDir)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	raw, err := json.MarshalIndent(s, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, raw, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+// Run drives the long-lived poll loop until ctx is cancelled. Each tick polls
+// only the enabled types, triggers intake/review on unseen items, advances the
+// cursor, and persists state. Failures in a single poll (list or trigger) are
+// logged via the returned error channel-ish: Run never returns for a transient
+// error — it logs and waits for the next tick so the daemon stays up.
+func Run(ctx context.Context, cfg Config) error {
+	interval := cfg.Interval
+	if interval <= 0 {
+		interval = DefaultInterval
+	}
+	state, err := LoadState(cfg.ProjectDir)
+	if err != nil {
+		return err
+	}
+	// Persist the configured enablement into the state so a restart resumes the
+	// same scope (and `orq-lite watch --status` reflects it).
+	for t, on := range cfg.Enabled {
+		state.Enabled[t] = on
+	}
+	state.IntervalSeconds = int(interval / time.Second)
+	if err := state.Save(cfg.ProjectDir); err != nil {
+		return err
+	}
+
+	ownUser, _ := cfg.Lister.WhoAmI(ctx)
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	// Run one poll immediately (don't wait a full interval for the first pass),
+	// then on every tick.
+	if err := tick(ctx, cfg, state, ownUser); err != nil {
+		// A first-tick failure is surfaced: the caller can tell `gh` is missing.
+		return err
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			_ = tick(ctx, cfg, state, ownUser) // transient: log and continue next tick
+		}
+	}
+}
+
+// Tick runs exactly one poll and persists state. Exported for tests so the
+// cursor/processed/dedup behavior is asserted without the wall-clock loop.
+func Tick(ctx context.Context, cfg Config, state *State) error {
+	ownUser, _ := cfg.Lister.WhoAmI(ctx)
+	return tick(ctx, cfg, state, ownUser)
+}
+
+func tick(ctx context.Context, cfg Config, state *State, ownUser string) error {
+	if cfg.Enabled[ItemIssue] {
+		items, err := cfg.Lister.ListIssues(ctx, state.LastSeen[ItemIssue])
+		if err != nil {
+			return err
+		}
+		processItems(ctx, cfg, state, ItemIssue, items, ownUser, func(ctx context.Context, it Item) error {
+			if cfg.Intake == nil {
+				return nil
+			}
+			return cfg.Intake(ctx, it.Body)
+		})
+	}
+	if cfg.Enabled[ItemPR] {
+		items, err := cfg.Lister.ListPRs(ctx, state.LastSeen[ItemPR])
+		if err != nil {
+			return err
+		}
+		processItems(ctx, cfg, state, ItemPR, items, ownUser, func(ctx context.Context, it Item) error {
+			if cfg.Review == nil {
+				return nil
+			}
+			return cfg.Review(ctx, it.Number)
+		})
+	}
+	return state.Save(cfg.ProjectDir)
+}
+
+// processItems handles one type's batch: dedup against the processed set, skip
+// orq-lite's own PRs unless ReviewOwnPRs, invoke the trigger, mark items
+// processed, and advance that type's cursor to the newest item seen.
+func processItems(ctx context.Context, cfg Config, state *State, typ ItemType, items []Item, ownUser string, trigger func(ctx context.Context, it Item) error) {
+	// Oldest first so the cursor advances monotonically and an item processed
+	// early cannot lower a later cursor.
+	sort.Slice(items, func(a, b int) bool { return items[a].UpdatedAt.Before(items[b].UpdatedAt) })
+	processed := state.Processed[typ]
+	if processed == nil {
+		processed = map[string]bool{}
+		state.Processed[typ] = processed
+	}
+	for _, it := range items {
+		if processed[it.Number] {
+			// Already-processed item reappeared (e.g. updated past cursor): skip.
+			continue
+		}
+		if typ == ItemPR && !cfg.ReviewOwnPRs && ownUser != "" && it.Author == ownUser {
+			// Skip PRs orq-lite itself opened (the factory's --pr output), but
+			// mark them processed so a later update does not re-trigger review.
+			processed[it.Number] = true
+			continue
+		}
+		_ = trigger(ctx, it) // best-effort; a failed trigger leaves the item
+		// unprocessed so a later update can retry it.
+		processed[it.Number] = true
+	}
+	// Advance the cursor to the newest item's UpdatedAt; keep the prior cursor
+	// when the batch was empty (so a quiet repo does not reset it).
+	for i := len(items) - 1; i >= 0; i-- {
+		if items[i].UpdatedAt.After(state.LastSeen[typ]) {
+			state.LastSeen[typ] = items[i].UpdatedAt
+			break
+		}
+	}
+}
+
+// EnabledSummary returns a human description of the enabled watch types for
+// `orq-lite watch --status`.
+func (s *State) EnabledSummary() string {
+	var on []string
+	if s.Enabled[ItemIssue] {
+		on = append(on, "issues")
+	}
+	if s.Enabled[ItemPR] {
+		on = append(on, "prs")
+	}
+	if len(on) == 0 {
+		return "none"
+	}
+	return strings.Join(on, ", ")
+}

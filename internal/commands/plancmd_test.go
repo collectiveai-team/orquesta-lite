@@ -99,6 +99,34 @@ func TestPlan_MapsSquadFromParserTask(t *testing.T) {
 	}
 }
 
+func TestPlan_CarriesSkillsOntoTasks(t *testing.T) {
+	dir := t.TempDir()
+	planPath := filepath.Join(dir, "plan.md")
+	_ = os.WriteFile(planPath, []byte("plan needing tdd"), 0o644)
+	_ = os.MkdirAll(filepath.Join(dir, ".orquestalite"), 0o755)
+
+	stub := &stubParserCaller{out: results.ParserResult{Tasks: []results.ParserTask{
+		{Title: "scaffold", Description: "set up repo", Priority: 1, Skills: []string{"tdd"}},
+		{Title: "add login route", Description: "POST /login", Priority: 2},
+	}}}
+
+	if err := Plan(context.Background(), dir, planPath, false, stub); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, _ := os.ReadFile(filepath.Join(dir, ".orquestalite", "tasks.json"))
+	var tl tasks.TaskList
+	if err := json.Unmarshal(raw, &tl); err != nil {
+		t.Fatal(err)
+	}
+	if len(tl.Tasks[0].Skills) != 1 || tl.Tasks[0].Skills[0] != "tdd" {
+		t.Errorf("T001 skills = %v, want [tdd]", tl.Tasks[0].Skills)
+	}
+	if len(tl.Tasks[1].Skills) != 0 {
+		t.Errorf("T002 skills = %v, want empty", tl.Tasks[1].Skills)
+	}
+}
+
 func TestPlanWithLiveCallerPreflightsOnlyParserAgents(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("posix shell script test, skipping on windows")

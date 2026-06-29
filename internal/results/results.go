@@ -78,10 +78,11 @@ type PlannerResult struct {
 func (r PlannerResult) MemoryNote() *string { return r.NotesForMemory }
 
 type ParserTask struct {
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	Priority    int    `json:"priority"`
-	Squad       string `json:"squad,omitempty"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Priority    int      `json:"priority"`
+	Squad       string   `json:"squad,omitempty"`
+	Skills      []string `json:"skills,omitempty"`
 }
 
 type ParserResult struct {
@@ -149,9 +150,10 @@ type VerifierResult struct {
 func (r VerifierResult) MemoryNote() *string { return r.NotesForMemory }
 
 type ReviewerNewTask struct {
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	Priority    int    `json:"priority"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Priority    int      `json:"priority"`
+	Skills      []string `json:"skills,omitempty"`
 }
 
 type ReviewerResult struct {
@@ -331,6 +333,35 @@ func ParseReviewer(path string) (*ReviewerResult, error) {
 	}
 	if r.ShouldStop == nil {
 		return nil, fmt.Errorf("reviewer.should_stop required")
+	}
+	return &r, nil
+}
+
+// IntakeResult is the intake role's verdict on a GitHub issue: whether it is
+// actionable as-is, and either a derived plan (when actionable) or the missing
+// information to ask for (when it is not).
+type IntakeResult struct {
+	Actionable     bool    `json:"actionable"`
+	Plan           string  `json:"plan,omitempty"`
+	MissingInfo    string  `json:"missing_info,omitempty"`
+	NotesForMemory *string `json:"notes_for_memory"`
+}
+
+func (r IntakeResult) MemoryNote() *string { return r.NotesForMemory }
+
+func ParseIntake(path string) (*IntakeResult, error) {
+	var r IntakeResult
+	if err := read(path, &r); err != nil {
+		return nil, err
+	}
+	if r.Actionable {
+		if strings.TrimSpace(r.Plan) == "" {
+			return nil, fmt.Errorf("intake.actionable=true but plan is empty")
+		}
+	} else {
+		if strings.TrimSpace(r.MissingInfo) == "" {
+			return nil, fmt.Errorf("intake.actionable=false but missing_info is empty")
+		}
 	}
 	return &r, nil
 }

@@ -301,6 +301,139 @@ func TestRoleConventionsFallbackWhenUnset(t *testing.T) {
 	}
 }
 
+func TestRoleInjectsSkillsFromSkillsDir(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "prompts", "coder.md"), []byte("skills:\n{{SKILLS}}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "skills"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "skills", "tdd.md"), []byte("---\nname: tdd\ndescription: TDD.\n---\nred green refactor"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	fake := &fakeAgentRunner{}
+	inv := &RoleInvoker{
+		Specs: map[string]config.RoleSpec{
+			"coder": {
+				Agents:     []config.AgentSpec{{Name: "a1", Cmd: []string{"fake", "{{PROMPT}}"}}},
+				PromptPath: "prompts/coder.md",
+				ResultPath: ".orquestalite/results/coder.json",
+				Timeout:    time.Minute,
+			},
+		},
+		Dir:      dir,
+		Fallback: fallback.NewCaller(fallback.Config{InitialBackoff: time.Millisecond, Factor: 2, MaxBackoff: time.Millisecond}),
+		MemPath:  filepath.Join(dir, ".orquestalite", "memory.md"),
+		Runner:   fake,
+	}
+
+	if _, err := Role[fakeRoleResult](context.Background(), inv, "coder",
+		RoleCall{Skills: []string{"tdd"}, Vars: map[string]string{}}, RunContext{TaskID: "T1", Cycle: 1, Attempt: 1},
+		func(path string) (*fakeRoleResult, error) {
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				return nil, err
+			}
+			var out fakeRoleResult
+			return &out, json.Unmarshal(raw, &out)
+		}); err != nil {
+		t.Fatal(err)
+	}
+	prompt := fake.specs[0].Prompt
+	if strings.Contains(prompt, "{{SKILLS}}") {
+		t.Fatalf("marker left un-interpolated: %q", prompt)
+	}
+	for _, want := range []string{"Skill: tdd", "red green refactor"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("skills not injected: missing %q in %q", want, prompt)
+		}
+	}
+}
+
+func TestRoleSkillsPlaceholderWhenNoneRequested(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "prompts", "coder.md"), []byte("{{SKILLS}}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeAgentRunner{}
+	inv := &RoleInvoker{
+		Specs: map[string]config.RoleSpec{
+			"coder": {
+				Agents:     []config.AgentSpec{{Name: "a1", Cmd: []string{"fake", "{{PROMPT}}"}}},
+				PromptPath: "prompts/coder.md",
+				ResultPath: ".orquestalite/results/coder.json",
+				Timeout:    time.Minute,
+			},
+		},
+		Dir:      dir,
+		Fallback: fallback.NewCaller(fallback.Config{InitialBackoff: time.Millisecond, Factor: 2, MaxBackoff: time.Millisecond}),
+		MemPath:  filepath.Join(dir, ".orquestalite", "memory.md"),
+		Runner:   fake,
+	}
+	if _, err := Role[fakeRoleResult](context.Background(), inv, "coder",
+		RoleCall{Vars: map[string]string{}}, RunContext{TaskID: "T1", Cycle: 1, Attempt: 1},
+		func(path string) (*fakeRoleResult, error) {
+			raw, _ := os.ReadFile(path)
+			var out fakeRoleResult
+			return &out, json.Unmarshal(raw, &out)
+		}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(fake.specs[0].Prompt, "no skills requested") {
+		t.Fatalf("placeholder missing: %q", fake.specs[0].Prompt)
+	}
+}
+
+func TestRoleMissingSkillIsClearError(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "prompts", "coder.md"), []byte("{{SKILLS}}"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// No skills/ directory at all.
+	fake := &fakeAgentRunner{}
+	inv := &RoleInvoker{
+		Specs: map[string]config.RoleSpec{
+			"coder": {
+				Agents:     []config.AgentSpec{{Name: "a1", Cmd: []string{"fake", "{{PROMPT}}"}}},
+				PromptPath: "prompts/coder.md",
+				ResultPath: ".orquestalite/results/coder.json",
+				Timeout:    time.Minute,
+			},
+		},
+		Dir:      dir,
+		Fallback: fallback.NewCaller(fallback.Config{InitialBackoff: time.Millisecond, Factor: 2, MaxBackoff: time.Millisecond}),
+		MemPath:  filepath.Join(dir, ".orquestalite", "memory.md"),
+		Runner:   fake,
+	}
+	_, err := Role[fakeRoleResult](context.Background(), inv, "coder",
+		RoleCall{Skills: []string{"nope"}, Vars: map[string]string{}}, RunContext{TaskID: "T1", Cycle: 1, Attempt: 1},
+		func(path string) (*fakeRoleResult, error) {
+			raw, _ := os.ReadFile(path)
+			var out fakeRoleResult
+			return &out, json.Unmarshal(raw, &out)
+		})
+	if err == nil {
+		t.Fatal("expected error for missing skill, got nil")
+	}
+	if !strings.Contains(err.Error(), `"nope" not found`) {
+		t.Fatalf("error not clear about missing skill: %v", err)
+	}
+	if len(fake.specs) != 0 {
+		t.Fatalf("agent must not run when a skill is missing, got %d calls", len(fake.specs))
+	}
+}
+
 func TestSessionTaskKey_NamespacesByFeature(t *testing.T) {
 	if got := (&RoleInvoker{}).sessionTaskKey("T001"); got != "T001" {
 		t.Errorf("no namespace: got %q, want T001", got)

@@ -29,6 +29,15 @@
       "result_path": ".orquestalite/results/planner.json",
       "timeout_seconds": 900
     },
+    "intake": {
+      "agents": [
+        "claude_opus",
+        "claude_sonnet"
+      ],
+      "prompt": "prompts/intake.md",
+      "result_path": ".orquestalite/results/intake.json",
+      "timeout_seconds": 600
+    },
     "parser": {
       "agents": [
         "claude_opus"
@@ -107,5 +116,5 @@
     "default_pattern": "(?i)(rate_?limit|429|quota|too many requests|session limit|usage limit)"
   },
   "full_test_command": "go test ./...",
-  "lint_command": ""
+  "lint_command": "go vet ./..."
 }

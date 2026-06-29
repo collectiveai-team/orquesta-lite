@@ -18,6 +18,7 @@ import (
 	"github.com/lionelchamorro/orquestalite/internal/providers"
 	"github.com/lionelchamorro/orquestalite/internal/results"
 	"github.com/lionelchamorro/orquestalite/internal/runner"
+	"github.com/lionelchamorro/orquestalite/internal/skills"
 )
 
 type AgentRunner interface {
@@ -54,6 +55,12 @@ type RoleInvoker struct {
 	// When set and readable, its contents are injected into every role prompt
 	// as {{CONVENTIONS}}. Read fresh per call so edits take effect mid-run.
 	ConventionsPath string
+	// SkillsDir is a project-relative (or absolute) directory of project-defined
+	// skill markdown files (see internal/skills). When a role call requests
+	// skills, the invoker loads this directory and injects each requested
+	// skill's content as {{SKILLS}}. Empty defaults to "skills". A requested
+	// skill that is not on disk is a clear, immediate error.
+	SkillsDir string
 	// Sessions, when set, records each successful run's provider session id and
 	// supplies it back to resume the conversation when the same agent runs again
 	// on the same task. Nil disables session tracking entirely.
@@ -66,6 +73,14 @@ type RoleInvoker struct {
 	// The composed key has the form "<namespace>/<taskID>" (e.g. "F002/T001").
 	// Empty (non-factory run) leaves keys as the bare task ID.
 	SessionNamespace string
+	// BestEffortRoles names roles whose outcome must never gate progress (e.g.
+	// the memory "compactor"). Their failures are excluded from the shared,
+	// per-agent health tracker so a best-effort hiccup cannot bench the very
+	// providers that the critical roles (coder/tester/critic) depend on. Without
+	// this, a compactor that exits 0 without rewriting its result file (because
+	// the digest is already compact) reads as result_missing, trips the circuit
+	// breaker, and skips its agents for the rest of the run.
+	BestEffortRoles map[string]bool
 }
 
 type RoleCall struct {
@@ -74,6 +89,11 @@ type RoleCall struct {
 	PromptPath    string
 	ResultPath    string
 	Vars          map[string]string
+	// Skills names the project-defined skills to inject as {{SKILLS}} for this
+	// call (typically the current task's requested skills). Empty means no
+	// skills were requested and a placeholder is injected. A name absent from
+	// the skills/ directory is a clear, immediate error.
+	Skills []string
 }
 
 func Role[T MemoryNoting](
@@ -109,6 +129,11 @@ func Role[T MemoryNoting](
 	mem, _ := memory.ReadAll(inv.MemPath)
 	roleVars["MEMORY"] = mem
 	roleVars["CONVENTIONS"] = inv.readConventions()
+	skillsText, err := inv.skillsFor(call.Skills)
+	if err != nil {
+		return nil, err
+	}
+	roleVars["SKILLS"] = skillsText
 
 	tmpl, err := prompts.Load(absPath(inv.Dir, promptPath))
 	if err != nil {
@@ -176,6 +201,11 @@ func (inv *RoleInvoker) RunOnce(ctx context.Context, roleName string, call RoleC
 	mem, _ := memory.ReadAll(inv.MemPath)
 	roleVars["MEMORY"] = mem
 	roleVars["CONVENTIONS"] = inv.readConventions()
+	skillsText, err := inv.skillsFor(call.Skills)
+	if err != nil {
+		return err
+	}
+	roleVars["SKILLS"] = skillsText
 
 	tmpl, err := prompts.Load(absPath(inv.Dir, promptPath))
 	if err != nil {
@@ -369,6 +399,12 @@ func (inv *RoleInvoker) recordHealth(roleName, agentName string, shouldFallback 
 	if inv.Health == nil {
 		return
 	}
+	// Best-effort roles never gate progress, so they must not move the shared
+	// per-agent health counters in either direction: a failure must not bench
+	// the agent, and a success must not mask a critical role's failure streak.
+	if inv.BestEffortRoles[roleName] {
+		return
+	}
 	switch {
 	case !shouldFallback:
 		inv.Health.MarkSuccess(agentName)
@@ -457,6 +493,26 @@ func absPath(dir, path string) string {
 		return path
 	}
 	return filepath.Join(dir, path)
+}
+
+// skillsFor renders the {{SKILLS}} injection for the requested skill names.
+// Empty/nil names yield a placeholder (and read no files). Non-empty names load
+// the skills/ directory fresh and render each requested skill; a name that is
+// not on disk is a clear, immediate error so a typo in a plan cannot silently
+// drop the working style the agent was supposed to follow.
+func (inv *RoleInvoker) skillsFor(names []string) (string, error) {
+	if len(names) == 0 {
+		return "(no skills requested for this task)", nil
+	}
+	dir := inv.SkillsDir
+	if dir == "" {
+		dir = skills.DefaultDir
+	}
+	reg, err := skills.Load(absPath(inv.Dir, dir))
+	if err != nil {
+		return "", fmt.Errorf("load skills: %w", err)
+	}
+	return reg.Render(names)
 }
 
 func redactedCmdLine(cmd []string, vars map[string]string) string {

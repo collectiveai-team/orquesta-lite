@@ -58,7 +58,17 @@ func (r *fakeCompactorRunner) Run(_ context.Context, spec runner.Spec) (*runner.
 	return &runner.Result{ResultExists: true, ExitCode: 0, Duration: time.Second}, nil
 }
 
-func compactionDeps(t *testing.T, fake *fakeCompactorRunner, thresholdChars int, withRole bool) (*liveDeps, string) {
+// noWriteCompactorRunner exits cleanly but never writes a result file — the
+// real-world case where the compactor decides the digest is already compact and
+// declines to rewrite it. classify() reports this as result_missing.
+type noWriteCompactorRunner struct{ calls int }
+
+func (r *noWriteCompactorRunner) Run(_ context.Context, _ runner.Spec) (*runner.Result, error) {
+	r.calls++
+	return &runner.Result{ResultExists: false, ExitCode: 0, Duration: time.Second}, nil
+}
+
+func compactionDeps(t *testing.T, fake invoke.AgentRunner, thresholdChars int, withRole bool) (*liveDeps, string) {
 	t.Helper()
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0o755); err != nil {
@@ -120,6 +130,45 @@ func TestMaybeCompactMemory_RewritesWhenOverThreshold(t *testing.T) {
 	if fake.calls != 1 {
 		t.Fatalf("compactor calls = %d, want 1", fake.calls)
 	}
+}
+
+// When the compactor exits cleanly without writing a result (the digest is
+// already compact, nothing to rewrite), compaction is a benign no-op: memory is
+// left untouched and the event is logged as a skip, not a failure. "No rewrite
+// needed" must never read as a failure of the run.
+func TestMaybeCompactMemory_NoResultIsSkippedNotFailed(t *testing.T) {
+	fake := &noWriteCompactorRunner{}
+	d, memPath := compactionDeps(t, fake, 50, true)
+	big := strings.Repeat("## [old note]\nverbose per-task chatter that is no longer needed\n\n", 40)
+	if err := os.WriteFile(memPath, []byte(big), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	d.maybeCompactMemory(context.Background())
+
+	got, err := os.ReadFile(memPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != big {
+		t.Fatalf("memory must be left untouched on a no-op compaction, got %q", got)
+	}
+	log := readRunLog(t, d.dir)
+	if strings.Contains(log, "memory_compact_failed") {
+		t.Fatalf("a no-result compaction must not be logged as a failure:\n%s", log)
+	}
+	if !strings.Contains(log, "memory_compact_skipped") {
+		t.Fatalf("a no-result compaction should be logged as skipped:\n%s", log)
+	}
+}
+
+func readRunLog(t *testing.T, dir string) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(dir, ".orquestalite", "run.log"))
+	if err != nil {
+		t.Fatalf("read run.log: %v", err)
+	}
+	return string(raw)
 }
 
 func TestMaybeCompactMemory_NoopUnderThreshold(t *testing.T) {

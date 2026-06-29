@@ -10,7 +10,8 @@
         "properties": {
           "title":       { "type": "string" },
           "description": { "type": "string" },
-          "priority":    { "type": "integer" }
+          "priority":    { "type": "integer" },
+          "skills":      { "type": "array", "items": { "type": "string" } }
         },
         "required": ["title", "description", "priority"]
       }
