@@ -19,6 +19,10 @@ type InitOptions struct {
 	// Lang overrides language autodetection. One of "python", "node", "go",
 	// "auto", or "" (treated as auto).
 	Lang string
+	// Precommit, when set, also writes a `.pre-commit-config` matching the
+	// detected language and sets `lint_command` in team.json so the fix-loop
+	// lint gate enforces the same rule set as the developer's local hook.
+	Precommit bool
 }
 
 // Init scaffolds a project directory with default assets, using language
@@ -44,8 +48,21 @@ func InitWithOptions(dir string, opts InitOptions) error {
 
 	team := mustReadAsset("assets/team.json")
 	team = applyTestCommand(team, lang)
-	if err := writeIfMissing(filepath.Join(dir, "team.json"), team); err != nil {
+	teamPath := filepath.Join(dir, "team.json")
+	if err := writeIfMissing(teamPath, team); err != nil {
 		return err
+	}
+
+	// Optional pre-commit scaffolding: write .pre-commit-config and set
+	// team.json's lint_command to the matching rule set so the fix-loop lint
+	// gate enforces it (a violation feeds {{LINT_FEEDBACK}} back to the coder
+	// instead of a raw git hook aborting the agent's commit).
+	if opts.Precommit {
+		if rs, err := applyPrecommit(dir, teamPath, lang); err != nil {
+			fmt.Fprintf(os.Stdout, "warning: precommit scaffolding skipped for %q: %v\n", lang, err)
+		} else {
+			fmt.Fprintf(os.Stdout, "precommit: wrote .pre-commit-config (%s) and set team.json lint_command\n", rs.Name)
+		}
 	}
 
 	if _, err := exec.LookPath("codex"); err != nil {

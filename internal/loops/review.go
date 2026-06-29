@@ -63,6 +63,7 @@ func RunReviewLoop(ctx context.Context, tl *tasks.TaskList, cfg ReviewConfig, d 
 				Title:       n.Title,
 				Description: n.Description,
 				Priority:    n.Priority,
+				Skills:      n.Skills,
 			})
 		}
 		for i := range newOnes {

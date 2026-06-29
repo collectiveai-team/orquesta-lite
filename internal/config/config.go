@@ -16,7 +16,7 @@ var orchestratedRoles = []string{"parser", "coder", "tester", "critic", "reviewe
 // "verifier" black-box-verifies the change after the critic approves.
 // "planner" extracts vertical-slice features from a plan in factory mode; it is
 // not used by `run`, so a team.json without it still works for non-factory use.
-var optionalRoles = []string{"verifier", "planner", "compactor"}
+var optionalRoles = []string{"verifier", "planner", "compactor", "generalist", "intake"}
 
 type Agent struct {
 	Cmd                        []string `json:"cmd,omitempty"`

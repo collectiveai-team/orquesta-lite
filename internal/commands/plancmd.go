@@ -85,6 +85,7 @@ func Plan(ctx context.Context, projectDir, planPath string, appendMode bool, cal
 			Description: p.Description,
 			Priority:    p.Priority,
 			Squad:       p.Squad,
+			Skills:      p.Skills,
 		})
 	}
 	tl.Append(converted, 0)

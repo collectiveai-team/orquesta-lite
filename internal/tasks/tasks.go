@@ -115,6 +115,11 @@ type Task struct {
 	// "full" (coder→tester→critic→verifier, the default), or "generic"
 	// (generalist only). Empty or unknown is treated as "full".
 	Squad string `json:"squad,omitempty"`
+	// Skills names the project-defined skills (in skills/) this task requests.
+	// The orchestrator injects their content into the coder/critic prompts as
+	// {{SKILLS}} so a plan can name the working style an agent must follow
+	// (e.g. "tdd"). Naming a skill that is not on disk is a clear error.
+	Skills []string `json:"skills,omitempty"`
 }
 
 // SquadOrDefault returns the task's squad, defaulting to SquadFull when the

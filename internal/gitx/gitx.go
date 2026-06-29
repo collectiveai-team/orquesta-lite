@@ -139,6 +139,15 @@ func LogStat(dir, sinceSHA string) (string, error) {
 	return run(dir, "log", sinceSHA+"..HEAD", "--stat")
 }
 
+// DiffRefs returns the full patch between two refs (the diff a PR review
+// inspects). Uses `git diff base head` (two-dot: the net change on head
+// relative to base) with no color so the diff is machine-injectable into a
+// review prompt. Callers must validate the refs; a leading "-" would otherwise
+// look like a flag to git.
+func DiffRefs(dir, base, head string) (string, error) {
+	return run(dir, "diff", "--no-color", base, head)
+}
+
 // ShowCommit returns one commit's message, diffstat, and full patch, as the
 // dashboard surfaces per-task changes. The caller must validate sha (it is
 // passed straight to git); a leading "-" would otherwise look like a flag.

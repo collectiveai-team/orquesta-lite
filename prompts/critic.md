@@ -19,6 +19,12 @@ Judge the change on both axes separately — a diff can pass one and fail the ot
 
 {{CONVENTIONS}}
 
+## Required skills
+
+{{SKILLS}}
+
+When the block above names concrete skills, verify the change was made following their procedure (e.g. a TDD skill means a failing test preceded the implementation). When it says no skills were requested, skip this check.
+
 When the block above names concrete conventions, flag any deviation from them. When it does not, compare the diff against the surrounding code: a change that invents new naming, a new logging approach, a new error-handling style, or a generic name (`FooHandler`, `Manager`) where the codebase already has domain vocabulary is a concern to raise (nit, or blocker if it will spread). Also flag thin wrapper modules that fail the deletion test — abstractions that add interface surface without hiding complexity.
 
 ## Scope check (both directions)

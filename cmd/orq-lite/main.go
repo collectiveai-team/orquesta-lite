@@ -28,12 +28,13 @@ func main() {
 	case "init":
 		fs := flag.NewFlagSet("init", flag.ExitOnError)
 		lang := fs.String("lang", "", "language hint: python|node|go|auto (default: autodetect)")
+		precommit := fs.Bool("precommit", false, "write .pre-commit-config and set team.json lint_command for the detected language")
 		_ = fs.Parse(args)
 		dir := "."
 		if fs.NArg() > 0 {
 			dir = fs.Arg(0)
 		}
-		exit(commands.InitWithOptions(dir, commands.InitOptions{Lang: *lang}))
+		exit(commands.InitWithOptions(dir, commands.InitOptions{Lang: *lang, Precommit: *precommit}))
 
 	case "plan":
 		fs := flag.NewFlagSet("plan", flag.ExitOnError)
@@ -100,6 +101,65 @@ func main() {
 
 	case "cost":
 		exit(commands.Cost(ctx, ".", os.Stdout))
+
+	case "precommit":
+		fs := flag.NewFlagSet("precommit", flag.ExitOnError)
+		_ = fs.Parse(args)
+		dir := "."
+		if fs.NArg() > 0 {
+			dir = fs.Arg(0)
+		}
+		exit(commands.InitPrecommit(dir))
+
+	case "review":
+		fs := flag.NewFlagSet("review", flag.ExitOnError)
+		pr := fs.String("pr", "", "PR number to review (resolved to base/head via gh)")
+		base := fs.String("base", "", "explicit base git ref (overrides --pr resolution)")
+		head := fs.String("head", "", "explicit head git ref (overrides --pr resolution)")
+		publish := fs.Bool("publish", false, "post the verdict as a PR review via gh")
+		_ = fs.Parse(args)
+		exit(commands.Review(ctx, commands.ReviewOptions{
+			ProjectDir: ".",
+			PR:         *pr,
+			Base:       *base,
+			Head:       *head,
+			Publish:    *publish,
+		}))
+
+	case "intake":
+		fs := flag.NewFlagSet("intake", flag.ExitOnError)
+		issue := fs.String("issue", "", "path to a file holding the GitHub issue body")
+		noRun := fs.Bool("no-run", false, "stop after writing tasks.json (do not run the loop)")
+		_ = fs.Parse(args)
+		exit(commands.Intake(ctx, commands.IntakeOptions{
+			ProjectDir: ".",
+			IssuePath:  *issue,
+			Run:        !*noRun,
+		}))
+
+	case "watch":
+		fs := flag.NewFlagSet("watch", flag.ExitOnError)
+		interval := fs.Duration("interval", 60*time.Second, "poll interval")
+		issues := fs.Bool("issues", false, "watch issues (trigger intake)")
+		prs := fs.Bool("prs", false, "watch PRs (trigger review)")
+		reviewOwn := fs.Bool("review-own-prs", false, "review PRs that orq-lite itself opened (default: skip)")
+		publishPRs := fs.Bool("publish-prs", false, "post PR reviews via gh when reviewing")
+		_ = fs.Parse(args)
+		dir := "."
+		if fs.NArg() > 0 {
+			dir = fs.Arg(0)
+		}
+		watchCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
+		defer stop()
+		exit(commands.Watch(watchCtx, commands.WatchOptions{
+			ProjectDir:   dir,
+			Interval:     *interval,
+			Issues:       *issues,
+			PRs:          *prs,
+			ReviewOwnPRs: *reviewOwn,
+			PublishPRs:   *publishPRs,
+			Out:          os.Stdout,
+		}))
 
 	case "doctor":
 		exit(commands.Doctor(".", os.Stdout))
@@ -182,10 +242,14 @@ func usage() {
 	fmt.Fprintln(os.Stderr, `Usage: orq-lite <command> [args]
 
 Commands:
-  init [--lang L] [dir] scaffold .orquestalite, team.json, prompts/ (--lang: python|node|go|auto)
+  init [--lang L] [dir] scaffold .orquestalite, team.json, prompts/ (--lang: python|node|go|auto; --precommit writes .pre-commit-config + lint_command)
   plan <plan.md>        invoke parser, write tasks.json (--append to add)
-  run [--log-format F]  run review/task/fix loops over existing tasks.json (--fast batches pending tasks)
+  run [--log-format F]  run review/task/fix loops over existing tasks.json (--log-format: auto|verbose|human; --fast batches pending tasks)
   factory <features.md> develop each feature on its own branch (--fast batches each feature; no args: resume queue; --resume: retry failed features; --replan: fresh decomposition; --status; --force; --serve; --pr)
+  precommit [dir]       write .pre-commit-config + set team.json lint_command for the detected language
+  review [--pr N|--base B --head H] [--publish] critic-review a PR diff and post the verdict via gh
+  intake --issue <file> triage a GitHub issue: plan+run, or write missing_info (--no-run)
+  watch <project> [--issues] [--prs] [--interval D] poll GitHub via gh; intake new issues, review new PRs (--review-own-prs, --publish-prs)
   cost                  per-task spend rollup (run.log sessions priced via agtop)
   doctor                preflight the setup (git, team.json, CLIs, credentials) before spending
   status [--watch]      print tasks table (--watch refreshes until Ctrl+C)

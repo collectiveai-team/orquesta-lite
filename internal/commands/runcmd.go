@@ -202,6 +202,10 @@ func newLiveDeps(opts liveDepsOptions) (*liveDeps, func() error, error) {
 		DefaultRateLimitPattern: cfg.RateLimitBackoff.DefaultPattern,
 		AgentHealthThreshold:    agentHealthThreshold,
 		ConventionsPath:         cfg.ConventionsFile,
+		// The memory compactor is a best-effort optimization (see
+		// maybeCompactMemory): it must never bench a provider in the shared health
+		// tracker, or its failure would skip the agents the critical roles need.
+		BestEffortRoles: map[string]bool{"compactor": true},
 		OnAgentSuccess: func(role, agent string) {
 			if role == "coder" && deps.currentTask != nil {
 				deps.currentTask.LastAgent = agent
@@ -706,7 +710,7 @@ func (d *liveDeps) FullSuite(ctx context.Context) error {
 // linter must never block every task — that is logged as a skip). On a real
 // violation it returns ok=false with the linter's output as coder feedback.
 func (d *liveDeps) lintGateOutcome(ctx context.Context) (bool, string) {
-	parts := strings.Fields(d.cfg.LintCommand)
+	parts := parseCommand(d.cfg.LintCommand)
 	if len(parts) == 0 {
 		return true, ""
 	}
@@ -739,6 +743,24 @@ func exitCode(err error) int {
 		return ee.ExitCode()
 	}
 	return -1
+}
+
+// parseCommand splits a configured command for execution. `strings.Fields` is
+// sufficient for plain commands (`go test ./...`, `ruff check .`), but the
+// per-language pre-commit rule sets are composite scripts wrapped as
+// `sh -c '<script>'`; those must be passed as a single argument to `sh -c` or
+// the shell would re-tokenise the script. When the command starts with
+// `sh -c ` the remainder (with optional surrounding quotes trimmed) is treated
+// as one argument.
+func parseCommand(cmd string) []string {
+	if strings.HasPrefix(cmd, "sh -c ") {
+		rest := strings.TrimSpace(strings.TrimPrefix(cmd, "sh -c "))
+		if len(rest) >= 2 && rest[0] == '\'' && rest[len(rest)-1] == '\'' {
+			rest = rest[1 : len(rest)-1]
+		}
+		return []string{"sh", "-c", rest}
+	}
+	return strings.Fields(cmd)
 }
 
 // Commit stages all changes and commits them with the given message. If the
@@ -996,6 +1018,7 @@ func (d *liveDeps) RunSingle(ctx context.Context, role string, rc invoke.RunCont
 	for attempt := 1; attempt <= 2; attempt++ {
 		rc.Attempt = attempt
 		err := d.inv.RunOnce(ctx, role, invoke.RoleCall{
+			Skills: d.currentTaskSkills(),
 			Vars: map[string]string{
 				"TASK_ID":                  rc.TaskID,
 				"TASK_TITLE":               d.currentTaskTitle(),
@@ -1038,6 +1061,16 @@ func (d *liveDeps) currentTaskDescription() string {
 		return ""
 	}
 	return d.currentTask.Description
+}
+
+// currentTaskSkills returns the skills requested by the task currently being
+// worked, so the coder/critic (and single-role) prompts can inject them as
+// {{SKILLS}}. nil when no task is selected or the task requests none.
+func (d *liveDeps) currentTaskSkills() []string {
+	if d.currentTask == nil {
+		return nil
+	}
+	return d.currentTask.Skills
 }
 
 // Decompose invokes the parser in decomposition mode to break a failed task into subtasks.
@@ -1089,6 +1122,7 @@ func (d *liveDeps) Decompose(ctx context.Context, t *tasks.Task, fx *loops.FixRe
 			Priority:           pt.Priority,
 			DecompositionDepth: t.DecompositionDepth + 1,
 			Squad:              pt.Squad,
+			Skills:             pt.Skills,
 		})
 	}
 	return subtasks, nil
@@ -1144,6 +1178,12 @@ func (d *liveDeps) maybeCompactMemory(ctx context.Context) {
 		invoke.RunContext{TaskID: "_memory", Attempt: 1},
 		results.ParseCompactor)
 	if err != nil {
+		if isCompactorNoResult(err) {
+			d.log.Log(eventlog.Event{Type: "memory_compact_skipped", Fields: map[string]any{
+				"before_chars": before, "reason": "result_missing",
+			}})
+			return
+		}
 		d.log.Log(eventlog.Event{Type: "memory_compact_failed", Fields: map[string]any{"error": err.Error()}})
 		return
 	}
@@ -1161,6 +1201,14 @@ func (d *liveDeps) maybeCompactMemory(ctx context.Context) {
 	d.log.Log(eventlog.Event{Type: "memory_compacted", Fields: map[string]any{
 		"before_chars": before, "after_chars": len(next), "kept_notes": r.KeptNotes,
 	}})
+}
+
+func isCompactorNoResult(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := err.Error()
+	return strings.Contains(s, "result_missing") || strings.Contains(s, "did not write")
 }
 
 // compactedMemory normalizes a compactor result and reports whether it should
@@ -1205,6 +1253,7 @@ func (rr *liveRoleRunner) RunCoder(ctx context.Context, rc invoke.RunContext, fb
 	}
 	r, err := invoke.Role(ctx, d.inv, "coder", invoke.RoleCall{
 		AgentOverride: fb.AgentOverride,
+		Skills:        d.currentTaskSkills(),
 		Vars: map[string]string{
 			"TASK_ID":                  rc.TaskID,
 			"TASK_TITLE":               d.currentTaskTitle(),
@@ -1302,7 +1351,7 @@ func (rr *liveRoleRunner) RunVerifier(ctx context.Context, rc invoke.RunContext)
 // RunCritic invokes the critic role after the tester passes.
 func (rr *liveRoleRunner) RunCritic(ctx context.Context, rc invoke.RunContext) (loops.CriticOutcome, error) {
 	d := rr.deps
-	r, err := invoke.Role(ctx, d.inv, "critic", invoke.RoleCall{Vars: map[string]string{
+	r, err := invoke.Role(ctx, d.inv, "critic", invoke.RoleCall{Skills: d.currentTaskSkills(), Vars: map[string]string{
 		"TASK_ID":          rc.TaskID,
 		"TASK_TITLE":       d.currentTaskTitle(),
 		"TASK_DESCRIPTION": d.currentTaskDescription(),

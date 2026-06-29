@@ -41,6 +41,12 @@ If `.gitignore` is missing entries for the project's language, add them before c
 
 {{MEMORY}}
 
+## Skills (project-defined procedures to follow)
+
+{{SKILLS}}
+
+When the block above names concrete skills, follow their procedure exactly for this task. When it says no skills were requested, infer your working style from the task and surrounding code.
+
 ## Task
 
 **ID:** {{TASK_ID}}
