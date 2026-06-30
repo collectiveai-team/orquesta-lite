@@ -23,6 +23,41 @@ fast mode on its own branch and merged only if it passes the gate.
 
 ## The pipeline at a glance
 
+```mermaid
+flowchart TD
+  PLAN[/"plan.md"/] --> P["planner<br/><i>factory-planner.md</i>"]
+  P -->|"vertical slices F001…F00n"| PR["parser<br/><i>parser.md</i>"]
+  PR -->|".orquestalite/tasks.json"| C["coder<br/><i>coder.md</i>"]
+
+  subgraph BATCH["fast batch — loops up to max_fix_iterations"]
+    direction TB
+    C --> L{"lint gate<br/><i>lint_command</i>"}
+    L -->|"fail · LINT_FEEDBACK"| C
+    L -->|ok| T{"tester<br/><i>tester.md</i>"}
+    T -->|"fail · TESTER_FEEDBACK"| C
+    T -->|pass| CR{"critic<br/><i>critic.md</i>"}
+    CR -->|"rejected · CRITIC_FEEDBACK"| C
+    CR -->|approved| FS{"full suite<br/><i>full_test_command</i>"}
+    FS -->|"fail · output → TESTER_FEEDBACK"| C
+  end
+
+  FS -->|pass| CM["commit on feature branch"]
+  CM --> G{"merge gate<br/>(factory engine)"}
+  G -->|pass| M["merge into base (fast-forward)"]
+  G -->|fail| R["repair loop<br/>reuse tasks, reset failed→pending<br/>(up to MaxFeatureRetries)"]
+  R --> C
+  R -.->|"still failing"| LEFT["left on branch<br/>orq-lite factory --resume"]
+
+  classDef agent fill:#e6f0ff,stroke:#4477cc,color:#000;
+  classDef gate fill:#fff3cd,stroke:#cc9a06,color:#000;
+  classDef term fill:#e6ffe6,stroke:#33aa33,color:#000;
+  class P,PR,C,T,CR agent;
+  class L,FS,G gate;
+  class M,LEFT term;
+```
+
+The same flow as plain text (fallback, with prompt/command annotations):
+
 ```
 orq-lite factory --fast <plan.md>
 │
