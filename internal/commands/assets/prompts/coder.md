@@ -62,6 +62,8 @@ When the block above names concrete skills, follow their procedure exactly for t
 
 {{VERIFIER_FEEDBACK}}
 
+{{LINT_FEEDBACK}}
+
 ## Previous attempt (if applicable)
 
 {{PREVIOUS_ATTEMPT_SUMMARY}}
