@@ -12,6 +12,25 @@ import (
 
 var ErrFullSuiteFailed = errors.New("full test suite failed")
 
+// FullSuiteError carries the failing test output from the merge-gate suite so
+// the coder can be told exactly what broke. The per-feature tester often scopes
+// tests (markers, subsets) differently than the gate, which runs the whole
+// suite — without the output the coder is blind to the discrepancy and repairs
+// make no progress. It satisfies errors.Is(err, ErrFullSuiteFailed) so existing
+// sentinel checks keep working.
+type FullSuiteError struct {
+	Output string
+}
+
+func (e *FullSuiteError) Error() string {
+	if e.Output == "" {
+		return ErrFullSuiteFailed.Error()
+	}
+	return ErrFullSuiteFailed.Error() + ":\n" + e.Output
+}
+
+func (e *FullSuiteError) Unwrap() error { return ErrFullSuiteFailed }
+
 // MaxDecompositionDepth caps recursive decomposition: a subtask produced by
 // two decomposition generations does not decompose again — it hands off to a
 // human instead. Without a cap, a structurally impossible task could spawn

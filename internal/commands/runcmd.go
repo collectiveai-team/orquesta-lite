@@ -361,7 +361,6 @@ func (d *liveDeps) captureRollbackBase() {
 	d.taskUntracked = set
 }
 
-
 // FastBatchOptions describes one fast-mode batch: a feature in factory mode, or
 // all pending tasks in plain `orq-lite run --fast`.
 type FastBatchOptions struct {
@@ -485,9 +484,25 @@ func (d *liveDeps) RunFastBatch(ctx context.Context, opts FastBatchOptions) erro
 		}
 
 		if err := d.FullSuite(ctx); err != nil {
-			d.markFastBatchFailed(batchIndexes, tasks.ReasonFeatureTestsFailed, err.Error())
-			_ = d.Rollback(ctx)
-			return err
+			// The merge-gate suite runs the whole project; the per-feature tester
+			// may scope tests differently (markers, subsets), so a gate failure is
+			// often invisible to the tester. Feed the actual output back to the
+			// coder and retry in-loop — mirroring the lint/tester/critic gates —
+			// instead of bailing blind, which left repair unable to make progress.
+			feedback := err.Error()
+			var fsErr *loops.FullSuiteError
+			if errors.As(err, &fsErr) && fsErr.Output != "" {
+				feedback = fmt.Sprintf("The full test suite (`%s`) failed after your changes. This is the merge gate; it runs the whole project, which may include tests the per-feature tester scopes out (markers, subsets). Fix the failure below:\n%s", d.cfg.FullTestCommand, fsErr.Output)
+			}
+			d.log.Log(eventlog.Event{Type: "feature_fast_full_suite_failed", Fields: map[string]any{"task_id": opts.TaskID, "attempt": attempt}})
+			if attempt >= d.cfg.Limits.MaxFixIterations {
+				d.markFastBatchFailed(batchIndexes, tasks.ReasonFeatureTestsFailed, feedback)
+				_ = d.Rollback(ctx)
+				return err
+			}
+			testerFeedback = feedback
+			criticFeedback, lintFeedback = "", ""
+			continue
 		}
 
 		if !d.commitFastBatch(ctx, opts.CommitMsg) {
@@ -696,10 +711,11 @@ func (d *liveDeps) FullSuite(ctx context.Context) error {
 			}})
 			return nil
 		}
+		tail := runner.TailString(string(out), 1024)
 		d.log.Log(eventlog.Event{Type: "full_suite_failed", Fields: map[string]any{
-			"output_tail": runner.TailString(string(out), 1024),
+			"output_tail": tail,
 		}})
-		return loops.ErrFullSuiteFailed
+		return &loops.FullSuiteError{Output: tail}
 	}
 	return nil
 }
