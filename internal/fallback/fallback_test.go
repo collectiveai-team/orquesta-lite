@@ -7,12 +7,6 @@ import (
 	"time"
 )
 
-type fakeRun struct {
-	rateLimited  bool
-	resultExists bool
-	timedOut     bool
-}
-
 func TestCallRole_FirstAgentWins(t *testing.T) {
 	calls := 0
 	chain := []string{"a1", "a2"}

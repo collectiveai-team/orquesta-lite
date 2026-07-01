@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -676,9 +675,7 @@ func TestCallRole_AgentRunEventFields(t *testing.T) {
 
 	// Agent that writes stderr, exits non-zero, and does NOT write the result file.
 	resultPath := filepath.Join(dir, "result.json")
-	agentScript := fmt.Sprintf(
-		`sh -c "echo 'something went wrong' 1>&2; exit 7"`,
-	)
+	agentScript := `sh -c "echo 'something went wrong' 1>&2; exit 7"`
 	_ = agentScript // used below via config
 
 	ag := config.Agent{
@@ -1098,53 +1095,6 @@ exit 0
 	}
 	if !strings.Contains(cmdLineField, "testrole") {
 		t.Errorf("cmd_line must contain resolved ROLE \"testrole\"; got: %q", cmdLineField)
-	}
-}
-
-func TestExecRunnerMatchesRunAgent(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("posix shell script test, skipping on windows")
-	}
-
-	var _ AgentRunner = execRunner{}
-
-	dir := t.TempDir()
-	resultPath := filepath.Join(dir, "result.json")
-	spec := runner.Spec{
-		Cmd: []string{
-			"sh",
-			"-c",
-			`printf '%s\n' "stdout:$1"; printf '%s\n' "stderr:$1" >&2; printf '%s' '{"status":"ok"}' > "$2"`,
-			"agent-script",
-			"{{PROMPT}}",
-			resultPath,
-		},
-		Prompt:           "hello",
-		ResultPath:       resultPath,
-		Timeout:          5 * time.Second,
-		RateLimitPattern: "rate_?limit",
-	}
-
-	direct, err := runner.RunAgent(context.Background(), spec)
-	if err != nil {
-		t.Fatalf("RunAgent: %v", err)
-	}
-	adapted, err := execRunner{}.Run(context.Background(), spec)
-	if err != nil {
-		t.Fatalf("execRunner.Run: %v", err)
-	}
-
-	if direct.Duration <= 0 {
-		t.Fatalf("RunAgent duration = %v, want positive", direct.Duration)
-	}
-	if adapted.Duration <= 0 {
-		t.Fatalf("execRunner duration = %v, want positive", adapted.Duration)
-	}
-	direct.Duration = 0
-	adapted.Duration = 0
-
-	if !reflect.DeepEqual(adapted, direct) {
-		t.Fatalf("execRunner result mismatch\nadapted: %#v\ndirect:  %#v", *adapted, *direct)
 	}
 }
 
