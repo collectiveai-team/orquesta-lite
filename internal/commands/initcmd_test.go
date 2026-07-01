@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/lionelchamorro/orquestalite/internal/config"
 )
 
 func TestInit_CreatesScaffolding(t *testing.T) {
@@ -161,6 +163,35 @@ func TestInit_MaterialisesDecomposePrompt(t *testing.T) {
 // The warning behaviour is covered by manual testing and code review.
 func TestInit_WarnsWhenCodexMissing(t *testing.T) {
 	t.Skip("exec.LookPath cannot be cleanly stubbed without injecting the lookup function; skipped by design")
+}
+
+// TestInitScaffoldsEveryRolePrompt verifies that every role declared in the
+// scaffolded team.json has its prompt file materialised on disk. This prevents
+// regressions of the intake.md bug: team.json referenced prompts/intake.md but
+// assets/prompts/ was missing it, so init scaffolded a project where doctor,
+// intake and watch --issues broke.
+func TestInitScaffoldsEveryRolePrompt(t *testing.T) {
+	dir := t.TempDir()
+	if err := Init(dir); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(filepath.Join(dir, "team.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Roles) == 0 {
+		t.Fatal("scaffolded team.json declares no roles")
+	}
+	for name, role := range cfg.Roles {
+		if role.Prompt == "" {
+			t.Errorf("role %s: empty prompt path", name)
+			continue
+		}
+		p := filepath.Join(dir, role.Prompt)
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("role %s: prompt %s not scaffolded: %v", name, role.Prompt, err)
+		}
+	}
 }
 
 // TestInit_InitialisesGitRepo verifies that Init runs `git init` and creates

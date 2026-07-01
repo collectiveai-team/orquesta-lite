@@ -28,3 +28,9 @@ schemas/
 !examples/**/team.json
 !examples/**/prompts/
 !examples/**/prompts/**
+
+# the embedded assets that `orq-lite init` scaffolds from are part of the binary,
+# not runtime-generated dogfooding config — keep them trackable despite the
+# repo-wide prompts/ and schemas/ ignores.
+!internal/commands/assets/prompts/
+!internal/commands/assets/prompts/**
