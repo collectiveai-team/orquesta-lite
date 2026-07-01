@@ -26,7 +26,7 @@ func TestLoad_ParsesFrontMatterAndProcedure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tdd, ok := r.Get("tdd")
+	tdd, ok := r.skills["tdd"]
 	if !ok {
 		t.Fatal("missing tdd")
 	}
@@ -48,7 +48,7 @@ func TestLoad_NameFallsBackToFilename(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, ok := r.Get("no-name")
+	s, ok := r.skills["no-name"]
 	if !ok {
 		t.Fatal("missing no-name")
 	}

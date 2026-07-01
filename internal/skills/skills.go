@@ -139,12 +139,6 @@ func (r *Registry) Names() []string {
 	return out
 }
 
-// Get returns the skill named name, or false when it is not in the registry.
-func (r *Registry) Get(name string) (Skill, bool) {
-	s, ok := r.skills[name]
-	return s, ok
-}
-
 // Render returns the {{SKILLS}} text for a task's requested skills: each
 // requested skill's name, description, and procedure, separated by headers. A
 // missing skill is an immediate, clear error so a typo in a plan cannot silently
