@@ -1,0 +1,208 @@
+{
+  "flows": {
+    "factory": {
+      "description": "Develop features in parallel on their own branches and create PRs (per-task coder/tester/critic retry loop).",
+      "inputs": {
+        "features_path": { "type": "string", "default": "features.md" },
+        "base_branch": { "type": "string", "default": "main" }
+      },
+      "steps": [
+        {
+          "type": "action",
+          "action": "factory_extract_features",
+          "inputs": { "path": "{inputs.features_path}" },
+          "outputs": { "features_queue": "." }
+        },
+        {
+          "type": "loop",
+          "iterator": "{features_queue}",
+          "as": "feature",
+          "body": [
+            {
+              "type": "command",
+              "args": ["git", "checkout", "-b", "{feature.branch_name}", "{inputs.base_branch}"]
+            },
+            {
+              "type": "agent",
+              "agent": "parser",
+              "inputs": { "PLAN": "{feature.plan}" },
+              "outputs": { "tasks": "tasks" }
+            },
+            {
+              "type": "loop",
+              "iterator": "{tasks}",
+              "as": "task",
+              "body": [
+                {
+                  "type": "retry_until",
+                  "condition": "{task_verified} == true",
+                  "max_retries": 5,
+                  "body": [
+                    {
+                      "type": "agent",
+                      "agent": "coder",
+                      "inputs": {
+                        "TASK_ID": "{task.id}",
+                        "TASK_TITLE": "{task.title}",
+                        "TASK_DESCRIPTION": "{task.description}",
+                        "ATTEMPT_NUMBER": "{_attempt}",
+                        "PREVIOUS_ATTEMPT_SUMMARY": "{coder_res.summary}",
+                        "FILES_CHANGED_SO_FAR": "{coder_res.files_changed}",
+                        "LINT_FEEDBACK": "{lint_res.stdout}",
+                        "TESTER_FEEDBACK": "{tester_res.failures}",
+                        "CRITIC_FEEDBACK": "{critic_res.concerns}"
+                      },
+                      "outputs": { "coder_res": "." }
+                    },
+                    {
+                      "type": "command",
+                      "command": "go vet ./...",
+                      "on_failure": "continue",
+                      "outputs": { "lint_res": "." }
+                    },
+                    {
+                      "type": "agent",
+                      "agent": "tester",
+                      "inputs": { "FILES": "{coder_res.files_changed}" },
+                      "outputs": { "tester_res": "." }
+                    },
+                    {
+                      "type": "agent",
+                      "agent": "critic",
+                      "inputs": { "FILES": "{coder_res.files_changed}" },
+                      "outputs": { "critic_res": "." }
+                    },
+                    {
+                      "type": "eval",
+                      "expression": "{lint_res.pass} && {tester_res.pass} && {critic_res.pass}",
+                      "outputs": { "task_verified": "." }
+                    }
+                  ]
+                },
+                {
+                  "type": "command",
+                  "command": "go test ./..."
+                },
+                {
+                  "type": "command",
+                  "command": "git add -A"
+                },
+                {
+                  "type": "command",
+                  "args": ["git", "commit", "-m", "feat({task.id}): {task.title}"],
+                  "on_failure": "continue"
+                }
+              ]
+            },
+            {
+              "type": "command",
+              "args": ["git", "push", "-u", "origin", "{feature.branch_name}"],
+              "on_failure": "continue"
+            },
+            {
+              "type": "command",
+              "args": ["gh", "pr", "create", "--base", "{inputs.base_branch}", "--head", "{feature.branch_name}", "--title", "feat({feature.id}): {feature.title}", "--body", "{feature.plan}"],
+              "on_failure": "continue"
+            }
+          ]
+        }
+      ]
+    },
+    "factory_fast": {
+      "description": "Develop features quickly by batching tasks in a single coder call, then one global review.",
+      "inputs": {
+        "features_path": { "type": "string", "default": "features.md" },
+        "base_branch": { "type": "string", "default": "main" }
+      },
+      "steps": [
+        {
+          "type": "action",
+          "action": "factory_extract_features",
+          "inputs": { "path": "{inputs.features_path}" },
+          "outputs": { "features_queue": "." }
+        },
+        {
+          "type": "loop",
+          "iterator": "{features_queue}",
+          "as": "feature",
+          "body": [
+            {
+              "type": "command",
+              "args": ["git", "checkout", "-b", "{feature.branch_name}", "{inputs.base_branch}"]
+            },
+            {
+              "type": "agent",
+              "agent": "parser",
+              "inputs": { "PLAN": "{feature.plan}" },
+              "outputs": { "tasks": "tasks" }
+            },
+            {
+              "type": "action",
+              "action": "format_fast_batch_prompt",
+              "inputs": { "tasks": "{tasks}" },
+              "outputs": { "batch_description": "batch_description" }
+            },
+            {
+              "type": "agent",
+              "agent": "coder",
+              "inputs": {
+                "TASK_ID": "_fast",
+                "TASK_TITLE": "{feature.title}",
+                "TASK_DESCRIPTION": "{batch_description}"
+              },
+              "outputs": { "coder_res": "." }
+            },
+            {
+              "type": "command",
+              "command": "go vet ./...",
+              "on_failure": "continue"
+            },
+            {
+              "type": "agent",
+              "agent": "tester",
+              "inputs": { "FILES": "{coder_res.files_changed}" }
+            },
+            {
+              "type": "agent",
+              "agent": "critic",
+              "inputs": { "FILES": "{coder_res.files_changed}" }
+            },
+            {
+              "type": "command",
+              "command": "go test ./..."
+            },
+            {
+              "type": "command",
+              "command": "git add -A"
+            },
+            {
+              "type": "command",
+              "args": ["git", "commit", "-m", "feat({feature.id}): {feature.title} batch implementation"],
+              "on_failure": "continue"
+            },
+            {
+              "type": "agent",
+              "agent": "reviewer",
+              "inputs": { "FEATURE": "{feature.description}" }
+            },
+            {
+              "type": "command",
+              "args": ["git", "push", "-u", "origin", "{feature.branch_name}"],
+              "on_failure": "continue"
+            },
+            {
+              "type": "command",
+              "args": ["gh", "pr", "create", "--base", "{inputs.base_branch}", "--head", "{feature.branch_name}", "--title", "feat({feature.id}): {feature.title}", "--body", "{feature.plan}"],
+              "on_failure": "continue"
+            }
+          ]
+        },
+        {
+          "type": "agent",
+          "agent": "verifier",
+          "inputs": { "FEATURE": "_factory global review" }
+        }
+      ]
+    }
+  }
+}

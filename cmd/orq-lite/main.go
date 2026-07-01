@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/lionelchamorro/orquestalite/internal/commands"
@@ -216,6 +217,58 @@ func main() {
 	case "version", "--version", "-v":
 		fmt.Println(version)
 
+	case "flow":
+		if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
+			if names := commands.ListFlowNames("flows.json"); len(names) > 0 {
+				fmt.Fprintln(os.Stderr, "Available flows in flows.json:")
+				for _, n := range names {
+					fmt.Fprintf(os.Stderr, "  %s\n", n)
+				}
+			}
+			fmt.Fprintln(os.Stderr, `Usage: orq-lite flow run <name> [key=value ...] [--log-format F]
+  Execute a configured flow from flows.json.`)
+			os.Exit(0)
+		}
+		if args[0] != "run" {
+			fmt.Fprintln(os.Stderr, "usage: orq-lite flow run <name> [key=value ...]")
+			os.Exit(2)
+		}
+		// Separate flags from positionals by hand: the stdlib flag package stops
+		// at the first positional, which would push a trailing `--log-format`
+		// into the key=value inputs. Here flags may appear in any position.
+		logFormat := "auto"
+		var positional []string
+		for i := 1; i < len(args); i++ {
+			a := args[i]
+			switch {
+			case a == "--log-format" || a == "-log-format":
+				if i+1 < len(args) {
+					logFormat = args[i+1]
+					i++
+				}
+			case strings.HasPrefix(a, "--log-format="):
+				logFormat = strings.TrimPrefix(a, "--log-format=")
+			case strings.HasPrefix(a, "-log-format="):
+				logFormat = strings.TrimPrefix(a, "-log-format=")
+			default:
+				positional = append(positional, a)
+			}
+		}
+		runCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
+		defer stop()
+		if len(positional) == 0 {
+			fmt.Fprintln(os.Stderr, "usage: orq-lite flow run <name> [key=value ...] [--log-format F]")
+			os.Exit(2)
+		}
+		exit(commands.RunFlow(runCtx, commands.FlowOptions{
+			ProjectDir: ".",
+			TeamPath:   "team.json",
+			FlowsPath:  "flows.json",
+			FlowName:   positional[0],
+			InputArgs:  positional[1:],
+			LogFormat:  eventlog.Format(logFormat),
+		}))
+
 	default:
 		usage()
 		os.Exit(2)
@@ -257,6 +310,7 @@ Commands:
   log [--role R]        replay .orquestalite/run.log (--event T, --expand N, --full)
   reset                 remove .orquestalite state
   update [--check]      download and install the latest release from GitHub
+  flow run <name>       execute a flow from flows.json (e.g. orq-lite flow run factory features.md)
   version               print the binary version`)
 }
 

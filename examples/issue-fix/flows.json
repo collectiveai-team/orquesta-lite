@@ -1,0 +1,136 @@
+{
+  "flows": {
+    "issue_fix": {
+      "description": "Triage a GitHub issue: a triage agent decides whether there is enough evidence to act. If not, it posts a comment asking for what's missing and stops. If there is, it reproduces the bug with a failing test, fixes it until the suite is green and the critic approves, then opens a PR. The branch is taken by whether triage emits a one-element or empty work_queue.",
+      "inputs": {
+        "issue_number": { "type": "string" },
+        "base_branch": { "type": "string", "default": "main" },
+        "test_command": { "type": "string", "default": "go test ./..." },
+        "lint_command": { "type": "string", "default": "go vet ./..." }
+      },
+      "steps": [
+        {
+          "type": "command",
+          "args": ["gh", "issue", "view", "{inputs.issue_number}", "--comments"],
+          "outputs": { "issue_res": "." }
+        },
+        {
+          "type": "agent",
+          "agent": "triage",
+          "inputs": {
+            "ISSUE_NUMBER": "{inputs.issue_number}",
+            "ISSUE": "{issue_res.stdout}"
+          },
+          "outputs": { "triage_res": "." }
+        },
+        {
+          "type": "command",
+          "args": ["gh", "issue", "comment", "{inputs.issue_number}", "--body", "{triage_res.comment}"],
+          "on_failure": "continue"
+        },
+        {
+          "type": "loop",
+          "iterator": "{triage_res.work_queue}",
+          "as": "issue_item",
+          "body": [
+            {
+              "type": "command",
+              "args": ["git", "checkout", "-b", "fix/issue-{inputs.issue_number}", "{inputs.base_branch}"]
+            },
+            {
+              "type": "agent",
+              "agent": "reproducer",
+              "inputs": {
+                "ISSUE_NUMBER": "{inputs.issue_number}",
+                "ISSUE": "{issue_res.stdout}",
+                "TITLE": "{issue_item.title}",
+                "REPRODUCTION": "{issue_item.reproduction}"
+              },
+              "outputs": { "repro_res": "." }
+            },
+            {
+              "type": "command",
+              "command": "{inputs.test_command}",
+              "on_failure": "continue",
+              "outputs": { "repro_test_res": "." }
+            },
+            {
+              "type": "retry_until",
+              "condition": "{fix_test_res.pass} && {critic_res.pass}",
+              "max_retries": 3,
+              "body": [
+                {
+                  "type": "agent",
+                  "agent": "coder",
+                  "inputs": {
+                    "TASK_ID": "fix-{inputs.issue_number}",
+                    "TASK_TITLE": "Fix: {issue_item.title}",
+                    "TASK_DESCRIPTION": "A failing test that reproduces this bug already exists ({repro_res.test_files}). Make it pass by fixing the ROOT CAUSE — do not weaken, skip, or delete the reproduction test. Reproduction output:\n\n{repro_res.failing_output}\n\nFix approach from triage:\n{issue_item.plan}",
+                    "ATTEMPT_NUMBER": "{_attempt}",
+                    "PREVIOUS_ATTEMPT_SUMMARY": "{coder_res.summary}",
+                    "FILES_CHANGED_SO_FAR": "{coder_res.files_changed}",
+                    "LINT_FEEDBACK": "{lint_res.stdout}",
+                    "TESTER_FEEDBACK": "{fix_test_res.stdout}",
+                    "CRITIC_FEEDBACK": "{critic_res.concerns}"
+                  },
+                  "outputs": { "coder_res": "." }
+                },
+                {
+                  "type": "command",
+                  "command": "{inputs.lint_command}",
+                  "on_failure": "continue",
+                  "outputs": { "lint_res": "." }
+                },
+                {
+                  "type": "command",
+                  "command": "{inputs.test_command}",
+                  "on_failure": "continue",
+                  "outputs": { "fix_test_res": "." }
+                },
+                {
+                  "type": "agent",
+                  "agent": "critic",
+                  "inputs": {
+                    "TASK_TITLE": "Fix: {issue_item.title}",
+                    "TASK_DESCRIPTION": "Root-cause fix for issue #{inputs.issue_number}, guarded by the reproduction test in {repro_res.test_files}.",
+                    "FILES_CHANGED": "{coder_res.files_changed}"
+                  },
+                  "outputs": { "critic_res": "." }
+                },
+                {
+                  "type": "eval",
+                  "expression": "{fix_test_res.pass} && {critic_res.pass}",
+                  "outputs": { "fixed": "." }
+                }
+              ]
+            },
+            {
+              "type": "command",
+              "command": "git add -A"
+            },
+            {
+              "type": "command",
+              "args": ["git", "commit", "-m", "fix(#{inputs.issue_number}): {issue_item.title}"],
+              "on_failure": "continue"
+            },
+            {
+              "type": "command",
+              "args": ["git", "push", "-u", "origin", "fix/issue-{inputs.issue_number}"],
+              "on_failure": "continue"
+            },
+            {
+              "type": "command",
+              "args": ["gh", "pr", "create", "--base", "{inputs.base_branch}", "--head", "fix/issue-{inputs.issue_number}", "--title", "fix: {issue_item.title} (closes #{inputs.issue_number})", "--body", "Closes #{inputs.issue_number}\n\nReproduction: {repro_res.summary}\n\nFix: {coder_res.summary}"],
+              "on_failure": "continue"
+            },
+            {
+              "type": "command",
+              "args": ["gh", "issue", "comment", "{inputs.issue_number}", "--body", "Opened a pull request that reproduces this with a failing test and fixes the root cause."],
+              "on_failure": "continue"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

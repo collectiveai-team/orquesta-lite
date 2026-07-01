@@ -224,6 +224,21 @@ func (c *Config) Resolve() (map[string]RoleSpec, error) {
 		roles[roleName] = spec
 	}
 
+	// Custom roles: any declared role that is neither orchestrated nor optional
+	// is still resolved so configuration-driven flows (flows.json) can invoke
+	// arbitrary roles (e.g. architect/qa/pm) without the engine knowing them at
+	// compile time. The legacy run/factory pipelines simply never look these up.
+	for roleName, role := range c.Roles {
+		if _, done := roles[roleName]; done {
+			continue
+		}
+		spec, err := resolveRoleSpec(roleName, role, resolvedAgents)
+		if err != nil {
+			return nil, err
+		}
+		roles[roleName] = spec
+	}
+
 	return roles, nil
 }
 

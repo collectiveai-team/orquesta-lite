@@ -55,6 +55,38 @@ func TestLoad_Valid(t *testing.T) {
 	}
 }
 
+func TestResolve_IncludesCustomRoles(t *testing.T) {
+	// A config-driven flow may declare roles beyond the orchestrated/optional
+	// vocabulary (e.g. architect). Resolve must surface them so the engine can
+	// invoke them; the mandatory orchestrated roles are still required.
+	role := func(n string) string {
+		return `"` + n + `": {"agents": ["a1"], "prompt": "prompts/` + n + `.md", "result_path": ".orquestalite/results/` + n + `.json", "timeout_seconds": 60}`
+	}
+	p := writeTeamJSON(t, `{
+		"agents": {"a1": {"cmd": ["claude", "-p", "{{PROMPT}}"], "rate_limit_pattern": "x"}},
+		"roles": {`+
+		role("parser")+`,`+role("coder")+`,`+role("tester")+`,`+role("critic")+`,`+role("reviewer")+`,`+role("architect")+`,`+role("qa")+`,`+role("pm")+`
+		},
+		"limits": {"max_review_cycles": 1, "max_fix_iterations": 1},
+		"rate_limit_backoff": {"initial_seconds": 1, "factor": 2, "max_seconds": 2, "default_pattern": "x"},
+		"full_test_command": "true"
+	}`)
+
+	cfg, err := Load(p)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	specs, err := cfg.Resolve()
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	for _, custom := range []string{"architect", "qa", "pm"} {
+		if _, ok := specs[custom]; !ok {
+			t.Errorf("custom role %q missing from resolved specs", custom)
+		}
+	}
+}
+
 func TestLoad_UnknownAgentInRoleFails(t *testing.T) {
 	p := writeTeamJSON(t, `{
 		"agents": {"a1": {"cmd": ["x"]}},

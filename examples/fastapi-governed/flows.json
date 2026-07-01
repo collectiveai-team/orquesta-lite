@@ -1,0 +1,151 @@
+{
+  "flows": {
+    "factory_governed": {
+      "description": "Build all features on one integration branch (per-feature coder/test/critic, fast style), then loop a governance review (architect + QA + PM) that adds tasks as feedback until all three approve.",
+      "inputs": {
+        "features_path": { "type": "string", "default": "features.md" },
+        "base_branch": { "type": "string", "default": "main" },
+        "work_branch": { "type": "string", "default": "factory/fastapi-app" }
+      },
+      "steps": [
+        {
+          "type": "action",
+          "action": "factory_extract_features",
+          "inputs": { "path": "{inputs.features_path}" },
+          "outputs": { "features_queue": "." }
+        },
+        {
+          "type": "command",
+          "args": ["git", "checkout", "-b", "{inputs.work_branch}", "{inputs.base_branch}"]
+        },
+
+        {
+          "type": "loop",
+          "iterator": "{features_queue}",
+          "as": "feature",
+          "body": [
+            {
+              "type": "agent",
+              "agent": "parser",
+              "inputs": { "PLAN": "{feature.plan}" },
+              "outputs": { "tasks": "tasks" }
+            },
+            {
+              "type": "action",
+              "action": "format_fast_batch_prompt",
+              "inputs": { "tasks": "{tasks}" },
+              "outputs": { "batch_description": "batch_description" }
+            },
+            {
+              "type": "agent",
+              "agent": "coder",
+              "inputs": {
+                "TASK_ID": "{feature.id}",
+                "TASK_TITLE": "{feature.title}",
+                "TASK_DESCRIPTION": "{batch_description}"
+              },
+              "outputs": { "coder_res": "." }
+            },
+            {
+              "type": "command",
+              "command": "uv run ruff check .",
+              "on_failure": "continue"
+            },
+            {
+              "type": "agent",
+              "agent": "tester",
+              "inputs": { "FILES": "{coder_res.files_changed}" }
+            },
+            {
+              "type": "agent",
+              "agent": "critic",
+              "inputs": { "FILES": "{coder_res.files_changed}" }
+            },
+            {
+              "type": "command",
+              "command": "git add -A"
+            },
+            {
+              "type": "command",
+              "args": ["git", "commit", "-m", "feat({feature.id}): {feature.title}"],
+              "on_failure": "continue"
+            }
+          ]
+        },
+
+        {
+          "type": "retry_until",
+          "condition": "{architect_res.pass} && {qa_res.pass} && {pm_res.pass}",
+          "max_retries": 3,
+          "body": [
+            {
+              "type": "agent",
+              "agent": "coder",
+              "inputs": {
+                "TASK_ID": "_governance",
+                "TASK_TITLE": "Address architect / QA / PM feedback",
+                "ATTEMPT_NUMBER": "{_attempt}",
+                "TASK_DESCRIPTION": "Governance review round {_attempt}. Apply every requested change from the previous review below. On the first round there is no feedback yet — instead, do a consistency pass across all features (shared models, error handling, naming) and ensure the full test suite is green.\n\nArchitect tasks:\n{architect_res.new_tasks}\n\nQA tasks:\n{qa_res.new_tasks}\n\nPM tasks:\n{pm_res.new_tasks}"
+              },
+              "outputs": { "coder_res": "." }
+            },
+            {
+              "type": "command",
+              "command": "uv run ruff check .",
+              "on_failure": "continue"
+            },
+            {
+              "type": "command",
+              "command": "uv run pytest -q",
+              "on_failure": "continue",
+              "outputs": { "pytest_res": "." }
+            },
+            {
+              "type": "command",
+              "command": "git add -A"
+            },
+            {
+              "type": "command",
+              "args": ["git", "commit", "-m", "chore: address governance feedback (round {_attempt})"],
+              "on_failure": "continue"
+            },
+            {
+              "type": "agent",
+              "agent": "architect",
+              "inputs": { "FEATURES_PATH": "{inputs.features_path}", "ROUND": "{_attempt}", "TESTS_PASS": "{pytest_res.pass}" },
+              "outputs": { "architect_res": "." }
+            },
+            {
+              "type": "agent",
+              "agent": "qa",
+              "inputs": { "FEATURES_PATH": "{inputs.features_path}", "ROUND": "{_attempt}", "TESTS_PASS": "{pytest_res.pass}" },
+              "outputs": { "qa_res": "." }
+            },
+            {
+              "type": "agent",
+              "agent": "pm",
+              "inputs": { "FEATURES_PATH": "{inputs.features_path}", "ROUND": "{_attempt}" },
+              "outputs": { "pm_res": "." }
+            },
+            {
+              "type": "eval",
+              "expression": "{architect_res.pass} && {qa_res.pass} && {pm_res.pass}",
+              "outputs": { "governed": "." }
+            }
+          ]
+        },
+
+        {
+          "type": "command",
+          "args": ["git", "push", "-u", "origin", "{inputs.work_branch}"],
+          "on_failure": "continue"
+        },
+        {
+          "type": "command",
+          "args": ["gh", "pr", "create", "--base", "{inputs.base_branch}", "--head", "{inputs.work_branch}", "--title", "feat: FastAPI items service", "--body", "Implements all features in {inputs.features_path}; approved by architect, QA and PM governance review."],
+          "on_failure": "continue"
+        }
+      ]
+    }
+  }
+}
