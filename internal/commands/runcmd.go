@@ -18,6 +18,7 @@ import (
 	"github.com/lionelchamorro/orquestalite/internal/agenthealth"
 	"github.com/lionelchamorro/orquestalite/internal/artifacts"
 	"github.com/lionelchamorro/orquestalite/internal/config"
+	"github.com/lionelchamorro/orquestalite/internal/doctor"
 	"github.com/lionelchamorro/orquestalite/internal/eventlog"
 	"github.com/lionelchamorro/orquestalite/internal/fallback"
 	"github.com/lionelchamorro/orquestalite/internal/gitx"
@@ -429,7 +430,7 @@ func runStaticAgentPreflight(cfg *config.Config, tracker *agenthealth.Tracker, l
 		// Skip provider agents with no usable headless credential up front, so
 		// the run never wastes an invocation discovering an interactive auth
 		// prompt mid-task (e.g. an un-logged-in gemini CLI).
-		if ag.Provider != "" && !providerHasUsableCredentials(ag.Provider) {
+		if ag.Provider != "" && !doctor.ProviderHasUsableCredentials(ag.Provider) {
 			tracker.Skip(name, agenthealth.ReasonNoCredentials)
 			log.Log(eventlog.Event{Type: "preflight_skipped_agent", Fields: map[string]any{
 				"agent":    name,
