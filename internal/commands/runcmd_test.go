@@ -714,6 +714,26 @@ func TestRun_EmptyTaskList(t *testing.T) {
 			t.Errorf("manifest missing command:\n%s", mraw)
 		}
 	}
+
+	// Per-invocation artifacts: the reviewer's call persists prompt.md/stdout/stderr/meta.json.
+	prompts, _ := filepath.Glob(filepath.Join(dir, ".orquestalite", "runs", "r*", "agents", "*", "reviewer.c1.a1", "prompt.md"))
+	if len(prompts) == 0 {
+		glob, _ := filepath.Glob(filepath.Join(dir, ".orquestalite", "runs", "r*", "agents", "**", "prompt.md"))
+		t.Errorf("expected reviewer.c1.a1/prompt.md artifact, found none (agents seen: %v)", glob)
+	} else {
+		raw, _ := os.ReadFile(prompts[0])
+		if len(raw) == 0 {
+			t.Errorf("reviewer prompt.md artifact is empty")
+		}
+		metaPath := filepath.Join(filepath.Dir(prompts[0]), "meta.json")
+		if _, err := os.Stat(metaPath); err != nil {
+			t.Errorf("reviewer meta.json artifact missing: %v", err)
+		}
+		// agent_run event records the artifacts_dir so the dashboard can link to it.
+		if !strings.Contains(logStr, `"artifacts_dir":".orquestalite/runs/`) {
+			t.Errorf("agent_run missing artifacts_dir:\n%s", logStr)
+		}
+	}
 }
 
 // TestCallRole_AgentRunEventFields verifies that callRole logs the new fields

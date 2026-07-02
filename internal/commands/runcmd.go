@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/lionelchamorro/orquestalite/internal/agenthealth"
+	"github.com/lionelchamorro/orquestalite/internal/artifacts"
 	"github.com/lionelchamorro/orquestalite/internal/config"
 	"github.com/lionelchamorro/orquestalite/internal/eventlog"
 	"github.com/lionelchamorro/orquestalite/internal/fallback"
@@ -186,6 +187,11 @@ func newLiveDeps(opts liveDepsOptions) (*liveDeps, func() error, error) {
 	runID := runid.New()
 	logger.SetRunID(runID)
 	var deps *liveDeps
+	// Per-run artifacts store: persists the full prompt/stdout/stderr of every
+	// agent invocation under .orquestalite/runs/<run_id>/agents/. Pruned to the
+	// configured keep_runs ceiling so the directory stays bounded across runs.
+	artifactsStore := &artifacts.Store{Root: filepath.Join(opts.ProjectDir, ".orquestalite", "runs", runID)}
+	_ = artifactsStore.Prune(cfg.Limits.KeepRunsCeiling())
 	command := opts.Command
 	if command == "" {
 		command = "run"
@@ -289,6 +295,7 @@ func newLiveDeps(opts liveDepsOptions) (*liveDeps, func() error, error) {
 				deps.currentTask.LastAgent = agent
 			}
 		},
+		Artifacts: artifactsStore,
 	}
 	inv.SessionNamespace = opts.FeatureID
 	// Let the coder resume its provider session across fix-loop iterations (and

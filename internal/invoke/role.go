@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/lionelchamorro/orquestalite/internal/agenthealth"
+	"github.com/lionelchamorro/orquestalite/internal/artifacts"
 	"github.com/lionelchamorro/orquestalite/internal/config"
 	"github.com/lionelchamorro/orquestalite/internal/eventlog"
 	"github.com/lionelchamorro/orquestalite/internal/fallback"
@@ -81,6 +82,10 @@ type RoleInvoker struct {
 	// the digest is already compact) reads as result_missing, trips the circuit
 	// breaker, and skips its agents for the rest of the run.
 	BestEffortRoles map[string]bool
+	// Artifacts, when set, persists the full prompt + stdout + stderr + meta
+	// of every agent invocation under .orquestalite/runs/<run_id>/agents/. Nil
+	// disables persistence (compat for callers that do not need it).
+	Artifacts *artifacts.Store
 }
 
 type RoleCall struct {
@@ -336,7 +341,8 @@ func (inv *RoleInvoker) run(ctx context.Context, roleName string, role config.Ro
 				_ = inv.Sessions.Delete(key, roleName, agentName)
 			}
 		}
-		inv.logAgentRun(roleName, agentName, ag, spec, r, fallbackReason, rc)
+		artifactsDir := inv.saveArtifacts(roleName, agentName, ag, spec, prompt, r, rc)
+		inv.logAgentRun(roleName, agentName, ag, spec, r, fallbackReason, rc, artifactsDir)
 
 		out := fallback.Outcome{
 			RateLimited:    r.RateLimited,
@@ -439,7 +445,7 @@ func (inv *RoleInvoker) recordHealth(roleName, agentName string, shouldFallback 
 	}
 }
 
-func (inv *RoleInvoker) logAgentRun(roleName, agentName string, ag config.AgentSpec, spec runner.Spec, r *runner.Result, fallbackReason string, rc RunContext) {
+func (inv *RoleInvoker) logAgentRun(roleName, agentName string, ag config.AgentSpec, spec runner.Spec, r *runner.Result, fallbackReason string, rc RunContext, artifactsDir string) {
 	if inv.Log == nil {
 		return
 	}
@@ -462,6 +468,9 @@ func (inv *RoleInvoker) logAgentRun(roleName, agentName string, ag config.AgentS
 		"stderr_tail":      r.StderrTail(2048),
 		"stdout_tail":      r.StdoutTail(2048),
 		"fallback_reason":  fallbackReason,
+	}
+	if artifactsDir != "" {
+		fields["artifacts_dir"] = artifactsDir
 	}
 	if spec.ResumeSessionID != "" {
 		fields["resumed"] = true
@@ -486,6 +495,39 @@ func selectAgents(role config.RoleSpec, override string) ([]config.AgentSpec, er
 		}
 	}
 	return nil, fmt.Errorf("agent override %q is not configured for role", override)
+}
+
+// saveArtifacts persists the full prompt + stdout + stderr + meta.json for one
+// agent invocation and returns the project-relative artifacts_dir (for the
+// agent_run event) — "" when artifacts are disabled. Failures are best-effort:
+// a missing dir is non-fatal so trace artifacts never gate the run.
+func (inv *RoleInvoker) saveArtifacts(roleName, agentName string, ag config.AgentSpec, spec runner.Spec, prompt string, r *runner.Result, rc RunContext) string {
+	if inv.Artifacts == nil {
+		return ""
+	}
+	dir, err := inv.Artifacts.Dir(rc.TaskID, roleName, rc.Cycle, rc.Attempt)
+	if err != nil || dir == "" {
+		return ""
+	}
+	cmdLine := redactedCmdLine(ag.Cmd, spec.TemplateVars)
+	invocation := artifacts.Invocation{
+		Prompt:    prompt,
+		Stdout:    r.Stdout,
+		Stderr:    r.Stderr,
+		Agent:     agentName,
+		Model:     ag.Model,
+		Provider:  ag.Provider,
+		DurationS: int(r.Duration.Seconds()),
+		ExitCode:  r.ExitCode,
+		SessionID: r.SessionID,
+		CmdLine:   cmdLine,
+	}
+	if sErr := inv.Artifacts.SaveInvocation(dir, invocation); sErr != nil {
+		// Best-effort: log to stderr but never fail the run over trace capture.
+		fmt.Fprintf(os.Stderr, "warning: artifacts save %s: %v\n", dir, sErr)
+		return ""
+	}
+	return artifacts.RelativeDir(dir, inv.Dir)
 }
 
 func absPath(dir, path string) string {
