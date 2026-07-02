@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-//go:embed assets/team.json assets/prompts/*.md assets/schemas/*.json
+//go:embed assets/team.json assets/prompts/*.md assets/schemas/*.json assets/flows.json
 var defaultAssets embed.FS
 
 // InitOptions tunes scaffolding behaviour.
@@ -102,6 +102,13 @@ func InitWithOptions(dir string, opts InitOptions) error {
 	}
 
 	if err := writeGitignore(filepath.Join(dir, ".gitignore"), lang); err != nil {
+		return err
+	}
+
+	// flows.json — the configuration-driven flow engine's default flow
+	// catalogue. Same write-if-missing policy as team.json: a project that
+	// already customised its flows keeps them.
+	if err := writeIfMissing(filepath.Join(dir, "flows.json"), mustReadAsset("assets/flows.json")); err != nil {
 		return err
 	}
 
@@ -229,7 +236,7 @@ func writeGitignore(path, lang string) error {
 	// is committed by commitGitignore so the rules are tracked and survive the
 	// clean — otherwise an untracked .gitignore is wiped on the first rollback
 	// and the ignored dirs die on the next one.
-	entries := []string{".orquestalite/", "team.json", "prompts/", "schemas/"}
+	entries := []string{".orquestalite/", "team.json", "prompts/", "schemas/", "flows.json"}
 	switch lang {
 	case "python":
 		entries = append(entries,

@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"sync"
 	"time"
 
@@ -29,6 +30,10 @@ import (
 var (
 	taskIDRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 	shaRe    = regexp.MustCompile(`^[0-9a-fA-F]{7,40}$`)
+	// pathCompRe whitelists the segments that build an artifacts file path
+	// (run id, task key, role, and the cN.aN[.rN] attempt suffix) so a request
+	// cannot traverse outside .orquestalite/runs/.
+	pathCompRe = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,128}$`)
 )
 
 //go:embed static
@@ -64,6 +69,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/cost", s.handleCost)
 	mux.HandleFunc("GET /api/result/{role}", s.handleResult)
 	mux.HandleFunc("GET /api/diff/{task}", s.handleDiff)
+	mux.HandleFunc("GET /api/attempt-diff/{task}/{role}/{cycle}/{attempt}", s.handleAttemptDiff)
 	mux.HandleFunc("GET /api/tasks/{feature}", s.handleTasksByFeature)
 
 	static, err := fs.Sub(staticFS, "static")
@@ -157,6 +163,97 @@ func (s *Server) handleDiff(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	write(payload)
+}
+
+// handleAttemptDiff serves the attempt.diff artifact captured for a single
+// code-writing agent invocation. It is read-only and resolves through the
+// agent_diff event in run.log rather than trusting path components from the URL.
+func (s *Server) handleAttemptDiff(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+
+	write := func(v any) {
+		raw, err := json.Marshal(v)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write(raw)
+	}
+
+	task := r.PathValue("task")
+	role := r.PathValue("role")
+	cycleS := r.PathValue("cycle")
+	attemptS := r.PathValue("attempt")
+	if !pathCompRe.MatchString(task) || !pathCompRe.MatchString(role) || !pathCompRe.MatchString(cycleS) || !pathCompRe.MatchString(attemptS) {
+		write(map[string]any{"available": false})
+		return
+	}
+	cycle, err := strconv.Atoi(cycleS)
+	if err != nil || cycle < 0 {
+		write(map[string]any{"available": false})
+		return
+	}
+	attempt, err := strconv.Atoi(attemptS)
+	if err != nil || attempt < 0 {
+		write(map[string]any{"available": false})
+		return
+	}
+
+	artifactsDir := s.findAttemptDiffDir(task, role, cycle, attempt)
+	if artifactsDir == "" {
+		write(map[string]any{"available": false})
+		return
+	}
+	abs := filepath.Join(s.Dir, filepath.FromSlash(artifactsDir), "attempt.diff")
+	runsRoot := filepath.Join(s.Dir, ".orquestalite", "runs")
+	if rel, err := filepath.Rel(runsRoot, abs); err != nil || rel == ".." || len(rel) >= 3 && rel[:3] == "../" {
+		write(map[string]any{"available": false})
+		return
+	}
+	diff, err := os.ReadFile(abs)
+	if err != nil {
+		write(map[string]any{"available": false})
+		return
+	}
+	write(map[string]any{
+		"available":     true,
+		"task":          task,
+		"role":          role,
+		"cycle":         cycle,
+		"attempt":       attempt,
+		"artifacts_dir": artifactsDir,
+		"diff":          string(diff),
+	})
+}
+
+func (s *Server) findAttemptDiffDir(task, role string, cycle, attempt int) string {
+	f, err := os.Open(s.statePath("run.log"))
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+
+	var latest string
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for sc.Scan() {
+		var e struct {
+			Event        string `json:"event"`
+			TaskID       string `json:"task_id"`
+			Role         string `json:"role"`
+			Cycle        int    `json:"cycle"`
+			Attempt      int    `json:"attempt"`
+			ArtifactsDir string `json:"artifacts_dir"`
+		}
+		if json.Unmarshal(sc.Bytes(), &e) != nil || e.Event != "agent_diff" {
+			continue
+		}
+		if e.TaskID == task && e.Role == role && e.Cycle == cycle && e.Attempt == attempt && e.ArtifactsDir != "" {
+			latest = e.ArtifactsDir
+		}
+	}
+	return latest
 }
 
 // handleTasksByFeature serves the task list for a finished or current feature
@@ -264,16 +361,17 @@ func (s *Server) handleCost(w http.ResponseWriter, r *http.Request) {
 			return map[string]any{"available": false}
 		}
 		sessions, err := cost.Collect(r.Context())
-		if err != nil {
-			return map[string]any{"available": false, "reason": err.Error()}
-		}
 		rep := cost.Rollup(runs, sessions)
-		return map[string]any{
+		payload := map[string]any{
 			"available": true,
 			"total_usd": rep.TotalUSD,
 			"runs":      rep.Runs,
 			"priced":    rep.Priced,
 		}
+		if err != nil {
+			payload["pricing_note"] = err.Error()
+		}
+		return payload
 	}()
 
 	raw, err := json.Marshal(payload)

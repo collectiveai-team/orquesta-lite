@@ -139,7 +139,7 @@ func TestRunFastBatch_FullSuiteFailureRetriesWithFeedback(t *testing.T) {
 	log := string(logRaw)
 
 	// Retry happened: the coder ran once per fix iteration, not just once.
-	if got := strings.Count(log, `"role":"coder"`); got != maxFix {
+	if got := countAgentRunsInLog(log, "coder"); got != maxFix {
 		t.Errorf("coder ran %d times, want %d (full-suite failure must retry in-loop, not bail)", got, maxFix)
 	}
 	// The new per-attempt event is emitted each iteration.
@@ -159,4 +159,18 @@ func TestRunFastBatch_FullSuiteFailureRetriesWithFeedback(t *testing.T) {
 	if !strings.Contains(*final.Tasks[0].LastFeedback, marker) {
 		t.Errorf("task feedback missing the suite output marker; got:\n%s", *final.Tasks[0].LastFeedback)
 	}
+}
+
+func countAgentRunsInLog(log, role string) int {
+	count := 0
+	for _, line := range strings.Split(log, "\n") {
+		var e struct {
+			Event string `json:"event"`
+			Role  string `json:"role"`
+		}
+		if json.Unmarshal([]byte(line), &e) == nil && e.Event == "agent_run" && e.Role == role {
+			count++
+		}
+	}
+	return count
 }

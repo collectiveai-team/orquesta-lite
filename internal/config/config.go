@@ -100,6 +100,10 @@ type Limits struct {
 	// coder implements the whole feature/task list, then tester and critic run
 	// once for the batch. CLI flags can override this per invocation.
 	FastMode bool `json:"fast_mode,omitempty"`
+	// KeepRuns caps how many .orquestalite/runs/<run_id>/ directories (and their
+	// per-invocation prompt/stdout/stderr artifacts) survive; older runs are
+	// pruned at the start of a new run. 0 = use the default (20).
+	KeepRuns int `json:"keep_runs,omitempty"`
 }
 
 // MemoryCompactThreshold returns the memory size above which compaction runs,
@@ -133,6 +137,15 @@ func (l Limits) FeatureRetries() int {
 		return 1
 	}
 	return l.MaxFeatureRetries
+}
+
+// KeepRunsCeiling returns the cap on retained .orquestalite/runs/<run_id>/
+// directories, defaulting to 20 when unset.
+func (l Limits) KeepRunsCeiling() int {
+	if l.KeepRuns <= 0 {
+		return 20
+	}
+	return l.KeepRuns
 }
 
 // TesterVerificationEnabled reports whether the orchestrator should re-run the

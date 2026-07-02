@@ -9,6 +9,33 @@ import (
 	"testing"
 )
 
+// TestSetRunID_StampsEvents verifies that once SetRunID is called, every
+// subsequent Log() persists run_id into the JSONL record (alongside ts/event).
+func TestSetRunID_StampsEvents(t *testing.T) {
+	dir := t.TempDir()
+	pretty := &bytes.Buffer{}
+	l, err := Open(filepath.Join(dir, "run.log"), pretty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+
+	l.SetRunID("r20260701T193000Z-4f2a")
+	l.Log(Event{Type: "task_start", Fields: map[string]any{"task_id": "T003"}})
+
+	raw, _ := os.ReadFile(filepath.Join(dir, "run.log"))
+	var got map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(raw), &got); err != nil {
+		t.Fatalf("invalid JSONL: %v\n%s", err, raw)
+	}
+	if got["run_id"] != "r20260701T193000Z-4f2a" {
+		t.Errorf("run_id not stamped: %v\n%s", got["run_id"], raw)
+	}
+	if got["event"] != "task_start" {
+		t.Errorf("event field clobbered: %v\n%s", got["event"], raw)
+	}
+}
+
 func TestLog_WritesJSONLAndPretty(t *testing.T) {
 	dir := t.TempDir()
 	pretty := &bytes.Buffer{}

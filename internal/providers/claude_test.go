@@ -46,6 +46,17 @@ func TestClaudeParseLineErrorResult(t *testing.T) {
 	}
 }
 
+func TestClaudeParseLineUsage(t *testing.T) {
+	events := (Claude{}).ParseLine(`{"type":"result","subtype":"success","result":"done","usage":{"input_tokens":120,"cache_creation_input_tokens":30,"cache_read_input_tokens":40,"output_tokens":50}}`)
+	if len(events) != 2 || events[0].Type != EventUsage || events[1].Type != EventResult {
+		t.Fatalf("events = %#v", events)
+	}
+	usage := events[0].Usage
+	if usage["input_tokens"] != 120 || usage["cache_creation_input_tokens"] != 30 || usage["cached_input_tokens"] != 40 || usage["output_tokens"] != 50 {
+		t.Fatalf("usage = %#v", usage)
+	}
+}
+
 func TestClaudeParseLineAssistantBlocks(t *testing.T) {
 	events := (Claude{}).ParseLine(`{"type":"assistant","message":{"content":[{"type":"text","text":"hello"},{"type":"tool_use","name":"Bash","input":{"command":"go test ./..."}}]}}`)
 	if len(events) != 2 {

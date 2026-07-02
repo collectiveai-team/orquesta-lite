@@ -23,7 +23,7 @@ type FlowOptions struct {
 // to the same RoleInvoker (fallback / rate-limit / health / sessions / memory)
 // used by the live `run`/`factory` commands, so flows.json gets the production
 // behaviour without reimplementing it.
-func RunFlow(ctx context.Context, opts FlowOptions) error {
+func RunFlow(ctx context.Context, opts FlowOptions) (err error) {
 	if opts.FlowName == "" {
 		return fmt.Errorf("flow: a flow name is required")
 	}
@@ -45,11 +45,13 @@ func RunFlow(ctx context.Context, opts FlowOptions) error {
 		TeamPath:   opts.TeamPath,
 		LogFormat:  opts.LogFormat,
 		Roles:      flowReferencedRoles(&flow),
+		Command:    "flow:" + opts.FlowName,
 	})
 	if err != nil {
 		return err
 	}
 	defer cleanup()
+	defer markRunStatus(ctx, deps, &err)
 
 	inputs, err := parseInputArgs(opts.InputArgs)
 	if err != nil {

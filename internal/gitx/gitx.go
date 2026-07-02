@@ -148,6 +148,25 @@ func DiffRefs(dir, base, head string) (string, error) {
 	return run(dir, "diff", "--no-color", base, head)
 }
 
+// DiffWorktree returns the whole pending work-tree diff vs HEAD: modifications
+// to tracked files PLUS brand-new untracked files. `git add -A -N` (intent-to-
+// add) registers untracked files so they appear in `git diff HEAD` without
+// actually staging them, so the caller's index is left untouched. Returns "" on
+// a clean tree. Non-repo dirs return "" (no-op, like the other helpers).
+func DiffWorktree(dir string) (string, error) {
+	if !IsRepo(dir) {
+		return "", nil
+	}
+	if _, err := run(dir, "add", "-A", "-N"); err != nil {
+		return "", err
+	}
+	out, err := run(dir, "diff", "--no-color", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	return out, nil
+}
+
 // ShowCommit returns one commit's message, diffstat, and full patch, as the
 // dashboard surfaces per-task changes. The caller must validate sha (it is
 // passed straight to git); a leading "-" would otherwise look like a flag.

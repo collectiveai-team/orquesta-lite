@@ -91,6 +91,11 @@ type TaskDeps interface {
 	// RouteEvent emits an observability event recording which squad a task was
 	// routed to. Called once per task, after the no-generalist fallback is resolved.
 	RouteEvent(taskID, squad string)
+	// LogEvent emits a structured event to the run log (eventlog). The loops use
+	// it for structural lifecycle events (task_start, task_failed, cycle_start,
+	// cycle_end) that the dashboard and the SQLite projection key off. An
+	// implementation that does nothing is safe (events are observability-only).
+	LogEvent(name string, fields map[string]any)
 }
 
 // commitTask commits the task's work and sets its VerifyState/Status. It treats
@@ -113,6 +118,7 @@ func commitTask(ctx context.Context, d TaskDeps, t *tasks.Task) bool {
 		t.FailureReason = &r
 		t.VerifyState = tasks.VerifyCommitRejected
 		t.LastFeedback = strPtr(commitErr.Error())
+		emitTaskFailed(d, t)
 		return false
 	}
 	t.Status = tasks.StatusDone
@@ -147,6 +153,7 @@ func RunTaskLoopWithContext(ctx context.Context, tl *tasks.TaskList, d TaskDeps,
 				t.Status = tasks.StatusNeedsClarification
 				t.LastFeedback = &v.Reason
 				_ = d.SaveTasks(ctx, tl)
+				emitTaskFailed(d, t)
 				continue
 			}
 		}
@@ -159,6 +166,12 @@ func RunTaskLoopWithContext(ctx context.Context, tl *tasks.TaskList, d TaskDeps,
 		taskRC.TaskID = taskID
 
 		squad := t.SquadOrDefault()
+		d.LogEvent("task_start", map[string]any{
+			"task_id": taskID,
+			"title":   t.Title,
+			"squad":   squad,
+			"attempt": t.Attempts,
+		})
 		if squad == tasks.SquadGeneric && !d.HasRole("generalist") {
 			squad = tasks.SquadFull // no generalist configured: use the full lane
 		}
@@ -179,6 +192,7 @@ func RunTaskLoopWithContext(ctx context.Context, tl *tasks.TaskList, d TaskDeps,
 				t.LastFeedback = strPtr(out.Summary)
 				_ = d.Rollback(ctx)
 				_ = d.SaveTasks(ctx, tl)
+				emitTaskFailed(d, t)
 				continue
 			}
 			if !commitTask(ctx, d, t) {
@@ -260,6 +274,7 @@ func RunTaskLoopWithContext(ctx context.Context, tl *tasks.TaskList, d TaskDeps,
 				t.FailureReason = &r
 				t.LastFeedback = strPtr(fx.LastFeedback)
 				_ = d.SaveTasks(ctx, tl)
+				emitTaskFailed(d, t)
 				continue
 			}
 			// Re-acquire in case Decompose triggered any slice growth.
@@ -273,6 +288,7 @@ func RunTaskLoopWithContext(ctx context.Context, tl *tasks.TaskList, d TaskDeps,
 			t.FailureReason = &r
 			_ = d.Rollback(ctx)
 			_ = d.SaveTasks(ctx, tl)
+			emitTaskFailed(d, t)
 			continue
 		}
 
@@ -284,6 +300,7 @@ func RunTaskLoopWithContext(ctx context.Context, tl *tasks.TaskList, d TaskDeps,
 			t.LastFeedback = strPtr(err.Error())
 			_ = d.Rollback(ctx)
 			_ = d.SaveTasks(ctx, tl)
+			emitTaskFailed(d, t)
 			continue
 		}
 		t.VerifyState = tasks.VerifyTestsPass
@@ -302,4 +319,20 @@ func strPtr(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// emitTaskFailed records a task_failed lifecycle event so the dashboard and the
+// SQLite projection can mark a task as failed on the timeline. reason is the
+// failure_reason enum (max_iterations, agent_repeated_failure, full_suite_failed,
+// commit_rejected, …). No-op for deps whose LogEvent discards.
+func emitTaskFailed(d TaskDeps, t *tasks.Task) {
+	reason := ""
+	if t.FailureReason != nil {
+		reason = string(*t.FailureReason)
+	}
+	d.LogEvent("task_failed", map[string]any{
+		"task_id":        t.ID,
+		"failure_reason": reason,
+		"attempts":       t.Attempts,
+	})
 }

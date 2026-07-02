@@ -42,6 +42,7 @@ func RunReviewLoop(ctx context.Context, tl *tasks.TaskList, cfg ReviewConfig, d 
 			return err
 		}
 		rc := invoke.RunContext{Cycle: cycle, Attempt: 1, CycleBaseSHA: cycleBaseSHA}
+		d.LogEvent("cycle_start", map[string]any{"cycle": cycle})
 		if err := RunTaskLoopWithContext(ctx, tl, d, rc); err != nil {
 			return err
 		}
@@ -74,7 +75,14 @@ func RunReviewLoop(ctx context.Context, tl *tasks.TaskList, cfg ReviewConfig, d 
 		tl.Append(newOnes, cycle)
 		_ = d.SaveTasks(ctx, tl)
 
-		if rev.ShouldStop != nil && *rev.ShouldStop {
+		shouldStop := rev.ShouldStop != nil && *rev.ShouldStop
+		d.LogEvent("cycle_end", map[string]any{
+			"cycle":                cycle,
+			"new_tasks_proposed":   len(rev.NewTasks),
+			"reviewer_should_stop": shouldStop,
+		})
+
+		if shouldStop {
 			return nil
 		}
 		if !tl.AnyPending() && len(rev.NewTasks) == 0 {

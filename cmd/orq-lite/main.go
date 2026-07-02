@@ -24,6 +24,7 @@ func main() {
 	cmd := os.Args[1]
 	args := os.Args[2:]
 	ctx := context.Background()
+	commands.Version = version
 
 	switch cmd {
 	case "init":

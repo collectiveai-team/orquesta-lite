@@ -62,11 +62,18 @@ func (Claude) ParseLine(line string) []Event {
 	}
 
 	if obj["type"] == "result" {
+		events := []Event{}
+		if usage, ok := parseClaudeUsage(obj["usage"]); ok {
+			events = append(events, Event{Type: EventUsage, Usage: usage})
+		}
 		if result, ok := obj["result"].(string); ok {
 			if isClaudeErrorResult(obj) {
-				return []Event{{Type: EventError, Result: result}}
+				return append(events, Event{Type: EventError, Result: result})
 			}
-			return []Event{{Type: EventResult, Result: result}}
+			return append(events, Event{Type: EventResult, Result: result})
+		}
+		if len(events) > 0 {
+			return events
 		}
 	}
 
@@ -81,6 +88,24 @@ func (Claude) ParseLine(line string) []Event {
 	}
 
 	return nil
+}
+
+func parseClaudeUsage(raw any) (map[string]int, bool) {
+	obj, ok := raw.(map[string]any)
+	if !ok {
+		return nil, false
+	}
+
+	usage := map[string]int{}
+	copyTokenField(usage, obj, "input_tokens", "input_tokens")
+	copyTokenField(usage, obj, "output_tokens", "output_tokens")
+	copyTokenField(usage, obj, "cache_read_input_tokens", "cached_input_tokens")
+	copyTokenField(usage, obj, "cache_creation_input_tokens", "cache_creation_input_tokens")
+
+	if len(usage) == 0 {
+		return nil, false
+	}
+	return usage, true
 }
 
 func isClaudeErrorResult(obj map[string]any) bool {

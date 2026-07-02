@@ -85,6 +85,33 @@ func TestGameboardServed(t *testing.T) {
 	}
 }
 
+func TestAPIAttemptDiff_ServesArtifactFromAgentDiffEvent(t *testing.T) {
+	dir := stateDir(t)
+	artifactsDir := filepath.Join(dir, ".orquestalite", "runs", "r20260701T120000Z-abcd", "agents", "T001", "coder.c1.a2")
+	if err := os.MkdirAll(artifactsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wantDiff := "diff --git a/x.txt b/x.txt\n+hello\n"
+	if err := os.WriteFile(filepath.Join(artifactsDir, "attempt.diff"), []byte(wantDiff), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	logLine := `{"event":"agent_diff","task_id":"T001","role":"coder","cycle":1,"attempt":2,"artifacts_dir":".orquestalite/runs/r20260701T120000Z-abcd/agents/T001/coder.c1.a2"}` + "\n"
+	if err := os.WriteFile(filepath.Join(dir, ".orquestalite", "run.log"), []byte(logLine), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := &Server{Dir: dir}
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest("GET", "/api/attempt-diff/T001/coder/1/2", nil))
+	if rec.Code != 200 {
+		t.Fatalf("code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"available":true`) || !strings.Contains(body, `+hello`) {
+		t.Fatalf("unexpected body: %s", body)
+	}
+}
+
 func TestAPIResult_ServesRoleFile(t *testing.T) {
 	dir := stateDir(t)
 	resultsDir := filepath.Join(dir, ".orquestalite", "results")

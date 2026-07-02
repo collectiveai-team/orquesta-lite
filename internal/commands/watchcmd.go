@@ -51,15 +51,22 @@ func Watch(ctx context.Context, opts WatchOptions) error {
 		}
 	}
 
-	lister := &ghLister{dir: opts.ProjectDir, out: opts.Out}
+lister := &ghLister{dir: opts.ProjectDir, out: opts.Out}
+	logPath := filepath.Join(opts.ProjectDir, ".orquestalite", "run.log")
+	logger, err := eventlog.OpenWithFormat(logPath, opts.Out, opts.LogFormat)
+	if err != nil {
+		return err
+	}
+	defer logger.Close()
 	cfg := watch.Config{
 		ProjectDir:   opts.ProjectDir,
-		Interval:     opts.Interval,
-		Enabled:      enabled,
+		Interval:    opts.Interval,
+		Enabled:     enabled,
 		ReviewOwnPRs: opts.ReviewOwnPRs,
-		Lister:       lister,
-		Intake:       newIntakeTrigger(opts, lister),
-		Review:       newReviewTrigger(opts),
+		Lister:      lister,
+		Intake:      newIntakeTrigger(opts, lister),
+		Review:      newReviewTrigger(opts),
+		Log:         logger,
 	}
 	fmt.Fprintf(opts.Out, "watch: %s — enabled: %s — interval %s\n",
 		opts.ProjectDir, summaryOfEnabled(enabled), intervalLabel(cfg.Interval))

@@ -66,9 +66,22 @@ func TestGeminiParseLineEvents(t *testing.T) {
 		t.Fatalf("warnings should be ignored, got %#v", events)
 	}
 
-	events = p.ParseLine(`{"type":"result","status":"success","stats":{"total_tokens":10}}`)
-	if len(events) != 1 || events[0].Type != EventResult || events[0].Result != "hello world" {
+	events = p.ParseLine(`{"type":"result","status":"success","stats":{"input_tokens":7,"output_tokens":3,"total_tokens":10}}`)
+	if len(events) != 2 || events[0].Type != EventUsage || events[1].Type != EventResult || events[1].Result != "hello world" {
 		t.Fatalf("result events = %#v", events)
+	}
+	if events[0].Usage["input_tokens"] != 7 || events[0].Usage["output_tokens"] != 3 {
+		t.Fatalf("usage = %#v", events[0].Usage)
+	}
+}
+
+func TestGeminiParseLineUsageMetadata(t *testing.T) {
+	events := (&Gemini{}).ParseLine(`{"type":"result","status":"success","usage_metadata":{"promptTokenCount":11,"candidatesTokenCount":13,"totalTokenCount":24}}`)
+	if len(events) != 2 || events[0].Type != EventUsage || events[1].Type != EventResult {
+		t.Fatalf("events = %#v", events)
+	}
+	if events[0].Usage["input_tokens"] != 11 || events[0].Usage["output_tokens"] != 13 {
+		t.Fatalf("usage = %#v", events[0].Usage)
 	}
 }
 

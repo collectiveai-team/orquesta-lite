@@ -22,9 +22,17 @@ plan*.md
 team.json
 prompts/
 schemas/
+flows.json
 
 # examples ship complete, runnable configs — the repo-wide team.json / prompts/
 # ignores above must not swallow the bundled example configs and role prompts
 !examples/**/team.json
 !examples/**/prompts/
 !examples/**/prompts/**
+
+# the embedded assets that `orq-lite init` scaffolds from are part of the binary,
+# not runtime-generated dogfooding config — keep them trackable despite the
+# repo-wide prompts/, schemas/, and flows.json ignores.
+!internal/commands/assets/prompts/
+!internal/commands/assets/prompts/**
+!internal/commands/assets/flows.json

@@ -15,17 +15,19 @@ import (
 // PlanWithLiveCaller is a convenience wrapper that wires up the real subprocess
 // agent machinery (same as Run does) and delegates to Plan. The team.json is
 // looked up at <projectDir>/team.json.
-func PlanWithLiveCaller(ctx context.Context, projectDir, planPath string, appendMode bool) error {
+func PlanWithLiveCaller(ctx context.Context, projectDir, planPath string, appendMode bool) (err error) {
 	teamPath := filepath.Join(projectDir, "team.json")
 	deps, cleanup, err := newLiveDeps(liveDepsOptions{
 		ProjectDir: projectDir,
 		TeamPath:   teamPath,
 		Roles:      []string{"parser"},
+		Command:    "plan",
 	})
 	if err != nil {
 		return err
 	}
 	defer cleanup()
+	defer markRunStatus(ctx, deps, &err)
 
 	if err := Plan(ctx, projectDir, planPath, appendMode, deps); err != nil {
 		return err

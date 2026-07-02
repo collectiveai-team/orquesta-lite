@@ -1,3 +1,4 @@
+> _Archivado: plan histórico completado. Preservado para referencia._
 # Production upgrade — feat/production-factory
 
 Goal: production-level orquestalite — better loop quality (close the "tests pass

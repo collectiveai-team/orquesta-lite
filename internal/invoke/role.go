@@ -10,9 +10,11 @@ import (
 	"time"
 
 	"github.com/lionelchamorro/orquestalite/internal/agenthealth"
+	"github.com/lionelchamorro/orquestalite/internal/artifacts"
 	"github.com/lionelchamorro/orquestalite/internal/config"
 	"github.com/lionelchamorro/orquestalite/internal/eventlog"
 	"github.com/lionelchamorro/orquestalite/internal/fallback"
+	"github.com/lionelchamorro/orquestalite/internal/gitx"
 	"github.com/lionelchamorro/orquestalite/internal/memory"
 	"github.com/lionelchamorro/orquestalite/internal/prompts"
 	"github.com/lionelchamorro/orquestalite/internal/providers"
@@ -81,6 +83,15 @@ type RoleInvoker struct {
 	// the digest is already compact) reads as result_missing, trips the circuit
 	// breaker, and skips its agents for the rest of the run.
 	BestEffortRoles map[string]bool
+	// Artifacts, when set, persists the full prompt + stdout + stderr + meta
+	// of every agent invocation under .orquestalite/runs/<run_id>/agents/. Nil
+	// disables persistence (compat for callers that do not need it).
+	Artifacts *artifacts.Store
+	// CodeWritingRoles is the set of roles whose work mutates the work tree and
+	// therefore should have a per-attempt diff captured into the artifacts dir
+	// (attempt.diff) and surfaced as an agent_diff event. Defaults to coder and
+	// generalist when nil.
+	CodeWritingRoles map[string]bool
 }
 
 type RoleCall struct {
@@ -336,7 +347,8 @@ func (inv *RoleInvoker) run(ctx context.Context, roleName string, role config.Ro
 				_ = inv.Sessions.Delete(key, roleName, agentName)
 			}
 		}
-		inv.logAgentRun(roleName, agentName, ag, spec, r, fallbackReason, rc)
+		artifactsDir := inv.saveArtifacts(roleName, agentName, ag, spec, prompt, r, rc)
+		inv.logAgentRun(roleName, agentName, ag, spec, r, fallbackReason, rc, artifactsDir)
 
 		out := fallback.Outcome{
 			RateLimited:    r.RateLimited,
@@ -439,7 +451,7 @@ func (inv *RoleInvoker) recordHealth(roleName, agentName string, shouldFallback 
 	}
 }
 
-func (inv *RoleInvoker) logAgentRun(roleName, agentName string, ag config.AgentSpec, spec runner.Spec, r *runner.Result, fallbackReason string, rc RunContext) {
+func (inv *RoleInvoker) logAgentRun(roleName, agentName string, ag config.AgentSpec, spec runner.Spec, r *runner.Result, fallbackReason string, rc RunContext, artifactsDir string) {
 	if inv.Log == nil {
 		return
 	}
@@ -462,6 +474,22 @@ func (inv *RoleInvoker) logAgentRun(roleName, agentName string, ag config.AgentS
 		"stderr_tail":      r.StderrTail(2048),
 		"stdout_tail":      r.StdoutTail(2048),
 		"fallback_reason":  fallbackReason,
+	}
+	if artifactsDir != "" {
+		fields["artifacts_dir"] = artifactsDir
+	}
+	usage := usageTotals(r)
+	if usage.Input > 0 {
+		fields["input_tokens"] = usage.Input
+	}
+	if usage.Output > 0 {
+		fields["output_tokens"] = usage.Output
+	}
+	if usage.CachedInput > 0 {
+		fields["cached_input_tokens"] = usage.CachedInput
+	}
+	if usage.Reasoning > 0 {
+		fields["reasoning_tokens"] = usage.Reasoning
 	}
 	if spec.ResumeSessionID != "" {
 		fields["resumed"] = true
@@ -486,6 +514,93 @@ func selectAgents(role config.RoleSpec, override string) ([]config.AgentSpec, er
 		}
 	}
 	return nil, fmt.Errorf("agent override %q is not configured for role", override)
+}
+
+// writesCode reports whether roleName is one whose output mutates the work tree.
+func (inv *RoleInvoker) writesCode(roleName string) bool {
+	if inv.CodeWritingRoles == nil {
+		return roleName == "coder" || roleName == "generalist"
+	}
+	return inv.CodeWritingRoles[roleName]
+}
+
+// captureDiff returns the accumulated work-tree diff for this run against the
+// cycle base (when known) — covering committed tasks in the cycle plus the
+// current pending changes — falling back to the pending work-tree diff vs HEAD.
+// "" on a clean tree or non-repo.
+func (inv *RoleInvoker) captureDiff(rc RunContext) (string, error) {
+	if rc.CycleBaseSHA != "" {
+		return gitx.DiffRefs(inv.Dir, rc.CycleBaseSHA, "HEAD")
+	}
+	return gitx.DiffWorktree(inv.Dir)
+}
+
+// diffStats summarises a `git diff` blob into file count, insertions, deletions.
+func diffStats(diff string) (files, insertions, deletions int) {
+	for _, line := range strings.Split(diff, "\n") {
+		switch {
+		case strings.HasPrefix(line, "+++ ") && !strings.HasPrefix(line, "+++ /dev/null"):
+			files++
+		case strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++"):
+			insertions++
+		case strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---"):
+			deletions++
+		}
+	}
+	return
+}
+
+// saveArtifacts persists the full prompt + stdout + stderr + meta.json for one
+// agent invocation and returns the project-relative artifacts_dir (for the
+// agent_run event) — "" when artifacts are disabled. Failures are best-effort:
+// a missing dir is non-fatal so trace artifacts never gate the run.
+func (inv *RoleInvoker) saveArtifacts(roleName, agentName string, ag config.AgentSpec, spec runner.Spec, prompt string, r *runner.Result, rc RunContext) string {
+	if inv.Artifacts == nil {
+		return ""
+	}
+	dir, err := inv.Artifacts.Dir(rc.TaskID, roleName, rc.Cycle, rc.Attempt)
+	if err != nil || dir == "" {
+		return ""
+	}
+	cmdLine := redactedCmdLine(ag.Cmd, spec.TemplateVars)
+	invocation := artifacts.Invocation{
+		Prompt:    prompt,
+		Stdout:    r.Stdout,
+		Stderr:    r.Stderr,
+		Agent:     agentName,
+		Model:     ag.Model,
+		Provider:  ag.Provider,
+		DurationS: int(r.Duration.Seconds()),
+		ExitCode:  r.ExitCode,
+		SessionID: r.SessionID,
+		CmdLine:   cmdLine,
+	}
+	if sErr := inv.Artifacts.SaveInvocation(dir, invocation); sErr != nil {
+		// Best-effort: log to stderr but never fail the run over trace capture.
+		fmt.Fprintf(os.Stderr, "warning: artifacts save %s: %v\n", dir, sErr)
+		return ""
+	}
+	relDir := artifacts.RelativeDir(dir, inv.Dir)
+	// Code-writing roles get a per-attempt diff captured alongside the prompt/
+	// stdout/stderr so the exact change an attempt made is recoverable. An
+	// agent_diff event lets the dashboard link the diff to the invocation.
+	if inv.writesCode(roleName) && inv.Log != nil {
+		if diff, dErr := inv.captureDiff(rc); dErr == nil && diff != "" {
+			_ = os.WriteFile(filepath.Join(dir, "attempt.diff"), []byte(diff), 0o644)
+			files, ins, del := diffStats(diff)
+			inv.Log.Log(eventlog.Event{Type: "agent_diff", Fields: map[string]any{
+				"task_id":       rc.TaskID,
+				"role":          roleName,
+				"attempt":       rc.Attempt,
+				"cycle":         rc.Cycle,
+				"files_changed": files,
+				"insertions":    ins,
+				"deletions":     del,
+				"artifacts_dir": relDir,
+			}})
+		}
+	}
+	return relDir
 }
 
 func absPath(dir, path string) string {
@@ -564,4 +679,29 @@ func toolCallsCount(res *runner.Result) int {
 		}
 	}
 	return count
+}
+
+type usageSummary struct {
+	Input       int
+	Output      int
+	CachedInput int
+	Reasoning   int
+}
+
+func usageTotals(res *runner.Result) usageSummary {
+	var out usageSummary
+	for _, ev := range res.Events {
+		if ev.Type != providers.EventUsage {
+			continue
+		}
+		out.Input += ev.Usage["input_tokens"]
+		out.Output += ev.Usage["output_tokens"]
+		out.CachedInput += ev.Usage["cached_input_tokens"]
+		out.CachedInput += ev.Usage["cache_read_tokens"]
+		out.CachedInput += ev.Usage["cache_creation_input_tokens"]
+		out.CachedInput += ev.Usage["cache_write_tokens"]
+		out.Reasoning += ev.Usage["reasoning_tokens"]
+	}
+	out.Input += out.CachedInput
+	return out
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/lionelchamorro/orquestalite/internal/config"
 	"github.com/lionelchamorro/orquestalite/internal/eventlog"
 	"github.com/lionelchamorro/orquestalite/internal/fallback"
+	"github.com/lionelchamorro/orquestalite/internal/providers"
 	"github.com/lionelchamorro/orquestalite/internal/runner"
 	"github.com/lionelchamorro/orquestalite/internal/sessions"
 )
@@ -39,6 +40,28 @@ func (r *fakeAgentRunner) Run(_ context.Context, spec runner.Spec) (*runner.Resu
 		return nil, err
 	}
 	return &runner.Result{ResultExists: true, ExitCode: 0, Duration: time.Second}, nil
+}
+
+type usageAgentRunner struct{}
+
+func (usageAgentRunner) Run(_ context.Context, spec runner.Spec) (*runner.Result, error) {
+	if err := os.MkdirAll(filepath.Dir(spec.ResultPath), 0o755); err != nil {
+		return nil, err
+	}
+	if err := os.WriteFile(spec.ResultPath, []byte(`{"status":"ok"}`), 0o644); err != nil {
+		return nil, err
+	}
+	return &runner.Result{
+		ResultExists: true,
+		ExitCode:     0,
+		Duration:     time.Second,
+		Events: []providers.Event{{Type: providers.EventUsage, Usage: map[string]int{
+			"input_tokens":                100,
+			"cache_creation_input_tokens": 25,
+			"cached_input_tokens":         10,
+			"output_tokens":               40,
+		}}},
+	}, nil
 }
 
 func TestRoleRunsArchivesParsesAndAppendsMemory(t *testing.T) {
@@ -123,6 +146,66 @@ func TestRoleRunsArchivesParsesAndAppendsMemory(t *testing.T) {
 	mem := string(memRaw)
 	if !strings.Contains(mem, "## [cycle 4, task T123, tester]") || !strings.Contains(mem, "remember this") {
 		t.Fatalf("memory note not appended with run context: %q", mem)
+	}
+}
+
+func TestRunOnceLogsUsageTokens(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "prompts", "tester.md"), []byte("prompt"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(dir, ".orquestalite", "run.log")
+	logger, err := eventlog.Open(logPath, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer logger.Close()
+
+	inv := &RoleInvoker{
+		Specs: map[string]config.RoleSpec{
+			"tester": {
+				Agents: []config.AgentSpec{{
+					Name:     "agent1",
+					Provider: "claude",
+					Model:    "claude-sonnet-4-6",
+				}},
+				PromptPath: "prompts/tester.md",
+				ResultPath: ".orquestalite/results/tester.json",
+				Timeout:    time.Minute,
+			},
+		},
+		Dir:      dir,
+		Fallback: fallback.NewCaller(fallback.Config{InitialBackoff: time.Millisecond, Factor: 2, MaxBackoff: time.Millisecond}),
+		Log:      logger,
+		MemPath:  filepath.Join(dir, ".orquestalite", "memory.md"),
+		Runner:   usageAgentRunner{},
+	}
+
+	if err := inv.RunOnce(context.Background(), "tester", RoleCall{}, RunContext{TaskID: "T999", Attempt: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := logger.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ev struct {
+		Event             string `json:"event"`
+		InputTokens       int    `json:"input_tokens"`
+		CachedInputTokens int    `json:"cached_input_tokens"`
+		OutputTokens      int    `json:"output_tokens"`
+	}
+	if err := json.Unmarshal(raw, &ev); err != nil {
+		t.Fatalf("parse log %q: %v", raw, err)
+	}
+	if ev.Event != "agent_run" || ev.InputTokens != 135 || ev.CachedInputTokens != 35 || ev.OutputTokens != 40 {
+		t.Fatalf("event = %+v; raw=%s", ev, raw)
 	}
 }
 

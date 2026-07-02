@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/lionelchamorro/orquestalite/internal/config"
+	"github.com/lionelchamorro/orquestalite/internal/engine"
 )
 
 func TestInit_CreatesScaffolding(t *testing.T) {
@@ -161,6 +164,66 @@ func TestInit_MaterialisesDecomposePrompt(t *testing.T) {
 // The warning behaviour is covered by manual testing and code review.
 func TestInit_WarnsWhenCodexMissing(t *testing.T) {
 	t.Skip("exec.LookPath cannot be cleanly stubbed without injecting the lookup function; skipped by design")
+}
+
+// TestInitScaffoldsFlows verifies that Init writes a flows.json that parses via
+// engine.LoadFlows and contains the bundled default flows (at least `factory`
+// and `factory_fast`), so `orq-lite flow run <name>` works out of the box.
+func TestInitScaffoldsFlows(t *testing.T) {
+	dir := t.TempDir()
+	if err := Init(dir); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "flows.json")
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("flows.json not scaffolded: %v", err)
+	}
+	flows, err := engine.LoadFlows(path)
+	if err != nil {
+		t.Fatalf("scaffolded flows.json does not parse: %v", err)
+	}
+	for _, name := range []string{"factory", "factory_fast"} {
+		if _, ok := flows.Flows[name]; !ok {
+			t.Errorf("scaffolded flows.json missing default flow %q; has %v", name, flowNames(flows.Flows))
+		}
+	}
+}
+
+func flowNames(m map[string]engine.Flow) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
+// TestInitScaffoldsEveryRolePrompt verifies that every role declared in the
+// scaffolded team.json has its prompt file materialised on disk. This prevents
+// regressions of the intake.md bug: team.json referenced prompts/intake.md but
+// assets/prompts/ was missing it, so init scaffolded a project where doctor,
+// intake and watch --issues broke.
+func TestInitScaffoldsEveryRolePrompt(t *testing.T) {
+	dir := t.TempDir()
+	if err := Init(dir); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := config.Load(filepath.Join(dir, "team.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Roles) == 0 {
+		t.Fatal("scaffolded team.json declares no roles")
+	}
+	for name, role := range cfg.Roles {
+		if role.Prompt == "" {
+			t.Errorf("role %s: empty prompt path", name)
+			continue
+		}
+		p := filepath.Join(dir, role.Prompt)
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("role %s: prompt %s not scaffolded: %v", name, role.Prompt, err)
+		}
+	}
 }
 
 // TestInit_InitialisesGitRepo verifies that Init runs `git init` and creates

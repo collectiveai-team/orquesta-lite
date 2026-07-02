@@ -1,3 +1,4 @@
+> _Archivado: plan histórico completado. Preservado para referencia._
 # Rollback safety — Option B (reset-to-base + targeted untracked removal)
 
 ## Goal

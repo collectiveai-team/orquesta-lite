@@ -30,6 +30,7 @@ type stubTaskDeps struct {
 	fullSuiteCalls     int
 	lastDecomposeFiles []string // captures filesChangedSoFar passed to Decompose
 	routeEvents        []string // records taskID+":"+squad from RouteEvent calls
+	events             []string // structured lifecycle events emitted via LogEvent
 }
 
 func (s *stubTaskDeps) PreflightEnabled() bool { return s.preflightEnabled }
@@ -82,6 +83,13 @@ func (s *stubTaskDeps) Handoff(ctx context.Context, t *tasks.Task) (string, erro
 }
 func (s *stubTaskDeps) RouteEvent(taskID, squad string) {
 	s.routeEvents = append(s.routeEvents, taskID+":"+squad)
+}
+
+// events records the structured lifecycle events (task_start, task_failed,
+// cycle_start, cycle_end) the loops emit via LogEvent, so tests assert the
+// timeline shape.
+func (s *stubTaskDeps) LogEvent(name string, fields map[string]any) {
+	s.events = append(s.events, name)
 }
 
 func TestTaskLoop_HappyPath(t *testing.T) {

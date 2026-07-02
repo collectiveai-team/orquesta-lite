@@ -21,15 +21,17 @@ func TestRunsFromLog(t *testing.T) {
 {"event":"task_done","task_id":"T001"}
 not json at all
 {"event":"agent_run","ts":"2026-06-11T10:05:00Z","task_id":"T001","role":"tester","agent":"a1","session_id":"s2"}
-{"event":"agent_run","ts":"2026-06-11T10:06:00Z","task_id":"T002","role":"coder","agent":"a1"}
+{"event":"agent_run","ts":"2026-06-11T10:06:00Z","task_id":"T002","role":"coder","agent":"a1","provider":"claude","model":"claude-sonnet-4-6","input_tokens":200,"output_tokens":20}
 `)
 	runs, err := RunsFromLog(p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Third agent_run has no session_id and is skipped.
-	if len(runs) != 2 || runs[0].SessionID != "s1" || runs[1].Role != "tester" {
+	if len(runs) != 3 || runs[0].SessionID != "s1" || runs[1].Role != "tester" {
 		t.Fatalf("runs = %+v", runs)
+	}
+	if runs[2].SessionID != "" || runs[2].Model != "claude-sonnet-4-6" || runs[2].InputTok != 200 || runs[2].OutputTok != 20 {
+		t.Fatalf("third run = %+v", runs[2])
 	}
 }
 
@@ -50,25 +52,30 @@ func sessionsFixture() map[string]Session {
 func TestRollup(t *testing.T) {
 	runs := []AgentRun{
 		{TaskID: "T001", SessionID: "s1"},
-		{TaskID: "T001", SessionID: "s2"},
-		{TaskID: "T002", SessionID: "unknown"},
+		{TaskID: "T001", SessionID: "s2", InputTok: 20, OutputTok: 5},
+		{TaskID: "T002", Model: "claude-sonnet-4-6", InputTok: 1000, OutputTok: 100},
+		{TaskID: "T003", SessionID: "unknown"},
 	}
 	rep := Rollup(runs, sessionsFixture())
-	if len(rep.Tasks) != 2 {
+	if len(rep.Tasks) != 3 {
 		t.Fatalf("tasks = %+v", rep.Tasks)
 	}
 	t1 := rep.Tasks[0]
 	if t1.TaskID != "T001" || t1.Runs != 2 || t1.Priced != 2 || t1.TotalUSD != 0.75 {
 		t.Errorf("t1 = %+v", t1)
 	}
-	if t1.InputTok != 1040 || t1.OutputTok != 60 {
+	if t1.InputTok != 1020 || t1.OutputTok != 55 {
 		t.Errorf("t1 tokens = %+v", t1)
 	}
 	t2 := rep.Tasks[1]
-	if t2.Runs != 1 || t2.Priced != 0 || t2.TotalUSD != 0 {
+	if t2.Runs != 1 || t2.Priced != 1 || t2.TotalUSD == 0 {
 		t.Errorf("t2 = %+v", t2)
 	}
-	if rep.TotalUSD != 0.75 || rep.Runs != 3 || rep.Priced != 2 {
+	t3 := rep.Tasks[2]
+	if t3.Runs != 1 || t3.Priced != 0 || t3.TotalUSD != 0 {
+		t.Errorf("t3 = %+v", t3)
+	}
+	if rep.TotalUSD <= 0.75 || rep.Runs != 4 || rep.Priced != 3 {
 		t.Errorf("report = %+v", rep)
 	}
 }

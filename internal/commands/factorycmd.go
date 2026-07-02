@@ -164,6 +164,7 @@ func extractFeaturesWithLLM(ctx context.Context, opts FactoryOptions, planMarkdo
 		TeamPath:   filepath.Join(opts.ProjectDir, "team.json"),
 		LogFormat:  opts.LogFormat,
 		Roles:      []string{"planner"},
+		Command:    "factory",
 	})
 	if err != nil {
 		return nil, err
@@ -419,6 +420,7 @@ func (d *liveFactoryDeps) RunFeatureFast(ctx context.Context, f factory.Feature)
 		LogFormat:  d.logFormat,
 		Roles:      staticRunPreflightRoles,
 		FeatureID:  f.ID,
+		Command:    "factory:feature",
 	})
 	if err != nil {
 		return err
@@ -455,6 +457,7 @@ func (d *liveFactoryDeps) verifyFeatureVisually(ctx context.Context, f factory.F
 		TeamPath:   filepath.Join(d.dir, "team.json"),
 		LogFormat:  d.logFormat,
 		Roles:      []string{"verifier"},
+		Command:    "factory:visual",
 	})
 	if err != nil {
 		return false, "", nil, err
@@ -591,18 +594,20 @@ func queueAllDone(q *factory.Queue) bool {
 	return len(q.Features) > 0
 }
 
-func runFactoryGlobalFinalReview(ctx context.Context, opts FactoryOptions, baseSHA string) error {
+func runFactoryGlobalFinalReview(ctx context.Context, opts FactoryOptions, baseSHA string) (err error) {
 	deps, cleanup, err := newLiveDeps(liveDepsOptions{
 		ProjectDir: opts.ProjectDir,
 		TeamPath:   filepath.Join(opts.ProjectDir, "team.json"),
 		LogFormat:  opts.LogFormat,
 		Roles:      []string{"verifier", "reviewer"},
 		FeatureID:  "_factory",
+		Command:    "factory:review",
 	})
 	if err != nil {
 		return err
 	}
 	defer cleanup()
+	defer markRunStatus(ctx, deps, &err)
 
 	rc := invoke.RunContext{TaskID: "_factory", Cycle: 1, Attempt: 1, CycleBaseSHA: baseSHA}
 	verification, err := deps.CycleVerification(ctx, rc)
