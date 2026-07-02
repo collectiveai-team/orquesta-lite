@@ -46,6 +46,63 @@ func TestIsCleanTree_TrueOnFreshRepo(t *testing.T) {
 	}
 }
 
+func TestDiffWorktree_IncludesModifiedAndUntracked(t *testing.T) {
+	gitOrSkip(t)
+	dir := initRepo(t)
+
+	// Modify a tracked file → appears in diff.
+	if err := os.WriteFile(filepath.Join(dir, "existing.txt"), []byte("init\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := exec.Command("git", "add", "existing.txt")
+	c.Dir = dir
+	if out, err := c.CombinedOutput(); err != nil {
+		t.Fatalf("git add: %v\n%s", err, out)
+	}
+	c = exec.Command("git", "commit", "-q", "-m", "add existing")
+	c.Dir = dir
+	if out, err := c.CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v\n%s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "existing.txt"), []byte("changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Add a brand-new untracked file → must also appear (intent-to-add).
+	if err := os.WriteFile(filepath.Join(dir, "new.txt"), []byte("fresh\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	diff, err := DiffWorktree(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(diff, "existing.txt") {
+		t.Errorf("modified tracked file missing from worktree diff:\n%s", diff)
+	}
+	if !strings.Contains(diff, "new.txt") {
+		t.Errorf("untracked file missing from worktree diff:\n%s", diff)
+	}
+
+	// Clean tree → empty.
+	c = exec.Command("git", "add", "-A")
+	c.Dir = dir
+	if out, err := c.CombinedOutput(); err != nil {
+		t.Fatalf("git add -A: %v\n%s", err, out)
+	}
+	c = exec.Command("git", "commit", "-q", "-m", "stage all")
+	c.Dir = dir
+	if out, err := c.CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v\n%s", err, out)
+	}
+	diff, err = DiffWorktree(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff != "" {
+		t.Errorf("expected empty diff on clean tree, got:\n%s", diff)
+	}
+}
+
 func TestIsCleanTree_FalseAfterModification(t *testing.T) {
 	gitOrSkip(t)
 	dir := initRepo(t)

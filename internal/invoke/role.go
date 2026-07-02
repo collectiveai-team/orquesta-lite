@@ -14,6 +14,7 @@ import (
 	"github.com/lionelchamorro/orquestalite/internal/config"
 	"github.com/lionelchamorro/orquestalite/internal/eventlog"
 	"github.com/lionelchamorro/orquestalite/internal/fallback"
+	"github.com/lionelchamorro/orquestalite/internal/gitx"
 	"github.com/lionelchamorro/orquestalite/internal/memory"
 	"github.com/lionelchamorro/orquestalite/internal/prompts"
 	"github.com/lionelchamorro/orquestalite/internal/providers"
@@ -86,6 +87,11 @@ type RoleInvoker struct {
 	// of every agent invocation under .orquestalite/runs/<run_id>/agents/. Nil
 	// disables persistence (compat for callers that do not need it).
 	Artifacts *artifacts.Store
+	// CodeWritingRoles is the set of roles whose work mutates the work tree and
+	// therefore should have a per-attempt diff captured into the artifacts dir
+	// (attempt.diff) and surfaced as an agent_diff event. Defaults to coder and
+	// generalist when nil.
+	CodeWritingRoles map[string]bool
 }
 
 type RoleCall struct {
@@ -497,6 +503,40 @@ func selectAgents(role config.RoleSpec, override string) ([]config.AgentSpec, er
 	return nil, fmt.Errorf("agent override %q is not configured for role", override)
 }
 
+// writesCode reports whether roleName is one whose output mutates the work tree.
+func (inv *RoleInvoker) writesCode(roleName string) bool {
+	if inv.CodeWritingRoles == nil {
+		return roleName == "coder" || roleName == "generalist"
+	}
+	return inv.CodeWritingRoles[roleName]
+}
+
+// captureDiff returns the accumulated work-tree diff for this run against the
+// cycle base (when known) — covering committed tasks in the cycle plus the
+// current pending changes — falling back to the pending work-tree diff vs HEAD.
+// "" on a clean tree or non-repo.
+func (inv *RoleInvoker) captureDiff(rc RunContext) (string, error) {
+	if rc.CycleBaseSHA != "" {
+		return gitx.DiffRefs(inv.Dir, rc.CycleBaseSHA, "HEAD")
+	}
+	return gitx.DiffWorktree(inv.Dir)
+}
+
+// diffStats summarises a `git diff` blob into file count, insertions, deletions.
+func diffStats(diff string) (files, insertions, deletions int) {
+	for _, line := range strings.Split(diff, "\n") {
+		switch {
+		case strings.HasPrefix(line, "+++ ") && !strings.HasPrefix(line, "+++ /dev/null"):
+			files++
+		case strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++"):
+			insertions++
+		case strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---"):
+			deletions++
+		}
+	}
+	return
+}
+
 // saveArtifacts persists the full prompt + stdout + stderr + meta.json for one
 // agent invocation and returns the project-relative artifacts_dir (for the
 // agent_run event) — "" when artifacts are disabled. Failures are best-effort:
@@ -527,7 +567,27 @@ func (inv *RoleInvoker) saveArtifacts(roleName, agentName string, ag config.Agen
 		fmt.Fprintf(os.Stderr, "warning: artifacts save %s: %v\n", dir, sErr)
 		return ""
 	}
-	return artifacts.RelativeDir(dir, inv.Dir)
+	relDir := artifacts.RelativeDir(dir, inv.Dir)
+	// Code-writing roles get a per-attempt diff captured alongside the prompt/
+	// stdout/stderr so the exact change an attempt made is recoverable. An
+	// agent_diff event lets the dashboard link the diff to the invocation.
+	if inv.writesCode(roleName) && inv.Log != nil {
+		if diff, dErr := inv.captureDiff(rc); dErr == nil && diff != "" {
+			_ = os.WriteFile(filepath.Join(dir, "attempt.diff"), []byte(diff), 0o644)
+			files, ins, del := diffStats(diff)
+			inv.Log.Log(eventlog.Event{Type: "agent_diff", Fields: map[string]any{
+				"task_id":       rc.TaskID,
+				"role":          roleName,
+				"attempt":       rc.Attempt,
+				"cycle":         rc.Cycle,
+				"files_changed": files,
+				"insertions":    ins,
+				"deletions":     del,
+				"artifacts_dir": relDir,
+			}})
+		}
+	}
+	return relDir
 }
 
 func absPath(dir, path string) string {
