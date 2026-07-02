@@ -1,6 +1,7 @@
 package eventdb
 
 import (
+	"compress/gzip"
 	"os"
 	"path/filepath"
 	"testing"
@@ -138,5 +139,93 @@ func TestIngest_SkipsCorruptLinesAndMissingLog(t *testing.T) {
 	}
 	if n := count(t, db, "SELECT COUNT(*) FROM events"); n != 1 {
 		t.Fatalf("events = %d, want 1 (corrupt line skipped)", n)
+	}
+}
+
+// rotate mimics eventlog.rotateLocked: gzip-copy the whole run.log into a
+// timestamped archive, then truncate run.log to zero in place.
+func rotate(t *testing.T, dir, archiveName string) {
+	t.Helper()
+	livePath := filepath.Join(dir, "run.log")
+	raw, err := os.ReadFile(livePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Create(filepath.Join(dir, archiveName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	zw := gzip.NewWriter(f)
+	if _, err := zw.Write(raw); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(livePath, 0); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestIngest_RotationLosesNothingDuplicatesNothing(t *testing.T) {
+	db, dir := newTestDB(t)
+	// 2 lines ingested live, then 2 more written, THEN rotation, then 1 new line.
+	appendLog(t, dir, lineRunStart+"\n"+lineAgentRun+"\n")
+	if err := db.Ingest(dir); err != nil {
+		t.Fatal(err)
+	}
+	appendLog(t, dir, lineTaskDone+"\n"+lineRunEnd+"\n") // not yet ingested
+	rotate(t, dir, "run-20260701T110000Z.log.gz")        // archive holds all 4
+	appendLog(t, dir, `{"ts":"2026-07-01T11:00:01Z","event":"run_start","run_id":"r2","command":"run","orq_version":"v0.2.0"}`+"\n")
+
+	if err := db.Ingest(dir); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, db, "SELECT COUNT(*) FROM events"); n != 5 {
+		t.Fatalf("events = %d, want 5 (2 live + 2 recovered from archive + 1 post-rotation)", n)
+	}
+	// Idempotent across the archive too.
+	if err := db.Ingest(dir); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, db, "SELECT COUNT(*) FROM events"); n != 5 {
+		t.Fatalf("events after re-ingest = %d, want 5", n)
+	}
+}
+
+func TestIngest_FreshDBIngestsExistingArchivesThenLive(t *testing.T) {
+	db, dir := newTestDB(t)
+	appendLog(t, dir, lineRunStart+"\n"+lineAgentRun+"\n")
+	rotate(t, dir, "run-20260701T100500Z.log.gz")
+	appendLog(t, dir, lineTaskDone+"\n"+lineRunEnd+"\n")
+
+	if err := db.Ingest(dir); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, db, "SELECT COUNT(*) FROM events"); n != 4 {
+		t.Fatalf("events = %d, want 4", n)
+	}
+}
+
+func TestIngest_MultipleRotationsWhileOffline(t *testing.T) {
+	db, dir := newTestDB(t)
+	appendLog(t, dir, lineRunStart+"\n")
+	if err := db.Ingest(dir); err != nil {
+		t.Fatal(err)
+	}
+	appendLog(t, dir, lineAgentRun+"\n")
+	rotate(t, dir, "run-20260701T110000Z.log.gz") // holds lines 1-2
+	appendLog(t, dir, lineTaskDone+"\n")
+	rotate(t, dir, "run-20260701T120000Z.log.gz") // holds line 3
+	appendLog(t, dir, lineRunEnd+"\n")
+
+	if err := db.Ingest(dir); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, db, "SELECT COUNT(*) FROM events"); n != 4 {
+		t.Fatalf("events = %d, want 4 across two archives", n)
 	}
 }
