@@ -127,6 +127,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/agent-runs", s.handleAgentRuns)
 	mux.HandleFunc("GET /api/stats/cost", s.handleCostStats)
 	mux.HandleFunc("GET /api/flows", s.handleFlows)
+	mux.HandleFunc("GET /api/doctor", s.handleDoctor)
 
 	static, err := fs.Sub(staticFS, "static")
 	if err != nil {
