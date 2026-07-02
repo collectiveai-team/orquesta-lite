@@ -389,6 +389,23 @@ model and [docs/adr/](./docs/adr/) the architecture decisions.
 
 ## Development
 
+The repository's own `team.json`, `prompts/`, and `schemas/` at the repo root
+are **runtime-generated dogfooding config** — they are gitignored and never
+committed. After a fresh clone, regenerate them with:
+
+```bash
+go build -o /tmp/orq-lite-dev ./cmd/orq-lite
+cd /path/to/this-repo   # or any target project
+/tmp/orq-lite-dev init  # scaffolds team.json / prompts/ / schemas/ from the embedded assets
+```
+
+`init` autodetects Go (sets `full_test_command: "go test ./..."`); pass
+`--precommit` to also write a `.pre-commit-config` and set `lint_command` to
+`go vet ./...` in the generated `team.json`. The single source of truth for
+these files is the embedded `internal/commands/assets/`; the repo-root copies
+are regenerated and intentionally diverge. See
+[`docs/adr/0004-embedded-assets-canonical.md`](./docs/adr/0004-embedded-assets-canonical.md).
+
 Run the test suite:
 
 ```bash
