@@ -22,6 +22,7 @@ plan*.md
 team.json
 prompts/
 schemas/
+flows.json
 
 # examples ship complete, runnable configs — the repo-wide team.json / prompts/
 # ignores above must not swallow the bundled example configs and role prompts

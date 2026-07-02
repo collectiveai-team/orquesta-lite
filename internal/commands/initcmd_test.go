@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/lionelchamorro/orquestalite/internal/config"
+	"github.com/lionelchamorro/orquestalite/internal/engine"
 )
 
 func TestInit_CreatesScaffolding(t *testing.T) {
@@ -163,6 +164,37 @@ func TestInit_MaterialisesDecomposePrompt(t *testing.T) {
 // The warning behaviour is covered by manual testing and code review.
 func TestInit_WarnsWhenCodexMissing(t *testing.T) {
 	t.Skip("exec.LookPath cannot be cleanly stubbed without injecting the lookup function; skipped by design")
+}
+
+// TestInitScaffoldsFlows verifies that Init writes a flows.json that parses via
+// engine.LoadFlows and contains the bundled default flows (at least `factory`
+// and `factory_fast`), so `orq-lite flow run <name>` works out of the box.
+func TestInitScaffoldsFlows(t *testing.T) {
+	dir := t.TempDir()
+	if err := Init(dir); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "flows.json")
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("flows.json not scaffolded: %v", err)
+	}
+	flows, err := engine.LoadFlows(path)
+	if err != nil {
+		t.Fatalf("scaffolded flows.json does not parse: %v", err)
+	}
+	for _, name := range []string{"factory", "factory_fast"} {
+		if _, ok := flows.Flows[name]; !ok {
+			t.Errorf("scaffolded flows.json missing default flow %q; has %v", name, flowNames(flows.Flows))
+		}
+	}
+}
+
+func flowNames(m map[string]engine.Flow) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }
 
 // TestInitScaffoldsEveryRolePrompt verifies that every role declared in the
