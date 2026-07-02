@@ -166,6 +166,12 @@ func main() {
 	case "doctor":
 		exit(commands.Doctor(".", os.Stdout))
 
+	case "index":
+		fs := flag.NewFlagSet("index", flag.ExitOnError)
+		rebuild := fs.Bool("rebuild", false, "delete orq.db and re-ingest the full log history")
+		_ = fs.Parse(args)
+		exit(commands.Index(".", *rebuild, os.Stdout))
+
 	case "status":
 		fs := flag.NewFlagSet("status", flag.ExitOnError)
 		watch := fs.Bool("watch", false, "refresh status every interval until Ctrl+C")
@@ -306,6 +312,7 @@ Commands:
   watch <project> [--issues] [--prs] [--interval D] poll GitHub via gh; intake new issues, review new PRs (--review-own-prs, --publish-prs)
   cost                  per-task spend rollup (run.log sessions priced via agtop)
   doctor                preflight the setup (git, team.json, CLIs, credentials) before spending
+  index [--rebuild]     build the sqlite read-model (.orquestalite/orq.db) from run.log
   status [--watch]      print tasks table (--watch refreshes until Ctrl+C)
   serve [--addr A]      web dashboard with live events (default 127.0.0.1:4173)
   log [--role R]        replay .orquestalite/run.log (--event T, --expand N, --full)
