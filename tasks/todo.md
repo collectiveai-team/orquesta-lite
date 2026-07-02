@@ -8,10 +8,10 @@ Source plan: `docs/superpowers/plans/2026-07-01-product-readiness.md`
 
 ## Fase 0 — Desbloqueos P0
 - [x] Task 1: Shippear `prompts/intake.md` embebido
-- [ ] Task 2: Destrackear config de dogfooding
-- [ ] Task 3: `init` scaffoldea `flows.json` + default flows
-- [ ] Task 4: `watch` surface errors + `run` empty task list
-- [ ] Task 5: Archivar el todo histórico
+- [x] Task 2: Destrackear config de dogfooding
+- [x] Task 3: `init` scaffoldea `flows.json` + default flows
+- [x] Task 4: `watch` surface errors + `run` empty task list
+- [x] Task 5: Archivar el todo histórico
 
 ## Fase 1 — Trazabilidad
 - [ ] Task 6: Run ID + directorio por corrida
