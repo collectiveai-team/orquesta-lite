@@ -1142,6 +1142,13 @@ func (d *liveDeps) RouteEvent(taskID, squad string) {
 	}})
 }
 
+// LogEvent emits a structured event to the run log. The loops call it for the
+// structural lifecycle events (task_start, task_failed, cycle_start, cycle_end)
+// the dashboard and the SQLite projection key off.
+func (d *liveDeps) LogEvent(name string, fields map[string]any) {
+	d.log.Log(eventlog.Event{Type: name, Fields: fields})
+}
+
 // RunSingle invokes one role once (with one retry when the agent writes no
 // result), and maps a written result file to done, an absent result after
 // retries to failed. No tester / critic / verifier loop runs; this is the lean

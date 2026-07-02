@@ -14,7 +14,7 @@ Source plan: `docs/superpowers/plans/2026-07-01-product-readiness.md`
 - [x] Task 5: Archivar el todo histórico
 
 ## Fase 1 — Trazabilidad
-- [ ] Task 6: Run ID + directorio por corrida
+- [x] Task 6: Run ID + directorio por corrida
 - [ ] Task 7: Emitir eventos fantasma del dashboard
 - [ ] Task 8: Persistir artefactos por invocación
 - [ ] Task 9: Diff por agente/intento

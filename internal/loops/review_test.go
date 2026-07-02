@@ -48,6 +48,9 @@ func (s *stubReviewDeps) HasRole(role string) bool { return s.taskDeps.HasRole(r
 func (s *stubReviewDeps) RouteEvent(taskID, squad string) {
 	s.taskDeps.RouteEvent(taskID, squad)
 }
+func (s *stubReviewDeps) LogEvent(name string, fields map[string]any) {
+	s.taskDeps.LogEvent(name, fields)
+}
 func (s *stubReviewDeps) CycleBaseSHA(ctx context.Context) (string, error) {
 	if s.cycleBaseSHA != nil {
 		return s.cycleBaseSHA()
@@ -88,6 +91,70 @@ func TestReview_StopsWhenReviewerSaysSo(t *testing.T) {
 	if len(d.cycles) != 1 {
 		t.Errorf("cycles ran = %d, want 1", len(d.cycles))
 	}
+}
+
+// TestReview_EmitsCycleLifecycleEvents verifies the loops emit the structural
+// lifecycle events the dashboard and SQLite projection key off: cycle_start →
+// (task_start … task_done) → cycle_end per cycle, in order.
+func TestReview_EmitsCycleLifecycleEvents(t *testing.T) {
+	tl := &tasks.TaskList{Tasks: []tasks.Task{{ID: "T001", Status: tasks.StatusPending, Priority: 1}}}
+	td := &stubTaskDeps{
+		fix:       func(string) *FixResult { return &FixResult{Status: FixDone, Iterations: 1} },
+		fullSuite: func() error { return nil },
+		commit:    func(string) (string, error) { return "x", nil },
+		rollback:  func() error { return nil },
+		saveTasks: func(*tasks.TaskList) error { return nil },
+	}
+	d := &stubReviewDeps{
+		taskDeps: td,
+		reviewer: func(int) results.ReviewerResult { return results.ReviewerResult{ShouldStop: boolPtr(true)} },
+	}
+	if err := RunReviewLoop(context.Background(), tl, ReviewConfig{MaxCycles: 5}, d); err != nil {
+		t.Fatal(err)
+	}
+	// Ordered lifecycle events for one cycle with one task done.
+	want := []string{"cycle_start", "task_start", "cycle_end"}
+	got := td.events
+	if len(got) < len(want) {
+		t.Fatalf("events = %v, want at least %v", got, want)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("event[%d] = %q, want %q (full: %v)", i, got[i], w, got)
+		}
+	}
+}
+
+// TestTaskLoop_EmitsTaskFailedOnFixExhaustion verifies a task that exhausts the
+// fix loop without convergence emits a task_failed event with the right reason.
+func TestTaskLoop_EmitsTaskFailedOnFixExhaustion(t *testing.T) {
+	tl := &tasks.TaskList{Tasks: []tasks.Task{{ID: "T002", Title: "hard", Status: tasks.StatusPending, Priority: 1}}}
+	td := &stubTaskDeps{
+		fix:       func(string) *FixResult { return &FixResult{Status: FixFailed, Reason: "max_iterations", Iterations: 5, LastFeedback: "nope"} },
+		fullSuite: func() error { return nil },
+		commit:    func(string) (string, error) { return "x", nil },
+		rollback:  func() error { return nil },
+		saveTasks: func(*tasks.TaskList) error { return nil },
+		hasRole:   func(string) bool { return false },
+	}
+	if err := RunTaskLoop(context.Background(), tl, td); err != nil {
+		t.Fatal(err)
+	}
+	if !containsStr(td.events, "task_start") {
+		t.Errorf("missing task_start in %v", td.events)
+	}
+	if !containsStr(td.events, "task_failed") {
+		t.Errorf("missing task_failed in %v", td.events)
+	}
+}
+
+func containsStr(xs []string, want string) bool {
+	for _, x := range xs {
+		if x == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestReview_StopsAtMaxCycles(t *testing.T) {

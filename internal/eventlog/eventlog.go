@@ -175,6 +175,17 @@ func HumanLine(e Event) string {
 	case "run_end":
 		return fmt.Sprintf("run_end %v — %v (%vs)",
 			fs(e.Fields["run_id"]), fs(e.Fields["status"]), fs(e.Fields["duration_s"]))
+	case "task_start":
+		return fmt.Sprintf("task_start %v — %v [%v] (attempt %v)",
+			fs(e.Fields["task_id"]), fs(e.Fields["title"]), fs(e.Fields["squad"]), fs(e.Fields["attempt"]))
+	case "task_failed":
+		return fmt.Sprintf("task_failed %v — %v (attempts %v)",
+			fs(e.Fields["task_id"]), fs(e.Fields["failure_reason"]), fs(e.Fields["attempts"]))
+	case "cycle_start":
+		return fmt.Sprintf("──── review cycle %v ────", fs(e.Fields["cycle"]))
+	case "cycle_end":
+		return fmt.Sprintf("cycle %v ended — new tasks: %v, should_stop: %v",
+			fs(e.Fields["cycle"]), fs(e.Fields["new_tasks_proposed"]), fs(e.Fields["reviewer_should_stop"]))
 	}
 	return fmt.Sprintf("%s %s", e.Type, summariseFields(e.Fields))
 }
