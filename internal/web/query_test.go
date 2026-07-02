@@ -126,6 +126,9 @@ func TestAPIRunEvents_LogOrderAndFilters(t *testing.T) {
 	if code := getJSON(t, srv, "/api/runs/r1/events?type=agent_run&task_id=T1", &resp); code != 200 || resp.Total != 1 {
 		t.Fatalf("filtered: code=%d resp=%+v", code, resp)
 	}
+	if code := getJSON(t, srv, "/api/runs/nonexistent/events", &resp); code != 200 || resp.Total != 0 || resp.Events == nil {
+		t.Fatalf("unknown id: code=%d resp=%+v", code, resp)
+	}
 }
 
 func TestAPIAgentRuns_FiltersAndCost(t *testing.T) {
