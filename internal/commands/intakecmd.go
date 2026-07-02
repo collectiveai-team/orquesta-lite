@@ -40,7 +40,7 @@ type IntakeCaller interface {
 // Intake triages a GitHub issue, and when it is actionable writes the derived
 // plan to plan.md, runs the parser to produce tasks.json, and triggers the run
 // loop. An incomplete issue writes `missing_info` instead.
-func Intake(ctx context.Context, opts IntakeOptions) error {
+func Intake(ctx context.Context, opts IntakeOptions) (err error) {
 	if opts.Run {
 		// default true
 	}
@@ -49,11 +49,13 @@ func Intake(ctx context.Context, opts IntakeOptions) error {
 		TeamPath:   teamPathOrDefault(opts.TeamPath, opts.ProjectDir),
 		LogFormat:  opts.LogFormat,
 		Roles:      []string{"intake", "parser"},
+		Command:    "intake",
 	})
 	if err != nil {
 		return err
 	}
 	defer cleanup()
+	defer markRunStatus(ctx, deps, &err)
 
 	caller := &liveIntakeCaller{deps: deps}
 	plan := func(ctx context.Context, projectDir, planPath string) error {

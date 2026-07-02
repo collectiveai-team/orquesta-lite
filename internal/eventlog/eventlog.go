@@ -42,10 +42,19 @@ type Logger struct {
 	f           *os.File
 	RotateBytes int64
 	format      Format
+	runID       string
 }
 
 func Open(path string, pretty io.Writer) (*Logger, error) {
 	return OpenWithFormat(path, pretty, FormatVerbose)
+}
+
+// SetRunID stamps every subsequent Log() record with this run_id (alongside
+// ts/event). An empty ID clears it. Safe for concurrent use with Log().
+func (l *Logger) SetRunID(id string) {
+	l.mu.Lock()
+	l.runID = id
+	l.mu.Unlock()
 }
 
 // OpenWithFormat is like Open but lets callers pick the stdout pretty format.
@@ -82,6 +91,9 @@ func (l *Logger) Log(e Event) {
 		return
 	}
 	rec := map[string]any{"ts": time.Now().UTC().Format(time.RFC3339Nano), "event": e.Type}
+	if l.runID != "" {
+		rec["run_id"] = l.runID
+	}
 	for k, v := range e.Fields {
 		rec[k] = v
 	}
@@ -157,6 +169,12 @@ func HumanLine(e Event) string {
 	case "watch_tick_error":
 		return fmt.Sprintf("watch tick error (#%v): %v — will retry next tick",
 			fs(e.Fields["consecutive"]), fs(e.Fields["error"]))
+	case "run_start":
+		return fmt.Sprintf("run_start %v — %v",
+			fs(e.Fields["run_id"]), fs(e.Fields["command"]))
+	case "run_end":
+		return fmt.Sprintf("run_end %v — %v (%vs)",
+			fs(e.Fields["run_id"]), fs(e.Fields["status"]), fs(e.Fields["duration_s"]))
 	}
 	return fmt.Sprintf("%s %s", e.Type, summariseFields(e.Fields))
 }

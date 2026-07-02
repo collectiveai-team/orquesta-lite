@@ -25,6 +25,7 @@ import (
 	"github.com/lionelchamorro/orquestalite/internal/loops"
 	"github.com/lionelchamorro/orquestalite/internal/preflight"
 	"github.com/lionelchamorro/orquestalite/internal/results"
+	"github.com/lionelchamorro/orquestalite/internal/runid"
 	"github.com/lionelchamorro/orquestalite/internal/runner"
 	"github.com/lionelchamorro/orquestalite/internal/sessions"
 	"github.com/lionelchamorro/orquestalite/internal/tasks"
@@ -37,6 +38,11 @@ import (
 const agentHealthThreshold = 2
 
 var staticRunPreflightRoles = []string{"parser", "coder", "tester", "critic", "reviewer", "verifier"}
+
+// Version is the orq-lite build version, set by main via -ldflags. Default
+// "dev" is used in tests and unstamped builds; it is recorded in each run's
+// manifest for reproducibility.
+var Version = "dev"
 
 // RunOptions holds the parameters for the run command.
 type RunOptions struct {
@@ -56,7 +62,7 @@ type RunOptions struct {
 
 // Run loads the config and tasks, wires up all components, and drives the
 // review loop until it completes or the context is cancelled.
-func Run(ctx context.Context, opts RunOptions) error {
+func Run(ctx context.Context, opts RunOptions) (err error) {
 	// No backlog at all means the user skipped `orq-lite plan` — bail early
 	// with guidance instead of silently driving a reviewer over nothing. An
 	// existing (even empty) tasks.json still proceeds: the reviewer may stop
@@ -73,11 +79,13 @@ func Run(ctx context.Context, opts RunOptions) error {
 		LogFormat:  opts.LogFormat,
 		Roles:      staticRunPreflightRoles,
 		FeatureID:  opts.FeatureID,
+		Command:    "run",
 	})
 	if err != nil {
 		return err
 	}
 	defer cleanup()
+	defer markRunStatus(ctx, deps, &err)
 
 	if opts.FastMode || deps.cfg.Limits.FastMode {
 		if err := deps.RunFastBatch(ctx, FastBatchOptions{
@@ -95,12 +103,34 @@ func Run(ctx context.Context, opts RunOptions) error {
 	return loops.RunReviewLoop(ctx, deps.tl, loops.ReviewConfig{MaxCycles: deps.cfg.Limits.MaxReviewCycles}, deps)
 }
 
+// markRunStatus sets deps.runStatus ("error"/"interrupted") from the command's
+// return error so the run_end event (emitted by cleanup, which runs *after*
+// this defer because it was deferred first) reports the true outcome. It is
+// a no-op on a nil deps (newLiveDeps failed).
+func markRunStatus(ctx context.Context, deps *liveDeps, err *error) {
+	if deps == nil {
+		return
+	}
+	if ctx.Err() != nil {
+		deps.runStatus = "interrupted"
+		return
+	}
+	if *err != nil {
+		deps.runStatus = "error"
+	}
+}
+
 type liveDepsOptions struct {
 	ProjectDir string
 	TeamPath   string
 	LogFormat  eventlog.Format
 	Roles      []string
 	FeatureID  string
+	// Command is the orq-lite subcommand this run belongs to (run, plan,
+	// factory, review, intake, flow, …). Recorded in the run manifest and the
+	// run_start event so a run is attributable to the user action that started
+	// it. Empty → "run".
+	Command string
 }
 
 // resolveLogFormat turns an explicit/auto format choice into a concrete one.
@@ -146,7 +176,46 @@ func newLiveDeps(opts liveDepsOptions) (*liveDeps, func() error, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	cleanup := logger.Close
+
+	// Run lifecycle: a unique run_id ties every event and the per-run artifact
+	// directory (internal/artifacts) back to this invocation. run_start is
+	// emitted now; run_end is emitted by cleanup once the command returns so the
+	// span covers the whole run. The manifest under .orquestalite/runs/<run_id>/
+	// lets an operator or the companion app reconstruct what ran, when, and with
+	// which config.
+	runID := runid.New()
+	logger.SetRunID(runID)
+	var deps *liveDeps
+	command := opts.Command
+	if command == "" {
+		command = "run"
+	}
+	startedAt := time.Now().UTC()
+	teamHash := teamConfigHash(opts.TeamPath)
+	if mErr := writeRunManifest(opts.ProjectDir, runID, command, startedAt, teamHash); mErr != nil {
+		// A missing manifest dir is non-fatal: the run still works, it just
+		// loses per-run attributability. Log and continue.
+		fmt.Fprintf(os.Stderr, "warning: run manifest: %v\n", mErr)
+	}
+	logger.Log(eventlog.Event{Type: "run_start", Fields: map[string]any{
+		"run_id":     runID,
+		"command":    command,
+		"args":       featureIDArgs(opts.FeatureID),
+		"orq_version": Version,
+	}})
+	cleanup := func() error {
+		status := deps.runStatus
+		if status == "" {
+			status = "ok"
+		}
+		logger.Log(eventlog.Event{Type: "run_end", Fields: map[string]any{
+			"run_id":      runID,
+			"status":      status,
+			"duration_s":  int(time.Since(startedAt).Seconds()),
+			"orq_version": Version,
+		}})
+		return logger.Close()
+	}
 	ok := false
 	defer func() {
 		if !ok {
@@ -200,7 +269,6 @@ func newLiveDeps(opts liveDepsOptions) (*liveDeps, func() error, error) {
 	tracker := agenthealth.New(agentHealthThreshold)
 	runStaticAgentPreflight(cfg, tracker, logger, opts.Roles)
 
-	var deps *liveDeps
 	inv := &invoke.RoleInvoker{
 		Specs:                   specs,
 		Dir:                     opts.ProjectDir,
@@ -250,10 +318,55 @@ func newLiveDeps(opts liveDepsOptions) (*liveDeps, func() error, error) {
 		health:       tracker,
 		inv:          inv,
 		featureID:    opts.FeatureID,
+		runID:        runID,
 	}
 
 	ok = true
 	return deps, cleanup, nil
+}
+
+// writeRunManifest creates .orquestalite/runs/<run_id>/ and writes manifest.json
+// describing the run so it can be reconstructed later (by an operator or the
+// companion app query API). Backward-compatible: the runs/ dir is created
+// lazily and absent for older repos — no migration required.
+func writeRunManifest(projectDir, runID, command string, startedAt time.Time, teamHash string) error {
+	dir := filepath.Join(projectDir, ".orquestalite", "runs", runID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	manifest := map[string]any{
+		"run_id":       runID,
+		"command":      command,
+		"started_at":   startedAt.Format(time.RFC3339Nano),
+		"orq_version":  Version,
+		"team_hash":    teamHash,
+	}
+	raw, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, "manifest.json"), raw, 0o644)
+}
+
+// teamConfigHash returns a short SHA-256 of the team.json so a run manifest can
+// detect whether the configuration changed between runs. "" when the file
+// cannot be read (e.g. fresh init) — non-fatal.
+func teamConfigHash(teamPath string) string {
+	raw, err := os.ReadFile(teamPath)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])[:12]
+}
+
+// featureIDArgs returns a small args slice describing the factory feature this
+// run belongs to, for the run_start event. nil when not a factory run.
+func featureIDArgs(featureID string) []string {
+	if featureID == "" {
+		return nil
+	}
+	return []string{"--feature", featureID}
 }
 
 // runStaticAgentPreflight verifies that each agent referenced by the chosen roles
@@ -338,6 +451,14 @@ type liveDeps struct {
 	// mode). The reviewer uses it to scope its analysis to this feature's own
 	// plan slice instead of the whole-product PRD.
 	featureID string
+	// runID is this invocation's unique run identifier (see internal/runid): it
+	// ties every logged event and the per-run artifact directory back to this
+	// execution. Stamped on all events by eventlog.Logger.SetRunID.
+	runID string
+	// runStatus is the outcome recorded by the run_end event ("ok", "error",
+	// "interrupted"). Defaults to "ok"; callers set it via the defer that wraps
+	// cleanup when the command returns an error or the context is cancelled.
+	runStatus string
 
 	// Rollback baseline captured at the start of each task (in RunFix). On
 	// failure, Rollback resets tracked files to taskBaseSHA and removes only

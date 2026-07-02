@@ -168,6 +168,7 @@ func reviewLiveCallerFactory(opts ReviewOptions) (ReviewCriticCaller, func() err
 		TeamPath:   teamPathOrDefault(opts.TeamPath, opts.ProjectDir),
 		LogFormat:  opts.LogFormat,
 		Roles:      []string{"critic"},
+		Command:    "review",
 	})
 	if err != nil {
 		return nil, nil, err

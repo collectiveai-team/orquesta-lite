@@ -692,6 +692,28 @@ func TestRun_EmptyTaskList(t *testing.T) {
 	if err != nil {
 		t.Errorf("Run with empty task list: %v", err)
 	}
+
+	// Run lifecycle: run_start/run_end events and a per-run manifest dir.
+	logRaw, _ := os.ReadFile(filepath.Join(dir, ".orquestalite", "run.log"))
+	logStr := string(logRaw)
+	if !strings.Contains(logStr, `"event":"run_start"`) {
+		t.Errorf("run.log missing run_start event:\n%s", logStr)
+	}
+	if !strings.Contains(logStr, `"event":"run_end"`) {
+		t.Errorf("run.log missing run_end event:\n%s", logStr)
+	}
+	if !strings.Contains(logStr, `"command":"run"`) {
+		t.Errorf("run_start missing command=run:\n%s", logStr)
+	}
+	matches, _ := filepath.Glob(filepath.Join(dir, ".orquestalite", "runs", "r*", "manifest.json"))
+	if len(matches) == 0 {
+		t.Errorf("expected a .orquestalite/runs/r*/manifest.json, found none")
+	} else {
+		mraw, _ := os.ReadFile(matches[0])
+		if !strings.Contains(string(mraw), `"command": "run"`) {
+			t.Errorf("manifest missing command:\n%s", mraw)
+		}
+	}
 }
 
 // TestCallRole_AgentRunEventFields verifies that callRole logs the new fields
