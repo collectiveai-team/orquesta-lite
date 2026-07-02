@@ -107,3 +107,48 @@ func TestAPIRuns_EmptyStateServesEmptyList(t *testing.T) {
 		t.Fatalf("resp = %+v, want empty non-null runs", resp)
 	}
 }
+
+func TestAPIRunEvents_LogOrderAndFilters(t *testing.T) {
+	dir := stateDir(t)
+	writeRunLog(t, dir, queryFixtureLog)
+	srv := &Server{Dir: dir}
+
+	var resp struct {
+		Events []map[string]any `json:"events"`
+		Total  int              `json:"total"`
+	}
+	if code := getJSON(t, srv, "/api/runs/r1/events", &resp); code != 200 {
+		t.Fatalf("code = %d", code)
+	}
+	if resp.Total != 4 || resp.Events[0]["event"] != "run_start" {
+		t.Fatalf("resp = %+v", resp)
+	}
+	if code := getJSON(t, srv, "/api/runs/r1/events?type=agent_run&task_id=T1", &resp); code != 200 || resp.Total != 1 {
+		t.Fatalf("filtered: code=%d resp=%+v", code, resp)
+	}
+}
+
+func TestAPIAgentRuns_FiltersAndCost(t *testing.T) {
+	dir := stateDir(t)
+	writeRunLog(t, dir, queryFixtureLog)
+	srv := &Server{Dir: dir}
+
+	var resp struct {
+		AgentRuns []struct {
+			Role     string  `json:"role"`
+			TaskID   string  `json:"task_id"`
+			CostUSD  float64 `json:"cost_usd"`
+			TimedOut bool    `json:"timed_out"`
+		} `json:"agent_runs"`
+		Total int `json:"total"`
+	}
+	if code := getJSON(t, srv, "/api/agent-runs?run_id=r1&role=coder", &resp); code != 200 {
+		t.Fatalf("code = %d", code)
+	}
+	if resp.Total != 1 || resp.AgentRuns[0].TaskID != "T1" || resp.AgentRuns[0].CostUSD == 0 {
+		t.Fatalf("resp = %+v", resp)
+	}
+	if code := getJSON(t, srv, "/api/agent-runs?role=nonexistent", &resp); code != 200 || resp.Total != 0 || resp.AgentRuns == nil {
+		t.Fatalf("empty filter: code=%d resp=%+v", code, resp)
+	}
+}

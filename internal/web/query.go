@@ -73,3 +73,38 @@ func (s *Server) handleRun(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, run)
 }
+
+func (s *Server) handleRunEvents(w http.ResponseWriter, r *http.Request) {
+	db, ok := s.queryDB(w)
+	if !ok {
+		return
+	}
+	limit, offset := pageParams(r)
+	q := r.URL.Query()
+	events, total, err := db.Events(r.PathValue("id"), q.Get("type"), q.Get("task_id"), limit, offset)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"events": events, "total": total})
+}
+
+func (s *Server) handleAgentRuns(w http.ResponseWriter, r *http.Request) {
+	db, ok := s.queryDB(w)
+	if !ok {
+		return
+	}
+	limit, offset := pageParams(r)
+	q := r.URL.Query()
+	recs, total, err := db.AgentRuns(eventdb.AgentRunsFilter{
+		RunID:  q.Get("run_id"),
+		TaskID: q.Get("task_id"),
+		Role:   q.Get("role"),
+		Agent:  q.Get("agent"),
+	}, limit, offset)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"agent_runs": recs, "total": total})
+}

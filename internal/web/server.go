@@ -123,6 +123,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/tasks/{feature}", s.handleTasksByFeature)
 	mux.HandleFunc("GET /api/runs", s.handleRuns)
 	mux.HandleFunc("GET /api/runs/{id}", s.handleRun)
+	mux.HandleFunc("GET /api/runs/{id}/events", s.handleRunEvents)
+	mux.HandleFunc("GET /api/agent-runs", s.handleAgentRuns)
 
 	static, err := fs.Sub(staticFS, "static")
 	if err != nil {
