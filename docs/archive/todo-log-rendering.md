@@ -1,3 +1,4 @@
+> _Archivado: plan histórico completado. Preservado para referencia._
 # Improve orq-lite log output rendering
 
 ## Context
