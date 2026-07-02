@@ -29,6 +29,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -49,6 +50,30 @@ type Flow struct {
 type InputSpec struct {
 	Type    string `json:"type,omitempty"`
 	Default any    `json:"default,omitempty"`
+	// HasDefault records whether the flow declared a "default" key at all
+	// ("default": null counts as declared). The engine seeds undeclared
+	// inputs with nil either way; the flow catalog endpoint uses this to
+	// mark inputs required.
+	HasDefault bool `json:"-"`
+}
+
+func (s *InputSpec) UnmarshalJSON(b []byte) error {
+	var aux struct {
+		Type    string          `json:"type"`
+		Default json.RawMessage `json:"default"`
+	}
+	if err := json.Unmarshal(b, &aux); err != nil {
+		return err
+	}
+	s.Type = aux.Type
+	s.HasDefault = aux.Default != nil
+	s.Default = nil
+	if aux.Default != nil {
+		if err := json.Unmarshal(aux.Default, &s.Default); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Step is one execution block. Only the fields relevant to `Type` are used.
@@ -371,6 +396,31 @@ func dig(v any, path string) (any, bool) {
 		}
 	}
 	return cur, true
+}
+
+// ReferencedRoles returns the sorted set of agent roles referenced by any
+// agent step, recursively through loop/retry_until bodies. Shared by the
+// flow-run preflight and the GET /api/flows catalog.
+func (f *Flow) ReferencedRoles() []string {
+	seen := map[string]bool{}
+	var walk func(steps []Step)
+	walk = func(steps []Step) {
+		for _, s := range steps {
+			if s.Agent != "" {
+				seen[s.Agent] = true
+			}
+			if len(s.Body) > 0 {
+				walk(s.Body)
+			}
+		}
+	}
+	walk(f.Steps)
+	out := make([]string, 0, len(seen))
+	for r := range seen {
+		out = append(out, r)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // LoadFlows reads and parses a flows.json file.
