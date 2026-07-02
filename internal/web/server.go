@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io/fs"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -20,6 +21,7 @@ import (
 	"time"
 
 	"github.com/lionelchamorro/orquestalite/internal/cost"
+	"github.com/lionelchamorro/orquestalite/internal/eventdb"
 	"github.com/lionelchamorro/orquestalite/internal/gitx"
 	"github.com/lionelchamorro/orquestalite/internal/results"
 )
@@ -46,10 +48,58 @@ type Server struct {
 	costMu      sync.Mutex
 	costCached  []byte
 	costFetched time.Time
+
+	dbMu       sync.Mutex
+	db         *eventdb.DB
+	lastIngest time.Time
+
+	doctorMu      sync.Mutex
+	doctorCached  []byte
+	doctorFetched time.Time
 }
 
 func (s *Server) statePath(name string) string {
 	return filepath.Join(s.Dir, ".orquestalite", name)
+}
+
+// eventDB lazily opens the read-model and tops it up from the log at most
+// once per second. Query endpoints call it per request, so responses are at
+// most ~1s stale — the same freshness the SSE logTail gives — and the Serve
+// ticker calls it too so ingestion continues without traffic.
+func (s *Server) eventDB() (*eventdb.DB, error) {
+	s.dbMu.Lock()
+	defer s.dbMu.Unlock()
+	stateDir := filepath.Join(s.Dir, ".orquestalite")
+	if s.db == nil {
+		if err := os.MkdirAll(stateDir, 0o755); err != nil {
+			return nil, err
+		}
+		db, err := eventdb.Open(filepath.Join(stateDir, "orq.db"))
+		if err != nil {
+			return nil, err
+		}
+		s.db = db
+	}
+	if time.Since(s.lastIngest) >= time.Second {
+		if err := s.db.Ingest(stateDir); err != nil {
+			log.Printf("web: eventdb ingest: %v", err)
+		}
+		s.lastIngest = time.Now()
+	}
+	return s.db, nil
+}
+
+// writeJSON marshals v with the headers every JSON API response carries.
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	raw, err := json.Marshal(v)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(status)
+	_, _ = w.Write(raw)
 }
 
 // resultRoles is the fixed set of roles whose result file may be served via
@@ -71,6 +121,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/diff/{task}", s.handleDiff)
 	mux.HandleFunc("GET /api/attempt-diff/{task}/{role}/{cycle}/{attempt}", s.handleAttemptDiff)
 	mux.HandleFunc("GET /api/tasks/{feature}", s.handleTasksByFeature)
+	mux.HandleFunc("GET /api/runs", s.handleRuns)
+	mux.HandleFunc("GET /api/runs/{id}", s.handleRun)
 
 	static, err := fs.Sub(staticFS, "static")
 	if err != nil {
@@ -440,6 +492,18 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 // Serve runs the dashboard until ctx is cancelled.
 func Serve(ctx context.Context, addr, dir string) error {
 	s := &Server{Dir: dir}
+	go func() {
+		t := time.NewTicker(time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				_, _ = s.eventDB()
+			}
+		}
+	}()
 	srv := &http.Server{Addr: addr, Handler: s.Handler()}
 
 	errCh := make(chan error, 1)
