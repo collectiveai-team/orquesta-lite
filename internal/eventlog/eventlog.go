@@ -154,6 +154,9 @@ func HumanLine(e Event) string {
 	case "rate_limit_wait":
 		return fmt.Sprintf("rate_limit_wait %v → waiting until %v (~%vs) for it to recover",
 			fs(e.Fields["agent"]), fs(e.Fields["until"]), fs(e.Fields["seconds"]))
+	case "watch_tick_error":
+		return fmt.Sprintf("watch tick error (#%v): %v — will retry next tick",
+			fs(e.Fields["consecutive"]), fs(e.Fields["error"]))
 	}
 	return fmt.Sprintf("%s %s", e.Type, summariseFields(e.Fields))
 }

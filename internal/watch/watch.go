@@ -14,6 +14,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/lionelchamorro/orquestalite/internal/eventlog"
 )
 
 // ItemType selects which GitHub object a watch operates on.
@@ -60,10 +62,21 @@ type Config struct {
 	Review func(ctx context.Context, prNumber string) error
 	// Now is the clock; nil → time.Now. Useful for deterministic tests.
 	Now func() time.Time
+	// Log, when set, receives a `watch_tick_error` event whenever a poll tick
+	// fails. nil → tick errors are only written to stderr.
+	Log *eventlog.Logger
+	// MaxConsecutiveErrors aborts the daemon after this many consecutive
+	// failed ticks. <=0 → MaxConsecutiveErrorsDefault.
+	MaxConsecutiveErrors int
 }
 
 // DefaultInterval is the poll cadence when Config.Interval is unset.
 const DefaultInterval = 60 * time.Second
+
+// MaxConsecutiveErrorsDefault is how many consecutive tick failures the
+// daemon tolerates before aborting (so a permanently broken `gh` does not
+// spin forever silently).
+const MaxConsecutiveErrorsDefault = 10
 
 // State is the persisted watch progress: which types are enabled, the poll
 // interval, the last-seen cursor per type, and the processed-items set per
@@ -152,21 +165,53 @@ func Run(ctx context.Context, cfg Config) error {
 
 	ownUser, _ := cfg.Lister.WhoAmI(ctx)
 
+	maxConsecutive := cfg.MaxConsecutiveErrors
+	if maxConsecutive <= 0 {
+		maxConsecutive = MaxConsecutiveErrorsDefault
+	}
+
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	// Run one poll immediately (don't wait a full interval for the first pass),
-	// then on every tick.
+	// then on every tick. A first-tick failure is surfaced like any other, but
+	// does not by itself abort: a single transient blip should not kill the
+	// daemon. Only sustained failure past the consecutive threshold aborts.
+	consecutive := 0
 	if err := tick(ctx, cfg, state, ownUser); err != nil {
-		// A first-tick failure is surfaced: the caller can tell `gh` is missing.
-		return err
+		consecutive++
+		logTickError(cfg, err, consecutive)
 	}
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			_ = tick(ctx, cfg, state, ownUser) // transient: log and continue next tick
+			if err := tick(ctx, cfg, state, ownUser); err != nil {
+				consecutive++
+				logTickError(cfg, err, consecutive)
+				if consecutive >= maxConsecutive {
+					return fmt.Errorf("watch: %d consecutive tick failures (last: %w)", consecutive, err)
+				}
+				continue
+			}
+			consecutive = 0
 		}
+	}
+}
+
+// logTickError emits a watch_tick_error event (when a logger is configured) and
+// mirrors the error to stderr so a daemon operator sees it regardless of log
+// redaction.
+func logTickError(cfg Config, err error, consecutive int) {
+	fmt.Fprintf(os.Stderr, "watch: tick error (#%d): %v\n", consecutive, err)
+	if cfg.Log != nil {
+		cfg.Log.Log(eventlog.Event{
+			Type: "watch_tick_error",
+			Fields: map[string]any{
+				"error":       err.Error(),
+				"consecutive": consecutive,
+			},
+		})
 	}
 }
 

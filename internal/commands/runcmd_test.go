@@ -604,6 +604,45 @@ func TestRun_EndToEndWithFakeCLI(t *testing.T) {
 
 // TestRun_EmptyTaskList verifies that Run returns nil when there are no tasks
 // to process (the reviewer immediately signals stop).
+// TestRun_NoTasksFileErrors verifies that `run` surfaces a clear error when
+// there is no tasks.json at all (the user never ran `plan`), instead of
+// silently driving a reviewer over an empty backlog.
+func TestRun_NoTasksFileErrors(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	dir := t.TempDir()
+	for _, args := range [][]string{
+		{"init", "-q"},
+		{"-c", "user.email=t@t", "-c", "user.name=t", "commit", "--allow-empty", "-q", "-m", "seed"},
+	} {
+		c := exec.Command("git", args...)
+		c.Dir = dir
+		if out, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	if err := Init(dir); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	cliPath := filepath.Join(dir, "fakecli.sh")
+	if err := os.WriteFile(cliPath, []byte(fakeCLI), 0o755); err != nil {
+		t.Fatalf("write fakecli.sh: %v", err)
+	}
+	writeFakeTeamJSON(t, dir, cliPath)
+
+	err := Run(context.Background(), RunOptions{
+		ProjectDir: dir,
+		TeamPath:   filepath.Join(dir, "team.json"),
+	})
+	if err == nil {
+		t.Fatal("expected Run to error when tasks.json is missing")
+	}
+	if !strings.Contains(err.Error(), "no tasks") {
+		t.Errorf("expected error to mention no tasks, got: %v", err)
+	}
+}
+
 func TestRun_EmptyTaskList(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("posix shell script test, skipping on windows")

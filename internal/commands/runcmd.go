@@ -57,6 +57,16 @@ type RunOptions struct {
 // Run loads the config and tasks, wires up all components, and drives the
 // review loop until it completes or the context is cancelled.
 func Run(ctx context.Context, opts RunOptions) error {
+	// No backlog at all means the user skipped `orq-lite plan` — bail early
+	// with guidance instead of silently driving a reviewer over nothing. An
+	// existing (even empty) tasks.json still proceeds: the reviewer may stop
+	// cleanly, and factory/intake callers manage their own backlog.
+	tasksPath := filepath.Join(opts.ProjectDir, ".orquestalite", "tasks.json")
+	if _, err := os.Stat(tasksPath); err != nil && errors.Is(err, os.ErrNotExist) {
+		fmt.Fprintln(os.Stderr, "no tasks found (run 'orq-lite plan plan.md' first)")
+		return errors.New("no tasks to run")
+	}
+
 	deps, cleanup, err := newLiveDeps(liveDepsOptions{
 		ProjectDir: opts.ProjectDir,
 		TeamPath:   opts.TeamPath,

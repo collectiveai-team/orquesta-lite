@@ -2,10 +2,15 @@ package watch
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/lionelchamorro/orquestalite/internal/eventlog"
 )
 
 // fakeLister serves pre-baked issues/PRs across ticks and reports a fixed own
@@ -250,6 +255,98 @@ func TestTick_SkipsOwnPRsUnlessReviewOwnPRs(t *testing.T) {
 	if len(reviews) != 1 || reviews[0] != "3" {
 		t.Fatalf("own PR should be reviewed with flag, got %v", reviews)
 	}
+}
+
+// errorLister always fails ListIssues; WhoAmI still works.
+type errorLister struct{ own string }
+
+func (e *errorLister) WhoAmI(context.Context) (string, error) { return e.own, nil }
+func (e *errorLister) ListIssues(context.Context, time.Time) ([]Item, error) {
+	return nil, fmt.Errorf("boom")
+}
+func (e *errorLister) ListPRs(context.Context, time.Time) ([]Item, error) {
+	return nil, fmt.Errorf("boom")
+}
+
+// TestRun_AbortsAfterConsecutiveTickErrors verifies that Run emits a
+// watch_tick_error event per failed tick and aborts after the injected
+// threshold of consecutive failures (instead of swallowing them silently).
+func TestRun_AbortsAfterConsecutiveTickErrors(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "run.log")
+	logger, err := eventlog.OpenWithFormat(logPath, io.Discard, eventlog.FormatVerbose)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer logger.Close()
+	cfg := Config{
+		ProjectDir:            dir,
+		Interval:              time.Millisecond,
+		Enabled:               map[ItemType]bool{ItemIssue: true},
+		Lister:                &errorLister{own: "me"},
+		Intake:                func(context.Context, string) error { return nil },
+		Log:                   logger,
+		MaxConsecutiveErrors:  3,
+	}
+	err = Run(context.Background(), cfg)
+	if err == nil {
+		t.Fatal("Run should abort with an error after consecutive failures")
+	}
+	if !strings.Contains(err.Error(), "consecutive") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// At least 3 watch_tick_error events persisted to the log.
+	raw, _ := os.ReadFile(logPath)
+	if got := strings.Count(string(raw), "\"event\":\"watch_tick_error\""); got < 3 {
+		t.Fatalf("expected >=3 watch_tick_error events, got %d\n%s", got, raw)
+	}
+}
+
+// TestRun_RecoversFromTransientErrors verifies a successful tick resets the
+// consecutive error counter so a single blip does not accumulate toward abort.
+func TestRun_RecoversFromTransientErrors(t *testing.T) {
+	dir := t.TempDir()
+	logger, _ := eventlog.OpenWithFormat(filepath.Join(dir, "run.log"), io.Discard, eventlog.FormatVerbose)
+	defer logger.Close()
+	l := &flakyLister{own: "me", failUntil: 2}
+	cfg := Config{
+		ProjectDir:            dir,
+		Interval:              time.Millisecond,
+		Enabled:               map[ItemType]bool{ItemIssue: true},
+		Lister:                l,
+		Intake:                func(context.Context, string) error { return nil },
+		Log:                   logger,
+		MaxConsecutiveErrors:  5,
+	}
+	// Run for a bounded time; it must NOT abort because the transient errors
+	// (two) stay below the threshold and then recover.
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	err := Run(ctx, cfg)
+	// The expected stop is the context deadline (cancelled), not a consecutive
+	// abort: that proves the transient errors did not accumulate past threshold.
+	if err != nil && !strings.Contains(err.Error(), "context deadline exceeded") {
+		t.Fatalf("expected context deadline stop, got: %v", err)
+	}
+}
+
+// flakyLister fails ListIssues until calls reach failUntil, then succeeds.
+type flakyLister struct {
+	own       string
+	calls     int
+	failUntil int
+}
+
+func (f *flakyLister) WhoAmI(context.Context) (string, error) { return f.own, nil }
+func (f *flakyLister) ListIssues(context.Context, time.Time) ([]Item, error) {
+	f.calls++
+	if f.calls <= f.failUntil {
+		return nil, fmt.Errorf("flaky %d", f.calls)
+	}
+	return nil, nil
+}
+func (f *flakyLister) ListPRs(context.Context, time.Time) ([]Item, error) {
+	return nil, nil
 }
 
 func TestEnabledSummary(t *testing.T) {
