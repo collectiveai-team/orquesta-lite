@@ -20,7 +20,7 @@ Source plan: `docs/superpowers/plans/2026-07-01-product-readiness.md`
 - [x] Task 9: Diff por agente/intento
 - [x] Task 10: Costo first-party
 - [ ] Task 11: task_id en todos los agent_run + log grouped
-- [ ] Task 11b: Proyección SQLite + API consulta serve
+- [x] Task 11b: Proyección SQLite + API consulta serve
 
 ## Fase 2 — Endurecimiento del engine
 - [ ] Task 12: Validación de flows al cargar

@@ -44,7 +44,7 @@ func RunFlow(ctx context.Context, opts FlowOptions) (err error) {
 		ProjectDir: opts.ProjectDir,
 		TeamPath:   opts.TeamPath,
 		LogFormat:  opts.LogFormat,
-		Roles:      flowReferencedRoles(&flow),
+		Roles:      flow.ReferencedRoles(),
 		Command:    "flow:" + opts.FlowName,
 	})
 	if err != nil {
@@ -82,28 +82,6 @@ func ListFlowNames(flowsPath string) []string {
 	return availableFlowNames(flows)
 }
 
-// flowReferencedRoles collects every `agent` step's role name (across nested
-// bodies) so newLiveDeps' static preflight covers the agents the flow uses.
-func flowReferencedRoles(flow *engine.Flow) []string {
-	seen := map[string]bool{}
-	var walk func(steps []engine.Step)
-	walk = func(steps []engine.Step) {
-		for _, s := range steps {
-			if s.Agent != "" {
-				seen[s.Agent] = true
-			}
-			if len(s.Body) > 0 {
-				walk(s.Body)
-			}
-		}
-	}
-	walk(flow.Steps)
-	out := make([]string, 0, len(seen))
-	for r := range seen {
-		out = append(out, r)
-	}
-	return out
-}
 
 func parseInputArgs(args []string) (map[string]any, error) {
 	out := map[string]any{}

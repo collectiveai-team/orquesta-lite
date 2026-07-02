@@ -1,51 +1,19 @@
 package commands
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/lionelchamorro/orquestalite/internal/doctor"
 )
 
-func TestProviderHasUsableCredentials(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("GEMINI_API_KEY", "")
-
-	// A provider we have no credential profile for: assume usable (cannot tell).
-	if !providerHasUsableCredentials("mystery-provider") {
-		t.Errorf("unknown provider should be assumed usable")
-	}
-
-	// No env var and no cached login: not usable (this is the gemini case that
-	// caused interactive auth prompts mid-run).
-	if providerHasUsableCredentials("gemini") {
-		t.Errorf("expected gemini unusable with no env var and no cached login")
-	}
-
-	// API-key env var present: usable headless.
-	t.Setenv("GEMINI_API_KEY", "test-key")
-	if !providerHasUsableCredentials("gemini") {
-		t.Errorf("expected gemini usable via GEMINI_API_KEY")
-	}
-	t.Setenv("GEMINI_API_KEY", "")
-
-	// Cached login file present: usable.
-	if err := os.MkdirAll(filepath.Join(home, ".gemini"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(home, ".gemini", "oauth_creds.json"), []byte("{}"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if !providerHasUsableCredentials("gemini") {
-		t.Errorf("expected gemini usable via cached login file")
-	}
-}
-
-func doctorLevels(checks []check) map[string]checkLevel {
-	m := map[string]checkLevel{}
+func doctorStatuses(checks []doctor.Check) map[string]doctor.Status {
+	m := map[string]doctor.Status{}
 	for _, c := range checks {
-		m[c.Name] = c.Level
+		m[c.Name] = c.Status
 	}
 	return m
 }
@@ -90,16 +58,16 @@ func TestDoctor_MissingPromptsFail(t *testing.T) {
 		}
 	}
 
-	levels := doctorLevels(runDoctorChecks(dir))
-	if levels["prompts"] != checkFail {
-		t.Errorf("prompts = %v, want FAIL", levels["prompts"])
+	statuses := doctorStatuses(doctor.Run(context.Background(), dir))
+	if statuses["prompts"] != doctor.StatusError {
+		t.Errorf("prompts = %v, want error", statuses["prompts"])
 	}
 	// cmd-based agent: no provider credential checks should appear.
-	if _, ok := levels["claude CLI"]; ok {
+	if _, ok := statuses["provider:claude"]; ok {
 		t.Error("cmd-only team should not check provider CLIs")
 	}
-	if levels["full_test_command"] != checkPass {
-		t.Errorf("full_test_command = %v", levels["full_test_command"])
+	if statuses["full_test_command"] != doctor.StatusOK {
+		t.Errorf("full_test_command = %v", statuses["full_test_command"])
 	}
 }
 
@@ -125,8 +93,8 @@ func TestDoctor_UnknownTestBinaryFails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	levels := doctorLevels(runDoctorChecks(dir))
-	if levels["full_test_command"] != checkFail {
-		t.Errorf("full_test_command = %v, want FAIL", levels["full_test_command"])
+	statuses := doctorStatuses(doctor.Run(context.Background(), dir))
+	if statuses["full_test_command"] != doctor.StatusError {
+		t.Errorf("full_test_command = %v, want error", statuses["full_test_command"])
 	}
 }

@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -170,6 +171,47 @@ func TestShippedFlowsJSON_FactoryFast(t *testing.T) {
 	// still completed and reached the verifier above.
 	if len(callsContaining(cmd.calls, "push")) != 1 {
 		t.Fatalf("expected one push attempt, got %v", cmd.calls)
+	}
+}
+
+func TestInputSpec_HasDefaultDistinguishesDeclaredNull(t *testing.T) {
+	var f Flows
+	raw := `{"flows":{"x":{"steps":[],"inputs":{
+		"no_default":   {"type":"string"},
+		"null_default": {"type":"string","default":null},
+		"real_default": {"type":"number","default":3}
+	}}}}`
+	if err := json.Unmarshal([]byte(raw), &f); err != nil {
+		t.Fatal(err)
+	}
+	in := f.Flows["x"].Inputs
+	if in["no_default"].HasDefault {
+		t.Fatal("no_default: HasDefault = true, want false")
+	}
+	if !in["null_default"].HasDefault || in["null_default"].Default != nil {
+		t.Fatalf("null_default: %+v", in["null_default"])
+	}
+	if !in["real_default"].HasDefault || in["real_default"].Default != 3.0 {
+		t.Fatalf("real_default: %+v", in["real_default"])
+	}
+}
+
+func TestFlowReferencedRoles_RecursesAndSorts(t *testing.T) {
+	flow := Flow{Steps: []Step{
+		{Type: "agent", Agent: "parser"},
+		{Type: "loop", Iterator: "{xs}", As: "x", Body: []Step{
+			{Type: "retry_until", Condition: "{ok} == true", Body: []Step{
+				{Type: "agent", Agent: "coder"},
+				{Type: "agent", Agent: "critic"},
+			}},
+			{Type: "agent", Agent: "coder"}, // duplicate
+		}},
+		{Type: "command", Command: "true"},
+	}}
+	got := flow.ReferencedRoles()
+	want := []string{"coder", "critic", "parser"}
+	if len(got) != 3 || got[0] != want[0] || got[1] != want[1] || got[2] != want[2] {
+		t.Fatalf("roles = %v, want %v", got, want)
 	}
 }
 
