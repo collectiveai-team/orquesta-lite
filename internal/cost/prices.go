@@ -39,6 +39,14 @@ func estimateUSD(model string, inputTokens, outputTokens int) (float64, bool) {
 	return input + output, true
 }
 
+// EstimateUSD prices first-party token counts against the same embedded
+// table the cost report uses. Shared with the eventdb query API so
+// GET /api/cost and the query endpoints can never disagree on pricing.
+// ok is false when the model is unknown or both counts are zero.
+func EstimateUSD(model string, inputTokens, outputTokens int) (float64, bool) {
+	return estimateUSD(model, inputTokens, outputTokens)
+}
+
 func priceForModel(model string) (price, bool) {
 	model = strings.ToLower(strings.TrimSpace(model))
 	if model == "" {
