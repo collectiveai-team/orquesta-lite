@@ -478,6 +478,19 @@ func (inv *RoleInvoker) logAgentRun(roleName, agentName string, ag config.AgentS
 	if artifactsDir != "" {
 		fields["artifacts_dir"] = artifactsDir
 	}
+	usage := usageTotals(r)
+	if usage.Input > 0 {
+		fields["input_tokens"] = usage.Input
+	}
+	if usage.Output > 0 {
+		fields["output_tokens"] = usage.Output
+	}
+	if usage.CachedInput > 0 {
+		fields["cached_input_tokens"] = usage.CachedInput
+	}
+	if usage.Reasoning > 0 {
+		fields["reasoning_tokens"] = usage.Reasoning
+	}
 	if spec.ResumeSessionID != "" {
 		fields["resumed"] = true
 		fields["resumed_from"] = spec.ResumeSessionID
@@ -666,4 +679,29 @@ func toolCallsCount(res *runner.Result) int {
 		}
 	}
 	return count
+}
+
+type usageSummary struct {
+	Input       int
+	Output      int
+	CachedInput int
+	Reasoning   int
+}
+
+func usageTotals(res *runner.Result) usageSummary {
+	var out usageSummary
+	for _, ev := range res.Events {
+		if ev.Type != providers.EventUsage {
+			continue
+		}
+		out.Input += ev.Usage["input_tokens"]
+		out.Output += ev.Usage["output_tokens"]
+		out.CachedInput += ev.Usage["cached_input_tokens"]
+		out.CachedInput += ev.Usage["cache_read_tokens"]
+		out.CachedInput += ev.Usage["cache_creation_input_tokens"]
+		out.CachedInput += ev.Usage["cache_write_tokens"]
+		out.Reasoning += ev.Usage["reasoning_tokens"]
+	}
+	out.Input += out.CachedInput
+	return out
 }

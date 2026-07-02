@@ -1,9 +1,7 @@
-// Package cost rolls up token spend per task and per run by joining the
-// orchestrator's own run.log (which records the session_id of every agent
-// invocation) against agtop's per-session cost analysis. agtop already
-// discovers each agent CLI's local session files and prices them against
-// live pricing tables, so orq-lite delegates instead of re-implementing
-// pricing.
+// Package cost rolls up token spend per task and per run from the
+// orchestrator's own run.log. agtop remains an optional enrichment source for
+// precise per-session USD, with embedded prices used as a fallback estimate
+// when first-party token counts are present.
 package cost
 
 import (
@@ -76,11 +74,15 @@ type AgentRun struct {
 	TaskID    string
 	Role      string
 	Agent     string
+	Provider  string
+	Model     string
 	SessionID string
+	InputTok  int
+	OutputTok int
 }
 
-// RunsFromLog extracts agent_run events (with a session id) from a run.log
-// JSONL file. Missing files yield an empty slice.
+// RunsFromLog extracts agent_run events from a run.log JSONL file. Missing
+// files yield an empty slice.
 func RunsFromLog(path string) ([]AgentRun, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -96,21 +98,35 @@ func RunsFromLog(path string) ([]AgentRun, error) {
 	sc.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
 	for sc.Scan() {
 		var ev struct {
-			Event     string `json:"event"`
-			TS        string `json:"ts"`
-			TaskID    string `json:"task_id"`
-			Role      string `json:"role"`
-			Agent     string `json:"agent"`
-			SessionID string `json:"session_id"`
+			Event        string `json:"event"`
+			TS           string `json:"ts"`
+			TaskID       string `json:"task_id"`
+			Role         string `json:"role"`
+			Agent        string `json:"agent"`
+			Provider     string `json:"provider"`
+			Model        string `json:"model"`
+			SessionID    string `json:"session_id"`
+			InputTokens  int    `json:"input_tokens"`
+			OutputTokens int    `json:"output_tokens"`
 		}
 		if json.Unmarshal(sc.Bytes(), &ev) != nil {
 			continue
 		}
-		if ev.Event != "agent_run" || ev.SessionID == "" {
+		if ev.Event != "agent_run" {
 			continue
 		}
 		ts, _ := time.Parse(time.RFC3339Nano, ev.TS)
-		runs = append(runs, AgentRun{TS: ts, TaskID: ev.TaskID, Role: ev.Role, Agent: ev.Agent, SessionID: ev.SessionID})
+		runs = append(runs, AgentRun{
+			TS:        ts,
+			TaskID:    ev.TaskID,
+			Role:      ev.Role,
+			Agent:     ev.Agent,
+			Provider:  ev.Provider,
+			Model:     ev.Model,
+			SessionID: ev.SessionID,
+			InputTok:  ev.InputTokens,
+			OutputTok: ev.OutputTokens,
+		})
 	}
 	return runs, sc.Err()
 }
@@ -133,8 +149,9 @@ type Report struct {
 	Priced   int
 }
 
-// Rollup joins agent runs against agtop sessions. Sessions agtop does not
-// know (expired logs, unsupported client) count as runs but not cost.
+// Rollup aggregates first-party token counts from agent runs, falling back to
+// agtop token counts for older logs. USD uses agtop session costs first and
+// embedded model prices second; unpriced runs still count toward Runs.
 func Rollup(runs []AgentRun, sessions map[string]Session) Report {
 	byTask := map[string]*TaskCost{}
 	var order []string
@@ -150,11 +167,24 @@ func Rollup(runs []AgentRun, sessions map[string]Session) Report {
 			order = append(order, id)
 		}
 		tc.Runs++
+		input, output := r.InputTok, r.OutputTok
+		if input == 0 && output == 0 {
+			if s, ok := sessions[r.SessionID]; ok {
+				input = s.Tokens.Input + s.Tokens.CachedInput
+				output = s.Tokens.Output
+			}
+		}
+		tc.InputTok += input
+		tc.OutputTok += output
+
 		if s, ok := sessions[r.SessionID]; ok {
 			tc.Priced++
 			tc.TotalUSD += s.Cost.Total
-			tc.InputTok += s.Tokens.Input + s.Tokens.CachedInput
-			tc.OutputTok += s.Tokens.Output
+			continue
+		}
+		if usd, ok := estimateUSD(r.Model, input, output); ok {
+			tc.Priced++
+			tc.TotalUSD += usd
 		}
 	}
 

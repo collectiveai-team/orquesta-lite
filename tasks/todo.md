@@ -15,10 +15,10 @@ Source plan: `docs/superpowers/plans/2026-07-01-product-readiness.md`
 
 ## Fase 1 — Trazabilidad
 - [x] Task 6: Run ID + directorio por corrida
-- [ ] Task 7: Emitir eventos fantasma del dashboard
-- [ ] Task 8: Persistir artefactos por invocación
-- [ ] Task 9: Diff por agente/intento
-- [ ] Task 10: Costo first-party
+- [x] Task 7: Emitir eventos fantasma del dashboard
+- [x] Task 8: Persistir artefactos por invocación
+- [x] Task 9: Diff por agente/intento
+- [x] Task 10: Costo first-party
 - [ ] Task 11: task_id en todos los agent_run + log grouped
 - [ ] Task 11b: Proyección SQLite + API consulta serve
 

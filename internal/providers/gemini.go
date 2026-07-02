@@ -106,7 +106,32 @@ func (g *Gemini) parseResult(obj map[string]any) []Event {
 		}
 		return []Event{{Type: EventError, Result: msg}}
 	}
-	return []Event{{Type: EventResult, Result: g.assistantText.String()}}
+	events := []Event{}
+	if usage, ok := parseGeminiUsage(obj); ok {
+		events = append(events, Event{Type: EventUsage, Usage: usage})
+	}
+	return append(events, Event{Type: EventResult, Result: g.assistantText.String()})
+}
+
+func parseGeminiUsage(obj map[string]any) (map[string]int, bool) {
+	stats, _ := obj["stats"].(map[string]any)
+	usageMeta, _ := obj["usage_metadata"].(map[string]any)
+	if len(stats) == 0 && len(usageMeta) == 0 {
+		return nil, false
+	}
+
+	usage := map[string]int{}
+	copyTokenField(usage, stats, "input_tokens", "input_tokens")
+	copyTokenField(usage, stats, "prompt_tokens", "input_tokens")
+	copyTokenField(usage, stats, "output_tokens", "output_tokens")
+	copyTokenField(usage, stats, "completion_tokens", "output_tokens")
+	copyTokenField(usage, usageMeta, "promptTokenCount", "input_tokens")
+	copyTokenField(usage, usageMeta, "candidatesTokenCount", "output_tokens")
+
+	if len(usage) == 0 {
+		return nil, false
+	}
+	return usage, true
 }
 
 func geminiToolArgs(name string, params map[string]any) string {

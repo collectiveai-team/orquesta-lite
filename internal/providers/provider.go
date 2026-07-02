@@ -96,6 +96,12 @@ func numberAsInt(raw any) (int, bool) {
 	}
 }
 
+func copyTokenField(dst map[string]int, src map[string]any, from, to string) {
+	if v, ok := numberAsInt(src[from]); ok {
+		dst[to] += v
+	}
+}
+
 func extractProviderErrorMessage(obj map[string]any) string {
 	for _, key := range []string{"message", "error", "result"} {
 		switch v := obj[key].(type) {

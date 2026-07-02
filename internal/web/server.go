@@ -361,16 +361,17 @@ func (s *Server) handleCost(w http.ResponseWriter, r *http.Request) {
 			return map[string]any{"available": false}
 		}
 		sessions, err := cost.Collect(r.Context())
-		if err != nil {
-			return map[string]any{"available": false, "reason": err.Error()}
-		}
 		rep := cost.Rollup(runs, sessions)
-		return map[string]any{
+		payload := map[string]any{
 			"available": true,
 			"total_usd": rep.TotalUSD,
 			"runs":      rep.Runs,
 			"priced":    rep.Priced,
 		}
+		if err != nil {
+			payload["pricing_note"] = err.Error()
+		}
+		return payload
 	}()
 
 	raw, err := json.Marshal(payload)
