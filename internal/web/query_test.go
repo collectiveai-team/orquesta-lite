@@ -155,3 +155,31 @@ func TestAPIAgentRuns_FiltersAndCost(t *testing.T) {
 		t.Fatalf("empty filter: code=%d resp=%+v", code, resp)
 	}
 }
+
+func TestAPIStatsCost_GroupsByAndEchoes(t *testing.T) {
+	dir := stateDir(t)
+	writeRunLog(t, dir, queryFixtureLog)
+	srv := &Server{Dir: dir}
+
+	var resp struct {
+		By   string `json:"by"`
+		Rows []struct {
+			Key       string  `json:"key"`
+			CostUSD   float64 `json:"cost_usd"`
+			AgentRuns int     `json:"agent_runs"`
+		} `json:"rows"`
+	}
+	if code := getJSON(t, srv, "/api/stats/cost?by=role", &resp); code != 200 {
+		t.Fatalf("code = %d", code)
+	}
+	if resp.By != "role" || len(resp.Rows) != 1 || resp.Rows[0].Key != "coder" {
+		t.Fatalf("resp = %+v", resp)
+	}
+	// Default and unknown by both fall back to run.
+	if code := getJSON(t, srv, "/api/stats/cost?by=bogus", &resp); code != 200 || resp.By != "run" {
+		t.Fatalf("fallback: code=%d by=%q", code, resp.By)
+	}
+	if code := getJSON(t, srv, "/api/stats/cost", &resp); code != 200 || resp.By != "run" || resp.Rows[0].Key != "r1" {
+		t.Fatalf("default: code=%d resp=%+v", code, resp)
+	}
+}

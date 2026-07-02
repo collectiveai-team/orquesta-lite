@@ -108,3 +108,22 @@ func (s *Server) handleAgentRuns(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"agent_runs": recs, "total": total})
 }
+
+func (s *Server) handleCostStats(w http.ResponseWriter, r *http.Request) {
+	db, ok := s.queryDB(w)
+	if !ok {
+		return
+	}
+	by := r.URL.Query().Get("by")
+	switch by {
+	case "run", "agent", "task", "role":
+	default:
+		by = "run"
+	}
+	rows, err := db.CostStats(by)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"by": by, "rows": rows})
+}
