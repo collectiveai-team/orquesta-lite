@@ -31,7 +31,7 @@ When something essential is missing, do NOT invent it. List exactly what is miss
 
 ## Output contract
 
-Your final action MUST be to write `.orquestalite/results/intake.json` with the exact shape:
+Your final action MUST be to write `.orquestalite/results/intake.json` (this path is relative to the REPOSITORY ROOT — if your shell is inside a subdirectory such as `backend/`, `cd` back to the repo root or use the absolute path before writing, or the orchestrator will not find your result) with the exact shape:
 
 ```json
 {

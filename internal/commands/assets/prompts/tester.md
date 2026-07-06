@@ -41,7 +41,7 @@ this bar (and fail, with the reason, when they fall short):
 
 ## Output contract
 
-Run the tests, then write `.orquestalite/results/tester.json`:
+Run the tests, then write `.orquestalite/results/tester.json` (this path is relative to the REPOSITORY ROOT — if your shell is inside a subdirectory such as `backend/`, `cd` back to the repo root or use the absolute path before writing, or the orchestrator will not find your result):
 
 ```json
 {

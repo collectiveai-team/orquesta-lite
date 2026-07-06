@@ -38,7 +38,7 @@ If the entire plan is documentation with no implementable behavior, output `{"fe
 
 ## Output contract
 
-Your final action MUST be to write `.orquestalite/results/planner.json` with the exact shape:
+Your final action MUST be to write `.orquestalite/results/planner.json` (this path is relative to the REPOSITORY ROOT — if your shell is inside a subdirectory such as `backend/`, `cd` back to the repo root or use the absolute path before writing, or the orchestrator will not find your result) with the exact shape:
 
 ```json
 {
