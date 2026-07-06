@@ -9,53 +9,77 @@
   },
   "roles": {
     "parser": {
-      "agents": ["claude_haiku"],
+      "agents": [
+        "claude_haiku"
+      ],
       "prompt": "prompts/parser.md",
       "result_path": ".orquestalite/results/parser.json",
       "timeout_seconds": 600,
       "decompose_prompt": "prompts/parser-decompose.md"
     },
     "coder": {
-      "agents": ["claude_haiku"],
+      "agents": [
+        "claude_haiku"
+      ],
       "prompt": "prompts/coder.md",
       "result_path": ".orquestalite/results/coder.json",
       "timeout_seconds": 1800
     },
     "tester": {
-      "agents": ["claude_haiku"],
+      "agents": [
+        "claude_haiku"
+      ],
       "prompt": "prompts/tester.md",
       "result_path": ".orquestalite/results/tester.json",
       "timeout_seconds": 900
     },
     "critic": {
-      "agents": ["claude_haiku"],
+      "agents": [
+        "claude_haiku"
+      ],
       "prompt": "prompts/critic.md",
       "result_path": ".orquestalite/results/critic.json",
       "timeout_seconds": 600
     },
     "reviewer": {
-      "agents": ["claude_haiku"],
+      "agents": [
+        "claude_haiku"
+      ],
       "prompt": "prompts/reviewer.md",
       "result_path": ".orquestalite/results/reviewer.json",
       "timeout_seconds": 900
     },
     "architect": {
-      "agents": ["claude_haiku"],
+      "agents": [
+        "claude_haiku"
+      ],
       "prompt": "prompts/architect.md",
       "result_path": ".orquestalite/results/architect.json",
       "timeout_seconds": 900
     },
     "qa": {
-      "agents": ["claude_haiku"],
+      "agents": [
+        "claude_haiku"
+      ],
       "prompt": "prompts/qa.md",
       "result_path": ".orquestalite/results/qa.json",
       "timeout_seconds": 900
     },
     "pm": {
-      "agents": ["claude_haiku"],
+      "agents": [
+        "claude_haiku"
+      ],
       "prompt": "prompts/pm.md",
       "result_path": ".orquestalite/results/pm.json",
       "timeout_seconds": 600
+    },
+    "gov_reviewer": {
+      "agents": [
+        "claude_haiku"
+      ],
+      "prompt": "prompts/gov-reviewer.md",
+      "result_path": ".orquestalite/results/gov_reviewer.json",
+      "timeout_seconds": 1200
     }
   },
   "limits": {

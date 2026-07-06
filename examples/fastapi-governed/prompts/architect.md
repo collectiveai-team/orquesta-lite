@@ -33,7 +33,7 @@ test suite result for this round was: **TESTS_PASS={{TESTS_PASS}}**.
 
 ## Output contract
 
-Your final action MUST be to write `.orquestalite/results/architect.json`:
+Your final action MUST be to write `.orquestalite/results/architect.json` (this path is relative to the REPOSITORY ROOT — if your shell is inside a subdirectory such as `backend/`, `cd` back to the repo root or use the absolute path before writing, or the orchestrator will not find your result):
 
 ```json
 {

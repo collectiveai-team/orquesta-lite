@@ -1,24 +1,42 @@
 {
   "flows": {
     "factory_governed": {
-      "description": "Build all features on one integration branch (per-feature coder/test/critic, fast style), then loop a governance review (architect + QA + PM) that adds tasks as feedback until all three approve.",
+      "description": "Build all features on one integration branch (per-feature coder/test/critic gated by a retry loop), then loop a governance review (architect + QA + PM + adversarial reviewer) that adds tasks as feedback until all four approve.",
       "inputs": {
-        "features_path": { "type": "string", "default": "features.md" },
-        "base_branch": { "type": "string", "default": "main" },
-        "work_branch": { "type": "string", "default": "factory/fastapi-app" }
+        "features_path": {
+          "type": "string",
+          "default": "features.md"
+        },
+        "base_branch": {
+          "type": "string",
+          "default": "main"
+        },
+        "work_branch": {
+          "type": "string",
+          "default": "factory/fastapi-app"
+        }
       },
       "steps": [
         {
           "type": "action",
           "action": "factory_extract_features",
-          "inputs": { "path": "{inputs.features_path}" },
-          "outputs": { "features_queue": "." }
+          "inputs": {
+            "path": "{inputs.features_path}"
+          },
+          "outputs": {
+            "features_queue": "."
+          }
         },
         {
           "type": "command",
-          "args": ["git", "checkout", "-b", "{inputs.work_branch}", "{inputs.base_branch}"]
+          "args": [
+            "git",
+            "checkout",
+            "-b",
+            "{inputs.work_branch}",
+            "{inputs.base_branch}"
+          ]
         },
-
         {
           "type": "loop",
           "iterator": "{features_queue}",
@@ -27,39 +45,75 @@
             {
               "type": "agent",
               "agent": "parser",
-              "inputs": { "PLAN": "{feature.plan}" },
-              "outputs": { "tasks": "tasks" }
+              "inputs": {
+                "PLAN": "{feature.plan}"
+              },
+              "outputs": {
+                "tasks": "tasks"
+              }
             },
             {
               "type": "action",
               "action": "format_fast_batch_prompt",
-              "inputs": { "tasks": "{tasks}" },
-              "outputs": { "batch_description": "batch_description" }
-            },
-            {
-              "type": "agent",
-              "agent": "coder",
               "inputs": {
-                "TASK_ID": "{feature.id}",
-                "TASK_TITLE": "{feature.title}",
-                "TASK_DESCRIPTION": "{batch_description}"
+                "tasks": "{tasks}"
               },
-              "outputs": { "coder_res": "." }
+              "outputs": {
+                "batch_description": "batch_description"
+              }
             },
             {
-              "type": "command",
-              "command": "uv run ruff check .",
-              "on_failure": "continue"
-            },
-            {
-              "type": "agent",
-              "agent": "tester",
-              "inputs": { "FILES": "{coder_res.files_changed}" }
-            },
-            {
-              "type": "agent",
-              "agent": "critic",
-              "inputs": { "FILES": "{coder_res.files_changed}" }
+              "type": "retry_until",
+              "condition": "{lint_res.pass} && {tester_res.pass} && {critic_res.pass}",
+              "max_retries": 4,
+              "body": [
+                {
+                  "type": "agent",
+                  "agent": "coder",
+                  "inputs": {
+                    "TASK_ID": "{feature.id}",
+                    "TASK_TITLE": "{feature.title}",
+                    "TASK_DESCRIPTION": "{batch_description}",
+                    "ATTEMPT_NUMBER": "{_attempt}",
+                    "PREVIOUS_ATTEMPT_SUMMARY": "{coder_res.summary}",
+                    "FILES_CHANGED_SO_FAR": "{coder_res.files_changed}",
+                    "LINT_FEEDBACK": "{lint_res.stdout}",
+                    "TESTER_FEEDBACK": "{tester_res.failures}",
+                    "CRITIC_FEEDBACK": "{critic_res.concerns}"
+                  },
+                  "outputs": {
+                    "coder_res": "."
+                  }
+                },
+                {
+                  "type": "command",
+                  "command": "uv run ruff check .",
+                  "on_failure": "continue",
+                  "outputs": {
+                    "lint_res": "."
+                  }
+                },
+                {
+                  "type": "agent",
+                  "agent": "tester",
+                  "inputs": {
+                    "FILES": "{coder_res.files_changed}"
+                  },
+                  "outputs": {
+                    "tester_res": "."
+                  }
+                },
+                {
+                  "type": "agent",
+                  "agent": "critic",
+                  "inputs": {
+                    "FILES": "{coder_res.files_changed}"
+                  },
+                  "outputs": {
+                    "critic_res": "."
+                  }
+                }
+              ]
             },
             {
               "type": "command",
@@ -67,16 +121,20 @@
             },
             {
               "type": "command",
-              "args": ["git", "commit", "-m", "feat({feature.id}): {feature.title}"],
+              "args": [
+                "git",
+                "commit",
+                "-m",
+                "feat({feature.id}): {feature.title}"
+              ],
               "on_failure": "continue"
             }
           ]
         },
-
         {
           "type": "retry_until",
-          "condition": "{architect_res.pass} && {qa_res.pass} && {pm_res.pass}",
-          "max_retries": 3,
+          "condition": "{architect_res.pass} && {qa_res.pass} && {pm_res.pass} && {gov_reviewer_res.pass}",
+          "max_retries": 4,
           "body": [
             {
               "type": "agent",
@@ -85,9 +143,11 @@
                 "TASK_ID": "_governance",
                 "TASK_TITLE": "Address architect / QA / PM feedback",
                 "ATTEMPT_NUMBER": "{_attempt}",
-                "TASK_DESCRIPTION": "Governance review round {_attempt}. Apply every requested change from the previous review below. On the first round there is no feedback yet — instead, do a consistency pass across all features (shared models, error handling, naming) and ensure the full test suite is green.\n\nArchitect tasks:\n{architect_res.new_tasks}\n\nQA tasks:\n{qa_res.new_tasks}\n\nPM tasks:\n{pm_res.new_tasks}"
+                "TASK_DESCRIPTION": "Governance review round {_attempt}. Apply every requested change from the previous review below. On the first round there is no feedback yet — instead, do a consistency pass across all features (shared models, error handling, naming) and ensure the full test suite is green.\n\nArchitect tasks:\n{architect_res.new_tasks}\n\nQA tasks:\n{qa_res.new_tasks}\n\nPM tasks:\n{pm_res.new_tasks}\n\nAdversarial review tasks:\n{gov_reviewer_res.new_tasks}"
               },
-              "outputs": { "coder_res": "." }
+              "outputs": {
+                "coder_res": "."
+              }
             },
             {
               "type": "command",
@@ -98,7 +158,9 @@
               "type": "command",
               "command": "uv run pytest -q",
               "on_failure": "continue",
-              "outputs": { "pytest_res": "." }
+              "outputs": {
+                "pytest_res": "."
+              }
             },
             {
               "type": "command",
@@ -106,43 +168,372 @@
             },
             {
               "type": "command",
-              "args": ["git", "commit", "-m", "chore: address governance feedback (round {_attempt})"],
+              "args": [
+                "git",
+                "commit",
+                "-m",
+                "chore: address governance feedback (round {_attempt})"
+              ],
               "on_failure": "continue"
             },
             {
               "type": "agent",
               "agent": "architect",
-              "inputs": { "FEATURES_PATH": "{inputs.features_path}", "ROUND": "{_attempt}", "TESTS_PASS": "{pytest_res.pass}" },
-              "outputs": { "architect_res": "." }
+              "inputs": {
+                "FEATURES_PATH": "{inputs.features_path}",
+                "ROUND": "{_attempt}",
+                "TESTS_PASS": "{pytest_res.pass}"
+              },
+              "outputs": {
+                "architect_res": "."
+              }
             },
             {
               "type": "agent",
               "agent": "qa",
-              "inputs": { "FEATURES_PATH": "{inputs.features_path}", "ROUND": "{_attempt}", "TESTS_PASS": "{pytest_res.pass}" },
-              "outputs": { "qa_res": "." }
+              "inputs": {
+                "FEATURES_PATH": "{inputs.features_path}",
+                "ROUND": "{_attempt}",
+                "TESTS_PASS": "{pytest_res.pass}"
+              },
+              "outputs": {
+                "qa_res": "."
+              }
             },
             {
               "type": "agent",
               "agent": "pm",
-              "inputs": { "FEATURES_PATH": "{inputs.features_path}", "ROUND": "{_attempt}" },
-              "outputs": { "pm_res": "." }
+              "inputs": {
+                "FEATURES_PATH": "{inputs.features_path}",
+                "ROUND": "{_attempt}"
+              },
+              "outputs": {
+                "pm_res": "."
+              }
+            },
+            {
+              "type": "agent",
+              "agent": "gov_reviewer",
+              "inputs": {
+                "FEATURES_PATH": "{inputs.features_path}",
+                "ROUND": "{_attempt}",
+                "BASE_BRANCH": "{inputs.base_branch}",
+                "TESTS_PASS": "{pytest_res.pass}"
+              },
+              "outputs": {
+                "gov_reviewer_res": "."
+              }
             },
             {
               "type": "eval",
-              "expression": "{architect_res.pass} && {qa_res.pass} && {pm_res.pass}",
-              "outputs": { "governed": "." }
+              "expression": "{architect_res.pass} && {qa_res.pass} && {pm_res.pass} && {gov_reviewer_res.pass}",
+              "outputs": {
+                "governed": "."
+              }
             }
           ]
         },
-
         {
           "type": "command",
-          "args": ["git", "push", "-u", "origin", "{inputs.work_branch}"],
+          "args": [
+            "git",
+            "push",
+            "-u",
+            "origin",
+            "{inputs.work_branch}"
+          ],
           "on_failure": "continue"
         },
         {
           "type": "command",
-          "args": ["gh", "pr", "create", "--base", "{inputs.base_branch}", "--head", "{inputs.work_branch}", "--title", "feat: FastAPI items service", "--body", "Implements all features in {inputs.features_path}; approved by architect, QA and PM governance review."],
+          "args": [
+            "gh",
+            "pr",
+            "create",
+            "--base",
+            "{inputs.base_branch}",
+            "--head",
+            "{inputs.work_branch}",
+            "--title",
+            "feat: FastAPI items service",
+            "--body",
+            "Implements all features in {inputs.features_path}; approved by architect, QA and PM governance review."
+          ],
+          "on_failure": "continue"
+        }
+      ]
+    },
+    "factory_governed_multi": {
+      "description": "factory_governed over SEVERAL features files (batches) in one run, on one integration branch: per batch -> extract features, gated per-feature fast build, then the full governance loop (architect+qa+pm+gov_reviewer, max 3 rounds PER BATCH) scoped to that batch's file; one push + one PR at the end. Configure the batch list in the `batches` input default (CLI overrides are strings-only). Caveat: on a batch's first governance round the *_res tokens may still hold the previous batch's final feedback; the coder prompt tells the agent to skip already-addressed tasks.",
+      "inputs": {
+        "batches": {
+          "type": "list",
+          "default": [
+            {
+              "name": "items",
+              "path": "features.md"
+            }
+          ]
+        },
+        "base_branch": {
+          "type": "string",
+          "default": "main"
+        },
+        "work_branch": {
+          "type": "string",
+          "default": "factory/multi-batch"
+        }
+      },
+      "steps": [
+        {
+          "type": "command",
+          "args": [
+            "git",
+            "checkout",
+            "-b",
+            "{inputs.work_branch}",
+            "{inputs.base_branch}"
+          ]
+        },
+        {
+          "type": "loop",
+          "iterator": "{inputs.batches}",
+          "as": "batch",
+          "body": [
+            {
+              "type": "action",
+              "action": "factory_extract_features",
+              "inputs": {
+                "path": "{batch.path}"
+              },
+              "outputs": {
+                "features_queue": "."
+              }
+            },
+            {
+              "type": "loop",
+              "iterator": "{features_queue}",
+              "as": "feature",
+              "body": [
+                {
+                  "type": "agent",
+                  "agent": "parser",
+                  "inputs": {
+                    "PLAN": "{feature.plan}"
+                  },
+                  "outputs": {
+                    "tasks": "tasks"
+                  }
+                },
+                {
+                  "type": "action",
+                  "action": "format_fast_batch_prompt",
+                  "inputs": {
+                    "tasks": "{tasks}"
+                  },
+                  "outputs": {
+                    "batch_description": "batch_description"
+                  }
+                },
+                {
+                  "type": "retry_until",
+                  "condition": "{lint_res.pass} && {tester_res.pass} && {critic_res.pass}",
+                  "max_retries": 4,
+                  "body": [
+                    {
+                      "type": "agent",
+                      "agent": "coder",
+                      "inputs": {
+                        "TASK_ID": "{feature.id}",
+                        "TASK_TITLE": "{feature.title}",
+                        "TASK_DESCRIPTION": "{batch_description}",
+                        "ATTEMPT_NUMBER": "{_attempt}",
+                        "PREVIOUS_ATTEMPT_SUMMARY": "{coder_res.summary}",
+                        "FILES_CHANGED_SO_FAR": "{coder_res.files_changed}",
+                        "LINT_FEEDBACK": "{lint_res.stdout}",
+                        "TESTER_FEEDBACK": "{tester_res.failures}",
+                        "CRITIC_FEEDBACK": "{critic_res.concerns}"
+                      },
+                      "outputs": {
+                        "coder_res": "."
+                      }
+                    },
+                    {
+                      "type": "command",
+                      "command": "uv run ruff check .",
+                      "on_failure": "continue",
+                      "outputs": {
+                        "lint_res": "."
+                      }
+                    },
+                    {
+                      "type": "agent",
+                      "agent": "tester",
+                      "inputs": {
+                        "FILES": "{coder_res.files_changed}"
+                      },
+                      "outputs": {
+                        "tester_res": "."
+                      }
+                    },
+                    {
+                      "type": "agent",
+                      "agent": "critic",
+                      "inputs": {
+                        "FILES": "{coder_res.files_changed}"
+                      },
+                      "outputs": {
+                        "critic_res": "."
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "command",
+                  "command": "git add -A"
+                },
+                {
+                  "type": "command",
+                  "args": [
+                    "git",
+                    "commit",
+                    "-m",
+                    "feat({feature.id}): {feature.title}"
+                  ],
+                  "on_failure": "continue"
+                }
+              ]
+            },
+            {
+              "type": "retry_until",
+              "condition": "{architect_res.pass} && {qa_res.pass} && {pm_res.pass} && {gov_reviewer_res.pass}",
+              "max_retries": 4,
+              "body": [
+                {
+                  "type": "agent",
+                  "agent": "coder",
+                  "inputs": {
+                    "TASK_ID": "_governance",
+                    "TASK_TITLE": "Address governance feedback for batch {batch.name}",
+                    "ATTEMPT_NUMBER": "{_attempt}",
+                    "TASK_DESCRIPTION": "Governance review round {_attempt} for batch {batch.name} (features file: {batch.path}). Apply every requested change from the review below. IMPORTANT: if a listed task was already addressed in an earlier commit on this branch (it may belong to a PREVIOUS batch's final review), verify it is done and skip it. On a genuine first round with no pending feedback, do a consistency pass across this batch's features and ensure the suite (uv run pytest -q) and lint (uv run ruff check .) are green.\n\nArchitect tasks:\n{architect_res.new_tasks}\n\nQA tasks:\n{qa_res.new_tasks}\n\nPM tasks:\n{pm_res.new_tasks}\n\nAdversarial review tasks:\n{gov_reviewer_res.new_tasks}"
+                  },
+                  "outputs": {
+                    "coder_res": "."
+                  }
+                },
+                {
+                  "type": "command",
+                  "command": "uv run ruff check .",
+                  "on_failure": "continue"
+                },
+                {
+                  "type": "command",
+                  "command": "uv run pytest -q",
+                  "on_failure": "continue",
+                  "outputs": {
+                    "pytest_res": "."
+                  }
+                },
+                {
+                  "type": "command",
+                  "command": "git add -A"
+                },
+                {
+                  "type": "command",
+                  "args": [
+                    "git",
+                    "commit",
+                    "-m",
+                    "chore: address governance feedback (round {_attempt})"
+                  ],
+                  "on_failure": "continue"
+                },
+                {
+                  "type": "agent",
+                  "agent": "architect",
+                  "inputs": {
+                    "FEATURES_PATH": "{batch.path}",
+                    "ROUND": "{_attempt}",
+                    "TESTS_PASS": "{pytest_res.pass}"
+                  },
+                  "outputs": {
+                    "architect_res": "."
+                  }
+                },
+                {
+                  "type": "agent",
+                  "agent": "qa",
+                  "inputs": {
+                    "FEATURES_PATH": "{batch.path}",
+                    "ROUND": "{_attempt}",
+                    "TESTS_PASS": "{pytest_res.pass}"
+                  },
+                  "outputs": {
+                    "qa_res": "."
+                  }
+                },
+                {
+                  "type": "agent",
+                  "agent": "pm",
+                  "inputs": {
+                    "FEATURES_PATH": "{batch.path}",
+                    "ROUND": "{_attempt}"
+                  },
+                  "outputs": {
+                    "pm_res": "."
+                  }
+                },
+                {
+                  "type": "agent",
+                  "agent": "gov_reviewer",
+                  "inputs": {
+                    "FEATURES_PATH": "{batch.path}",
+                    "ROUND": "{_attempt}",
+                    "BASE_BRANCH": "{inputs.base_branch}",
+                    "TESTS_PASS": "{pytest_res.pass}"
+                  },
+                  "outputs": {
+                    "gov_reviewer_res": "."
+                  }
+                },
+                {
+                  "type": "eval",
+                  "expression": "{architect_res.pass} && {qa_res.pass} && {pm_res.pass} && {gov_reviewer_res.pass}",
+                  "outputs": {
+                    "governed": "."
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "command",
+          "args": [
+            "git",
+            "push",
+            "-u",
+            "origin",
+            "{inputs.work_branch}"
+          ],
+          "on_failure": "continue"
+        },
+        {
+          "type": "command",
+          "args": [
+            "gh",
+            "pr",
+            "create",
+            "--base",
+            "{inputs.base_branch}",
+            "--head",
+            "{inputs.work_branch}",
+            "--title",
+            "feat: governed multi-batch run",
+            "--body",
+            "Implements every batch listed in the factory_governed_multi flow inputs; each batch passed its own governance loop (architect, QA, PM, adversarial reviewer)."
+          ],
           "on_failure": "continue"
         }
       ]
