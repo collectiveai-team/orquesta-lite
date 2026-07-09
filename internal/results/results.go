@@ -341,10 +341,10 @@ func ParseReviewer(path string) (*ReviewerResult, error) {
 // actionable as-is, and either a derived plan (when actionable) or the missing
 // information to ask for (when it is not).
 type IntakeResult struct {
-	Actionable     bool    `json:"actionable"`
-	Plan           string  `json:"plan,omitempty"`
-	MissingInfo    string  `json:"missing_info,omitempty"`
-	NotesForMemory *string `json:"notes_for_memory"`
+	Actionable     bool     `json:"actionable"`
+	Plan           string   `json:"plan,omitempty"`
+	MissingInfo    []string `json:"missing_info,omitempty"`
+	NotesForMemory *string  `json:"notes_for_memory"`
 }
 
 func (r IntakeResult) MemoryNote() *string { return r.NotesForMemory }
@@ -359,7 +359,7 @@ func ParseIntake(path string) (*IntakeResult, error) {
 			return nil, fmt.Errorf("intake.actionable=true but plan is empty")
 		}
 	} else {
-		if strings.TrimSpace(r.MissingInfo) == "" {
+		if len(r.MissingInfo) == 0 {
 			return nil, fmt.Errorf("intake.actionable=false but missing_info is empty")
 		}
 	}

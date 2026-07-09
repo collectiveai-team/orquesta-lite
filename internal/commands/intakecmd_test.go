@@ -47,14 +47,14 @@ func TestParseIntake_ActionableRequiresPlan(t *testing.T) {
 func TestParseIntake_NotActionableRequiresMissingInfo(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "intake.json")
-	if err := os.WriteFile(p, []byte(`{"actionable":false,"missing_info":"- need endpoint path"}`), 0o644); err != nil {
+	if err := os.WriteFile(p, []byte(`{"actionable":false,"missing_info":["- need endpoint path"]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	r, err := results.ParseIntake(p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Actionable || !strings.Contains(r.MissingInfo, "endpoint path") {
+	if r.Actionable || !strings.Contains(strings.Join(r.MissingInfo, "\n"), "endpoint path") {
 		t.Fatalf("parsed = %+v", r)
 	}
 }
@@ -67,6 +67,25 @@ func TestParseIntake_ActionableWithoutPlanErrors(t *testing.T) {
 	}
 	if _, err := results.ParseIntake(p); err == nil || !strings.Contains(err.Error(), "plan is empty") {
 		t.Fatalf("expected plan-is-empty error, got %v", err)
+	}
+}
+
+func TestParseIntake_ActionableWithEmptyMissingInfoArray(t *testing.T) {
+	// The intake prompt contract (assets/prompts/intake.md) emits missing_info
+	// as an ARRAY — `[]` when actionable, a list of items when not. Parsing must
+	// accept that shape; a live actionable intake was aborting here because the
+	// array could not unmarshal into a Go string, so the run never reached plan.
+	dir := t.TempDir()
+	p := filepath.Join(dir, "intake.json")
+	if err := os.WriteFile(p, []byte(`{"actionable":true,"plan":"do X","missing_info":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r, err := results.ParseIntake(p)
+	if err != nil {
+		t.Fatalf("actionable intake with empty missing_info array must parse, got %v", err)
+	}
+	if !r.Actionable || len(r.MissingInfo) != 0 {
+		t.Fatalf("parsed = %+v", r)
 	}
 }
 
@@ -146,7 +165,7 @@ func TestIntake_NotActionableWritesMissingInfoAndStops(t *testing.T) {
 
 	stub := &stubIntakeCaller{out: &results.IntakeResult{
 		Actionable:  false,
-		MissingInfo: "- The endpoint path is not specified\n- No acceptance criteria given",
+		MissingInfo: []string{"- The endpoint path is not specified", "- No acceptance criteria given"},
 	}}
 	var planCalled, runCalled bool
 	plan := func(context.Context, string, string) error { planCalled = true; return nil }

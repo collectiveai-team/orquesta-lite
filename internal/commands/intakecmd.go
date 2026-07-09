@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/lionelchamorro/orquestalite/internal/eventlog"
 	"github.com/lionelchamorro/orquestalite/internal/invoke"
@@ -124,13 +125,14 @@ func writeMissingInfo(projectDir string, res *results.IntakeResult, out io.Write
 		return err
 	}
 	path := filepath.Join(dir, "intake-missing-info.md")
-	body := "# Missing information\n\nThe issue is not actionable yet. Please add:\n\n" + res.MissingInfo + "\n"
+	missing := strings.Join(res.MissingInfo, "\n")
+	body := "# Missing information\n\nThe issue is not actionable yet. Please add:\n\n" + missing + "\n"
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		return fmt.Errorf("write missing_info: %w", err)
 	}
 	fmt.Fprintf(out, "intake: NOT actionable — missing_info written to %s\n", path)
 	fmt.Fprintln(out, "----- missing_info -----")
-	fmt.Fprintln(out, res.MissingInfo)
+	fmt.Fprintln(out, missing)
 	return nil
 }
 
