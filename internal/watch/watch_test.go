@@ -175,7 +175,39 @@ func TestTick_NewIssueTriggersIntake_NewPRTriggersReview(t *testing.T) {
 	}
 }
 
-func TestTick_AlreadyProcessedItemSkipped(t *testing.T) {
+func TestTick_GenericTriggerIsStableAndRetriesFailure(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 7, 14, 12, 0, 0, 0, time.UTC)
+	item := Item{Type: ItemIssue, Number: "42", Title: "broken", Body: "fix it", Author: "alice", UpdatedAt: now}
+	l := &fakeLister{issues: [][]Item{{item}, {item}}}
+	cfg, state := newConfig(dir, map[ItemType]bool{ItemIssue: true}, l)
+	cfg.FlowRefs = map[ItemType]string{ItemIssue: "development/issue-fix@1"}
+	var triggers []Trigger
+	cfg.Trigger = func(_ context.Context, trigger Trigger) error {
+		triggers = append(triggers, trigger)
+		if len(triggers) == 1 {
+			return fmt.Errorf("temporary failure")
+		}
+		return nil
+	}
+	if err := Tick(context.Background(), cfg, state); err == nil {
+		t.Fatal("first trigger should fail")
+	}
+	if state.Processed[ItemIssue]["42"] || !state.LastSeen[ItemIssue].IsZero() {
+		t.Fatalf("failed trigger advanced state: %+v", state)
+	}
+	if err := Tick(context.Background(), cfg, state); err != nil {
+		t.Fatal(err)
+	}
+	if len(triggers) != 2 || triggers[0].IdempotencyKey != triggers[1].IdempotencyKey {
+		t.Fatalf("trigger keys are not stable: %+v", triggers)
+	}
+	if triggers[1].FlowRef != "development/issue-fix@1" || triggers[1].Inputs["number"] != "42" {
+		t.Fatalf("generic trigger = %+v", triggers[1])
+	}
+}
+
+func TestTick_ExactProviderUpdateIsDeduplicated(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	// The same item returned again the next tick (e.g. updated) must not retrigger.
@@ -183,7 +215,7 @@ func TestTick_AlreadyProcessedItemSkipped(t *testing.T) {
 		own: "me",
 		issues: [][]Item{
 			{Item{Type: ItemIssue, Number: "5", Body: "b", Author: "u", UpdatedAt: now}},
-			{Item{Type: ItemIssue, Number: "5", Body: "b", Author: "u", UpdatedAt: now.Add(time.Second)}},
+			{Item{Type: ItemIssue, Number: "5", Body: "b", Author: "u", UpdatedAt: now}},
 		},
 	}
 	var intakes int
@@ -196,7 +228,7 @@ func TestTick_AlreadyProcessedItemSkipped(t *testing.T) {
 	if intakes != 1 {
 		t.Fatalf("first tick intakes = %d, want 1", intakes)
 	}
-	if !state.Processed[ItemIssue]["5"] {
+	if !state.Processed[ItemIssue][itemIdentity(l.issues[0][0])] {
 		t.Fatal("item 5 not marked processed")
 	}
 	// Second tick re-lists item 5 (it was updated past the prior cursor): skip.
@@ -205,6 +237,27 @@ func TestTick_AlreadyProcessedItemSkipped(t *testing.T) {
 	}
 	if intakes != 1 {
 		t.Fatalf("already-processed item was re-processed: intakes = %d", intakes)
+	}
+}
+
+func TestTick_NewUpdateOfSameItemTriggersAgain(t *testing.T) {
+	dir := t.TempDir()
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	l := &fakeLister{issues: [][]Item{
+		{{Type: ItemIssue, Number: "5", Body: "first", UpdatedAt: now}},
+		{{Type: ItemIssue, Number: "5", Body: "updated", UpdatedAt: now.Add(time.Second)}},
+	}}
+	cfg, state := newConfig(dir, map[ItemType]bool{ItemIssue: true}, l)
+	var bodies []string
+	cfg.Intake = func(_ context.Context, body string) error { bodies = append(bodies, body); return nil }
+	if err := Tick(context.Background(), cfg, state); err != nil {
+		t.Fatal(err)
+	}
+	if err := Tick(context.Background(), cfg, state); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(bodies, ",") != "first,updated" {
+		t.Fatalf("bodies=%v", bodies)
 	}
 }
 
@@ -233,7 +286,7 @@ func TestTick_SkipsOwnPRsUnlessReviewOwnPRs(t *testing.T) {
 	if len(reviews) != 1 || reviews[0] != "2" {
 		t.Fatalf("own PR must be skipped, reviews = %v", reviews)
 	}
-	if !state.Processed[ItemPR]["1"] {
+	if !state.Processed[ItemPR][itemIdentity(l.prs[0][0])] {
 		t.Error("own PR should be marked processed (not retried later)")
 	}
 
@@ -280,13 +333,13 @@ func TestRun_AbortsAfterConsecutiveTickErrors(t *testing.T) {
 	}
 	defer logger.Close()
 	cfg := Config{
-		ProjectDir:            dir,
-		Interval:              time.Millisecond,
-		Enabled:               map[ItemType]bool{ItemIssue: true},
-		Lister:                &errorLister{own: "me"},
-		Intake:                func(context.Context, string) error { return nil },
-		Log:                   logger,
-		MaxConsecutiveErrors:  3,
+		ProjectDir:           dir,
+		Interval:             time.Millisecond,
+		Enabled:              map[ItemType]bool{ItemIssue: true},
+		Lister:               &errorLister{own: "me"},
+		Intake:               func(context.Context, string) error { return nil },
+		Log:                  logger,
+		MaxConsecutiveErrors: 3,
 	}
 	err = Run(context.Background(), cfg)
 	if err == nil {
@@ -310,13 +363,13 @@ func TestRun_RecoversFromTransientErrors(t *testing.T) {
 	defer logger.Close()
 	l := &flakyLister{own: "me", failUntil: 2}
 	cfg := Config{
-		ProjectDir:            dir,
-		Interval:              time.Millisecond,
-		Enabled:               map[ItemType]bool{ItemIssue: true},
-		Lister:                l,
-		Intake:                func(context.Context, string) error { return nil },
-		Log:                   logger,
-		MaxConsecutiveErrors:  5,
+		ProjectDir:           dir,
+		Interval:             time.Millisecond,
+		Enabled:              map[ItemType]bool{ItemIssue: true},
+		Lister:               l,
+		Intake:               func(context.Context, string) error { return nil },
+		Log:                  logger,
+		MaxConsecutiveErrors: 5,
 	}
 	// Run for a bounded time; it must NOT abort because the transient errors
 	// (two) stay below the threshold and then recover.

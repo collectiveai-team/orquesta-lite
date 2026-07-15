@@ -1,0 +1,223 @@
+package flow
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"reflect"
+	"strings"
+)
+
+// Types accepts the JSON Schema string and string-array forms.
+type Types []string
+
+func (t *Types) UnmarshalJSON(raw []byte) error {
+	var single string
+	if err := json.Unmarshal(raw, &single); err == nil {
+		*t = Types{single}
+		return nil
+	}
+	var many []string
+	if err := json.Unmarshal(raw, &many); err != nil || len(many) == 0 {
+		return fmt.Errorf("schema type must be a string or non-empty string array")
+	}
+	*t = many
+	return nil
+}
+
+// Schema is the deliberately small, fail-closed JSON Schema subset supported
+// by the runtime MVP.
+type Schema struct {
+	Dialect              string             `json:"$schema,omitempty"`
+	Title                string             `json:"title,omitempty"`
+	Type                 Types              `json:"type,omitempty"`
+	Properties           map[string]*Schema `json:"properties,omitempty"`
+	Required             []string           `json:"required,omitempty"`
+	AdditionalProperties *bool              `json:"additionalProperties,omitempty"`
+	Items                *Schema            `json:"items,omitempty"`
+	Enum                 []any              `json:"enum,omitempty"`
+	MinItems             *int               `json:"minItems,omitempty"`
+	MinLength            *int               `json:"minLength,omitempty"`
+}
+
+func DecodeSchema(r io.Reader) (*Schema, error) {
+	dec := json.NewDecoder(r)
+	dec.DisallowUnknownFields()
+	dec.UseNumber()
+	var schema Schema
+	if err := dec.Decode(&schema); err != nil {
+		return nil, fmt.Errorf("schema: decode: %w", err)
+	}
+	if dec.Decode(&struct{}{}) != io.EOF {
+		return nil, fmt.Errorf("schema: trailing JSON value")
+	}
+	if err := schema.validateDefinition("$"); err != nil {
+		return nil, err
+	}
+	return &schema, nil
+}
+
+func (s *Schema) validateDefinition(path string) error {
+	allowed := map[string]bool{"null": true, "boolean": true, "object": true, "array": true, "number": true, "integer": true, "string": true}
+	for _, typ := range s.Type {
+		if !allowed[typ] {
+			return fmt.Errorf("schema %s: unsupported type %q", path, typ)
+		}
+	}
+	for _, name := range s.Required {
+		if _, ok := s.Properties[name]; !ok {
+			return fmt.Errorf("schema %s: required property %q is not declared", path, name)
+		}
+	}
+	for name, child := range s.Properties {
+		if child == nil {
+			return fmt.Errorf("schema %s.%s: nil schema", path, name)
+		}
+		if err := child.validateDefinition(path + "." + name); err != nil {
+			return err
+		}
+	}
+	if s.Items != nil {
+		return s.Items.validateDefinition(path + "[]")
+	}
+	return nil
+}
+
+func (s *Schema) ValidateJSON(raw []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var value any
+	if err := dec.Decode(&value); err != nil {
+		return fmt.Errorf("invalid JSON: %w", err)
+	}
+	return s.Validate(value)
+}
+
+func (s *Schema) Validate(value any) error { return s.validateValue("$", value) }
+
+func (s *Schema) validateValue(path string, value any) error {
+	if len(s.Type) > 0 && !matchesAnyType(s.Type, value) {
+		return fmt.Errorf("%s: expected %s, got %T", path, strings.Join(s.Type, "|"), value)
+	}
+	if len(s.Enum) > 0 {
+		found := false
+		for _, allowed := range s.Enum {
+			if valuesEqual(allowed, value) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("%s: value is not in enum", path)
+		}
+	}
+	switch typed := value.(type) {
+	case map[string]any:
+		for _, name := range s.Required {
+			if _, ok := typed[name]; !ok {
+				return fmt.Errorf("%s: missing required property %q", path, name)
+			}
+		}
+		for name, childValue := range typed {
+			childSchema, known := s.Properties[name]
+			if !known {
+				if s.AdditionalProperties != nil && !*s.AdditionalProperties {
+					return fmt.Errorf("%s: unknown property %q", path, name)
+				}
+				continue
+			}
+			if err := childSchema.validateValue(path+"."+name, childValue); err != nil {
+				return err
+			}
+		}
+	case []any:
+		if s.MinItems != nil && len(typed) < *s.MinItems {
+			return fmt.Errorf("%s: requires at least %d items", path, *s.MinItems)
+		}
+		if s.Items != nil {
+			for index, item := range typed {
+				if err := s.Items.validateValue(fmt.Sprintf("%s[%d]", path, index), item); err != nil {
+					return err
+				}
+			}
+		}
+	case string:
+		if s.MinLength != nil && len([]rune(typed)) < *s.MinLength {
+			return fmt.Errorf("%s: requires length >= %d", path, *s.MinLength)
+		}
+	}
+	return nil
+}
+
+func matchesAnyType(types Types, value any) bool {
+	for _, typ := range types {
+		switch typ {
+		case "null":
+			if value == nil {
+				return true
+			}
+		case "boolean":
+			_, ok := value.(bool)
+			if ok {
+				return true
+			}
+		case "object":
+			_, ok := value.(map[string]any)
+			if ok {
+				return true
+			}
+		case "array":
+			_, ok := value.([]any)
+			if ok {
+				return true
+			}
+		case "string":
+			_, ok := value.(string)
+			if ok {
+				return true
+			}
+		case "number":
+			if isNumber(value) {
+				return true
+			}
+		case "integer":
+			if isInteger(value) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func isNumber(value any) bool {
+	switch value.(type) {
+	case json.Number, float64, float32, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return true
+	default:
+		return false
+	}
+}
+
+func isInteger(value any) bool {
+	switch typed := value.(type) {
+	case json.Number:
+		_, err := typed.Int64()
+		return err == nil
+	case float64:
+		return typed == float64(int64(typed))
+	case float32:
+		return typed == float32(int64(typed))
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
+		return true
+	default:
+		return false
+	}
+}
+
+func valuesEqual(a, b any) bool {
+	if isNumber(a) && isNumber(b) {
+		return fmt.Sprint(a) == fmt.Sprint(b)
+	}
+	return reflect.DeepEqual(a, b)
+}

@@ -24,8 +24,8 @@ func TestOpen_CreatesSchemaAndIsIdempotent(t *testing.T) {
 	if err := db.sql.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		t.Fatal(err)
 	}
-	if version != 1 {
-		t.Fatalf("user_version = %d, want 1", version)
+	if version != schemaVersion {
+		t.Fatalf("user_version = %d, want %d", version, schemaVersion)
 	}
 	for _, table := range []string{"runs", "agent_runs", "events", "ingest_state"} {
 		var n int

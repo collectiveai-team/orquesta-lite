@@ -3,6 +3,7 @@ package eventlog
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -212,5 +213,28 @@ func TestVerboseFormat_StableOrderAndElidesEmpty(t *testing.T) {
 	tailIdx := strings.Index(out, "stdout_tail=")
 	if !(roleIdx < agentIdx && agentIdx < durIdx && durIdx < tailIdx) {
 		t.Errorf("verbose field order unexpected (want role<agent<duration_s<stdout_tail):\n%s", out)
+	}
+}
+
+func TestAppendPreservesOutboxEnvelope(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "run.log")
+	logger, err := Open(path, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := json.RawMessage(`{"event_id":"e1","ts":"2026-07-14T00:00:00Z","event":"workflow_started","run_id":"r1"}`)
+	if err := logger.Append(raw); err != nil {
+		t.Fatal(err)
+	}
+	if err := logger.Close(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(raw)+"\n" {
+		t.Fatalf("got %q", got)
 	}
 }

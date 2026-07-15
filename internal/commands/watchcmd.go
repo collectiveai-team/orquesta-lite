@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -26,6 +27,9 @@ type WatchOptions struct {
 	PublishPRs   bool // post PR reviews via gh when reviewing
 	LogFormat    eventlog.Format
 	Out          io.Writer
+	Engine       string
+	IssueFlow    string
+	PRFlow       string
 }
 
 // Watch runs the long-lived per-project daemon: polls GitHub via `gh` for
@@ -51,7 +55,7 @@ func Watch(ctx context.Context, opts WatchOptions) error {
 		}
 	}
 
-lister := &ghLister{dir: opts.ProjectDir, out: opts.Out}
+	lister := &ghLister{dir: opts.ProjectDir, out: opts.Out}
 	logPath := filepath.Join(opts.ProjectDir, ".orquestalite", "run.log")
 	logger, err := eventlog.OpenWithFormat(logPath, opts.Out, opts.LogFormat)
 	if err != nil {
@@ -60,13 +64,38 @@ lister := &ghLister{dir: opts.ProjectDir, out: opts.Out}
 	defer logger.Close()
 	cfg := watch.Config{
 		ProjectDir:   opts.ProjectDir,
-		Interval:    opts.Interval,
-		Enabled:     enabled,
+		Interval:     opts.Interval,
+		Enabled:      enabled,
 		ReviewOwnPRs: opts.ReviewOwnPRs,
-		Lister:      lister,
-		Intake:      newIntakeTrigger(opts, lister),
-		Review:      newReviewTrigger(opts),
-		Log:         logger,
+		Lister:       lister,
+		Intake:       newIntakeTrigger(opts, lister),
+		Review:       newReviewTrigger(opts),
+		Log:          logger,
+	}
+	if opts.Engine == "v2" {
+		if opts.IssueFlow == "" {
+			opts.IssueFlow = "development/issue-fix@1"
+		}
+		if opts.PRFlow == "" {
+			opts.PRFlow = "development/pr-review@1"
+		}
+		cfg.FlowRefs = map[watch.ItemType]string{watch.ItemIssue: opts.IssueFlow, watch.ItemPR: opts.PRFlow}
+		cfg.Trigger = func(ctx context.Context, trigger watch.Trigger) error {
+			args := []string{"run", trigger.FlowRef, "--source-key=" + trigger.IdempotencyKey}
+			keys := make([]string, 0, len(trigger.Inputs))
+			for key := range trigger.Inputs {
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+			for _, key := range keys {
+				raw, err := json.Marshal(trigger.Inputs[key])
+				if err != nil {
+					return fmt.Errorf("encode watch input %s: %w", key, err)
+				}
+				args = append(args, key+"="+string(raw))
+			}
+			return FlowCLI(ctx, opts.ProjectDir, args, opts.Out)
+		}
 	}
 	fmt.Fprintf(opts.Out, "watch: %s — enabled: %s — interval %s\n",
 		opts.ProjectDir, summaryOfEnabled(enabled), intervalLabel(cfg.Interval))

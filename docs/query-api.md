@@ -1,5 +1,19 @@
 # Query API
 
+## Durable workflows
+
+The v2 runtime exposes read-only workflow state in addition to the event-log
+projection:
+
+- `GET /api/workflows?limit=50`
+- `GET /api/workflows/{run_id}`
+- `GET /api/workflows/{run_id}/steps`
+- `GET /api/workflows/{run_id}/approvals`
+
+These endpoints read `.orquestalite/workflows.db`, the operational checkpoint
+store. Existing `/api/runs` endpoints continue to read the rebuildable
+`.orquestalite/orq.db` event projection.
+
 `orq-lite serve` (default `127.0.0.1:4173`) exposes read-only JSON endpoints
 over a sqlite read-model of `.orquestalite/run.log` (db at
 `.orquestalite/orq.db`, built automatically by serve on a 1-second cadence, or

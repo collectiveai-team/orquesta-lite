@@ -1,8 +1,9 @@
 // Package watch runs a long-lived per-project daemon that polls GitHub (via
 // the already-authenticated `gh` CLI) for new/updated issues and PRs and
 // triggers intake (for issues) or review (for PRs) on items it has not
-// processed before. A cursor (last_seen per type) and a processed-items set
-// persist in .orquestalite/watch.json so an item is never processed twice.
+// processed before. A cursor (last_seen per type) and a processed-update set
+// persist in .orquestalite/watch.json so the same provider update is never
+// processed twice while a newer update can intentionally trigger again.
 package watch
 
 import (
@@ -60,6 +61,11 @@ type Config struct {
 	// Review is invoked for each new PR; it receives the PR number. nil → PRs
 	// are observed but not acted on.
 	Review func(ctx context.Context, prNumber string) error
+	// Trigger is the generic v2 path. When set it receives a versioned flow ref,
+	// structured inputs and a stable source idempotency key. Legacy Intake and
+	// Review callbacks remain available during migration.
+	Trigger  func(context.Context, Trigger) error
+	FlowRefs map[ItemType]string
 	// Now is the clock; nil → time.Now. Useful for deterministic tests.
 	Now func() time.Time
 	// Log, when set, receives a `watch_tick_error` event whenever a poll tick
@@ -68,6 +74,12 @@ type Config struct {
 	// MaxConsecutiveErrors aborts the daemon after this many consecutive
 	// failed ticks. <=0 → MaxConsecutiveErrorsDefault.
 	MaxConsecutiveErrors int
+}
+
+type Trigger struct {
+	FlowRef        string         `json:"flow_ref"`
+	Inputs         map[string]any `json:"inputs"`
+	IdempotencyKey string         `json:"idempotency_key"`
 }
 
 // DefaultInterval is the poll cadence when Config.Interval is unset.
@@ -79,8 +91,8 @@ const DefaultInterval = 60 * time.Second
 const MaxConsecutiveErrorsDefault = 10
 
 // State is the persisted watch progress: which types are enabled, the poll
-// interval, the last-seen cursor per type, and the processed-items set per
-// type (so an updated item reappearing past the cursor is not reprocessed).
+// interval, the last-seen cursor per type, and the processed-update set per
+// type, keyed by provider item/update identity.
 type State struct {
 	Enabled         map[ItemType]bool            `json:"enabled"`
 	IntervalSeconds int                          `json:"interval_seconds"`
@@ -228,32 +240,51 @@ func tick(ctx context.Context, cfg Config, state *State, ownUser string) error {
 		if err != nil {
 			return err
 		}
-		processItems(ctx, cfg, state, ItemIssue, items, ownUser, func(ctx context.Context, it Item) error {
+		if err := processItems(ctx, cfg, state, ItemIssue, items, ownUser, func(ctx context.Context, it Item) error {
+			if cfg.Trigger != nil {
+				return cfg.Trigger(ctx, triggerFor(cfg, it))
+			}
 			if cfg.Intake == nil {
 				return nil
 			}
 			return cfg.Intake(ctx, it.Body)
-		})
+		}); err != nil {
+			_ = state.Save(cfg.ProjectDir)
+			return err
+		}
 	}
 	if cfg.Enabled[ItemPR] {
 		items, err := cfg.Lister.ListPRs(ctx, state.LastSeen[ItemPR])
 		if err != nil {
 			return err
 		}
-		processItems(ctx, cfg, state, ItemPR, items, ownUser, func(ctx context.Context, it Item) error {
+		if err := processItems(ctx, cfg, state, ItemPR, items, ownUser, func(ctx context.Context, it Item) error {
+			if cfg.Trigger != nil {
+				return cfg.Trigger(ctx, triggerFor(cfg, it))
+			}
 			if cfg.Review == nil {
 				return nil
 			}
 			return cfg.Review(ctx, it.Number)
-		})
+		}); err != nil {
+			_ = state.Save(cfg.ProjectDir)
+			return err
+		}
 	}
 	return state.Save(cfg.ProjectDir)
+}
+
+func triggerFor(cfg Config, item Item) Trigger {
+	return Trigger{FlowRef: cfg.FlowRefs[item.Type], Inputs: map[string]any{
+		"type": item.Type, "number": item.Number, "title": item.Title,
+		"body": item.Body, "author": item.Author, "updated_at": item.UpdatedAt,
+	}, IdempotencyKey: fmt.Sprintf("github/%s/%s/%s", item.Type, item.Number, item.UpdatedAt.UTC().Format(time.RFC3339Nano))}
 }
 
 // processItems handles one type's batch: dedup against the processed set, skip
 // orq-lite's own PRs unless ReviewOwnPRs, invoke the trigger, mark items
 // processed, and advance that type's cursor to the newest item seen.
-func processItems(ctx context.Context, cfg Config, state *State, typ ItemType, items []Item, ownUser string, trigger func(ctx context.Context, it Item) error) {
+func processItems(ctx context.Context, cfg Config, state *State, typ ItemType, items []Item, ownUser string, trigger func(ctx context.Context, it Item) error) error {
 	// Oldest first so the cursor advances monotonically and an item processed
 	// early cannot lower a later cursor.
 	sort.Slice(items, func(a, b int) bool { return items[a].UpdatedAt.Before(items[b].UpdatedAt) })
@@ -263,28 +294,33 @@ func processItems(ctx context.Context, cfg Config, state *State, typ ItemType, i
 		state.Processed[typ] = processed
 	}
 	for _, it := range items {
-		if processed[it.Number] {
-			// Already-processed item reappeared (e.g. updated past cursor): skip.
+		identity := itemIdentity(it)
+		if processed[identity] {
+			// Exact provider update was already delivered: skip. A later update
+			// gets a new identity and may intentionally trigger a new run.
 			continue
 		}
 		if typ == ItemPR && !cfg.ReviewOwnPRs && ownUser != "" && it.Author == ownUser {
 			// Skip PRs orq-lite itself opened (the factory's --pr output), but
 			// mark them processed so a later update does not re-trigger review.
-			processed[it.Number] = true
+			processed[identity] = true
 			continue
 		}
-		_ = trigger(ctx, it) // best-effort; a failed trigger leaves the item
-		// unprocessed so a later update can retry it.
-		processed[it.Number] = true
-	}
-	// Advance the cursor to the newest item's UpdatedAt; keep the prior cursor
-	// when the batch was empty (so a quiet repo does not reset it).
-	for i := len(items) - 1; i >= 0; i-- {
-		if items[i].UpdatedAt.After(state.LastSeen[typ]) {
-			state.LastSeen[typ] = items[i].UpdatedAt
-			break
+		if err := trigger(ctx, it); err != nil {
+			// Do not cross the failed item's cursor. Already-successful items are
+			// deduplicated by Processed when this page is polled again.
+			return fmt.Errorf("watch: trigger %s #%s: %w", typ, it.Number, err)
+		}
+		processed[identity] = true
+		if it.UpdatedAt.After(state.LastSeen[typ]) {
+			state.LastSeen[typ] = it.UpdatedAt
 		}
 	}
+	return nil
+}
+
+func itemIdentity(item Item) string {
+	return item.Number + "@" + item.UpdatedAt.UTC().Format(time.RFC3339Nano)
 }
 
 // EnabledSummary returns a human description of the enabled watch types for

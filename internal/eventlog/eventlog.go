@@ -111,6 +111,34 @@ func (l *Logger) Log(e Event) {
 	}
 }
 
+// Append writes an already-enveloped JSON event. It is used by the durable
+// workflow outbox, which owns the event_id and timestamp. Delivery is
+// at-least-once; downstream projections deduplicate by event_id.
+func (l *Logger) Append(raw json.RawMessage) error {
+	var envelope struct {
+		Event string `json:"event"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return fmt.Errorf("eventlog: append invalid JSON: %w", err)
+	}
+	if envelope.Event == "" {
+		return fmt.Errorf("eventlog: append event field is required")
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.f == nil {
+		return fmt.Errorf("eventlog: logger is closed")
+	}
+	line := append(append([]byte(nil), raw...), '\n')
+	if _, err := l.f.Write(line); err != nil {
+		return err
+	}
+	if info, err := l.f.Stat(); err == nil && info.Size() >= l.RotateBytes {
+		l.rotateLocked()
+	}
+	return nil
+}
+
 func (l *Logger) rotateLocked() {
 	_ = l.f.Close()
 	stamp := time.Now().UTC().Format("20060102T150405Z")

@@ -1,5 +1,28 @@
 # orq-lite Architecture & Flow
 
+> **Runtime transition (ADR-0005):** the loops/factory architecture documented
+> below remains the production compatibility path while the durable dynamic
+> workflow runtime is implemented. New orchestration capabilities belong in
+> `internal/flow`, `internal/activity`, and `internal/workflow`; the legacy
+> engine and specialized schedulers are frozen except for critical fixes. See
+> `docs/adr/0005-durable-dynamic-workflow-runtime.md`.
+
+```mermaid
+flowchart LR
+    CLI[CLI aliases] --> ROUTE{--engine}
+    ROUTE -->|legacy, compatibility| OLD[engine + loops + factory]
+    ROUTE -->|v2, canary| FLOW[flow compiler]
+    FLOW --> WF[durable workflow scheduler]
+    WF --> ACT[typed activities]
+    ACT --> PACK[external development pack]
+    OLD -. removed only after parity/canary gates .-> PACK
+```
+
+The v2 operational source of truth is `.orquestalite/workflows.db`; its
+transactional outbox publishes stable events into `run.log`.
+`.orquestalite/orq.db` remains only a rebuildable query projection. A resumed
+run uses its stored IR, policy, schemas, activity contracts, and pack digest.
+
 This document explains how `orq-lite` turns a plan into shipped, gate-passed
 code, and what every component does. It reflects the architecture including the
 **vertical-slice planner** and **per-feature plan reuse**.

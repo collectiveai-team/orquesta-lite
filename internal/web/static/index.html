@@ -48,7 +48,8 @@
     color: var(--muted); margin: 0; padding: 10px 14px;
     border-bottom: 1px solid var(--border); font-weight: 600;
   }
-  #factory-section { grid-column: 1 / -1; display: none; }
+  #workflows-section, #factory-section { grid-column: 1 / -1; }
+  #factory-section { display: none; }
   table { width: 100%; border-collapse: collapse; }
   th, td { text-align: left; padding: 7px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
   th { color: var(--muted); font-weight: 500; font-size: 12px; }
@@ -59,10 +60,10 @@
     font-size: 12px; border: 1px solid var(--border); color: var(--muted);
     white-space: nowrap;
   }
-  .badge.done, .badge.pass, .badge.commit_ok, .badge.tests_pass { color: var(--ok); border-color: var(--ok); }
-  .badge.failed, .badge.needs_human, .badge.error, .badge.commit_rejected, .badge.tests_fail { color: var(--err); border-color: var(--err); }
-  .badge.in_progress { color: var(--run); border-color: var(--run); }
-  .badge.pending, .badge.decomposed, .badge.needs_clarification, .badge.commit_skipped { color: var(--warn); border-color: var(--warn); }
+  .badge.done, .badge.pass, .badge.succeeded, .badge.commit_ok, .badge.tests_pass { color: var(--ok); border-color: var(--ok); }
+  .badge.failed, .badge.cancelled, .badge.needs_human, .badge.error, .badge.commit_rejected, .badge.tests_fail { color: var(--err); border-color: var(--err); }
+  .badge.in_progress, .badge.running { color: var(--run); border-color: var(--run); }
+  .badge.pending, .badge.outcome_unknown, .badge.decomposed, .badge.needs_clarification, .badge.commit_skipped { color: var(--warn); border-color: var(--warn); }
   #events {
     list-style: none; margin: 0; padding: 8px 0; max-height: 70vh; overflow-y: auto;
   }
@@ -129,6 +130,14 @@
   </nav>
 </header>
 <main>
+  <section id="workflows-section">
+    <h2>Durable workflows</h2>
+    <div id="empty-workflows" class="muted" style="padding:18px 14px">No v2 workflow runs yet.</div>
+    <table id="workflows-table" style="display:none">
+      <thead><tr><th>Run</th><th>Status</th><th>Flow</th><th>Definition</th><th>Updated</th><th>Error</th></tr></thead>
+      <tbody id="workflows-body"></tbody>
+    </table>
+  </section>
   <section id="factory-section">
     <h2>Factory queue</h2>
     <table>
@@ -168,6 +177,21 @@
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const badge = (s) => s ? `<span class="badge ${esc(s)}">${esc(s)}</span>` : "";
+
+async function refreshWorkflows() {
+  try {
+    const res = await fetch("/api/workflows?limit=25");
+    const data = await res.json();
+    const runs = data.workflows || [];
+    $("empty-workflows").style.display = runs.length ? "none" : "block";
+    $("workflows-table").style.display = runs.length ? "table" : "none";
+    $("workflows-body").innerHTML = runs.map(run => `<tr>
+      <td>${esc(run.id)}</td><td>${badge(run.status)}</td><td>${esc(run.flowRef)}</td>
+      <td class="muted">${esc((run.definitionHash || "").slice(0, 12))}</td>
+      <td class="muted">${esc(run.updatedAt || "")}</td><td>${esc(run.error || "")}</td>
+    </tr>`).join("");
+  } catch { /* retry on next poll */ }
+}
 
 async function refreshTasks() {
   try {
@@ -327,7 +351,8 @@ document.addEventListener("click", e => {
   if (featTr) openFeature(featTr.dataset.feature, featTr.dataset.title);
 });
 
-refreshTasks(); refreshFactory(); connectEvents(); refreshCost();
+refreshWorkflows(); refreshTasks(); refreshFactory(); connectEvents(); refreshCost();
+setInterval(refreshWorkflows, 2000);
 setInterval(refreshTasks, 2000);
 setInterval(refreshFactory, 3000);
 setInterval(refreshCost, 60000);

@@ -128,6 +128,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/stats/cost", s.handleCostStats)
 	mux.HandleFunc("GET /api/flows", s.handleFlows)
 	mux.HandleFunc("GET /api/doctor", s.handleDoctor)
+	mux.HandleFunc("GET /api/workflows", s.handleWorkflows)
+	mux.HandleFunc("GET /api/workflows/{id}", s.handleWorkflow)
+	mux.HandleFunc("GET /api/workflows/{id}/steps", s.handleWorkflowSteps)
+	mux.HandleFunc("GET /api/workflows/{id}/approvals", s.handleWorkflowApprovals)
 
 	static, err := fs.Sub(staticFS, "static")
 	if err != nil {

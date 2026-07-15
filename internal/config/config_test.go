@@ -600,3 +600,42 @@ func TestLimitsFeatureRetries(t *testing.T) {
 		t.Errorf("explicit FeatureRetries = %d, want 3", got)
 	}
 }
+
+func TestResolveAllDoesNotRequireLegacyRoles(t *testing.T) {
+	cfg := &Config{
+		Agents: map[string]Agent{"a1": {Provider: "claude"}},
+		Roles: map[string]Role{"architect": {
+			Agents:         []string{"a1"},
+			Prompt:         "prompts/architect.md",
+			ResultPath:     ".orquestalite/results/architect.json",
+			TimeoutSeconds: 60,
+		}},
+	}
+	roles, err := cfg.ResolveAll()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := roles["architect"]; !ok || len(roles) != 1 {
+		t.Fatalf("roles = %#v", roles)
+	}
+	if _, err := cfg.Resolve(); err == nil {
+		t.Fatal("legacy Resolve should still require orchestrated roles")
+	}
+}
+
+func TestResolveRolesIgnoresBrokenUnreferencedRole(t *testing.T) {
+	cfg := &Config{
+		Agents: map[string]Agent{"good": {Provider: "claude"}},
+		Roles: map[string]Role{
+			"architect": {Agents: []string{"good"}, Prompt: "architect.md", ResultPath: "architect.json", TimeoutSeconds: 60},
+			"broken":    {Agents: []string{"missing"}, Prompt: "broken.md", ResultPath: "broken.json", TimeoutSeconds: 60},
+		},
+	}
+	roles, err := cfg.ResolveRoles([]string{"architect"})
+	if err != nil || len(roles) != 1 || roles["architect"].Agents[0].Name != "good" {
+		t.Fatalf("roles=%+v err=%v", roles, err)
+	}
+	if _, err = cfg.ResolveRoles([]string{"broken"}); err == nil {
+		t.Fatal("referenced broken role should fail")
+	}
+}

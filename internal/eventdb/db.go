@@ -12,7 +12,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 1
+const schemaVersion = 2
 
 const schema = `
 CREATE TABLE IF NOT EXISTS runs (
@@ -48,6 +48,7 @@ CREATE TABLE IF NOT EXISTS agent_runs (
 );
 CREATE TABLE IF NOT EXISTS events (
     id      INTEGER PRIMARY KEY,
+    event_id TEXT,
     run_id  TEXT NOT NULL DEFAULT '',
     ts      TEXT NOT NULL DEFAULT '',
     type    TEXT NOT NULL DEFAULT '',
@@ -60,6 +61,7 @@ CREATE TABLE IF NOT EXISTS ingest_state (
 );
 CREATE INDEX IF NOT EXISTS idx_events_run      ON events(run_id);
 CREATE INDEX IF NOT EXISTS idx_events_type     ON events(type);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_events_event_id ON events(event_id) WHERE event_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_agent_runs_run  ON agent_runs(run_id);
 CREATE INDEX IF NOT EXISTS idx_runs_started    ON runs(started_at);
 `
@@ -87,6 +89,16 @@ func Open(path string) (*DB, error) {
 		if _, err := db.Exec(schema); err != nil {
 			_ = db.Close()
 			return nil, fmt.Errorf("eventdb: create schema %s: %w", path, err)
+		}
+		if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("eventdb: stamp version %s: %w", path, err)
+		}
+	case 1:
+		if _, err := db.Exec(`ALTER TABLE events ADD COLUMN event_id TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_events_event_id ON events(event_id) WHERE event_id IS NOT NULL;`); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("eventdb: migrate schema %s: %w", path, err)
 		}
 		if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion)); err != nil {
 			_ = db.Close()
