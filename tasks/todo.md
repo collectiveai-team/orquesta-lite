@@ -27,13 +27,13 @@ Source plan: `docs/superpowers/plans/2026-07-01-product-readiness.md`
 Las Tasks 12–21 originales fueron reemplazadas por el plan ejecutable
 [`docs/superpowers/plans/2026-07-14-durable-dynamic-workflow-runtime.md`](../docs/superpowers/plans/2026-07-14-durable-dynamic-workflow-runtime.md).
 
-- [ ] Milestone 0: baseline y matriz de paridad.
-- [ ] Milestone 1: flow spec v2, compiler e IR.
-- [ ] Milestone 2: activity model y protocolo externo.
-- [ ] Milestone 3: store durable, scheduler y recovery.
-- [ ] Milestone 4: CLI, config y observabilidad v2.
-- [ ] Milestone 5: control dinámico y pack contract.
-- [ ] Milestone 6: aliases, cutover y eliminación del runtime especializado.
+- [x] Milestone 0: baseline y matriz de paridad.
+- [x] Milestone 1: flow spec v2, compiler e IR.
+- [x] Milestone 2: activity model y protocolo externo.
+- [x] Milestone 3: store durable, scheduler y recovery.
+- [x] Milestone 4: CLI, config y observabilidad v2.
+- [x] Milestone 5: control dinámico y pack contract.
+- [ ] Milestone 6: aliases y gate de cutover listos; eliminación bloqueada hasta evidencia real.
 
 ## Fase 4 — Recovery + medic
 - [ ] Task 22: internal/recovery + rol medic

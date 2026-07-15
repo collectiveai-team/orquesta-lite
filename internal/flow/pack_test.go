@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/lionelchamorro/orquestalite/internal/activity"
@@ -70,5 +71,39 @@ func TestDevelopmentFixturePackCompilesOffline(t *testing.T) {
 	}
 	if err = PinPack(ir, pack); err != nil || ir.Pack == nil {
 		t.Fatalf("pin err=%v ir=%+v", err, ir)
+	}
+}
+
+func TestLoadPackRejectsUnlistedResource(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "flows"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := []byte(`{}`)
+	if err := os.WriteFile(filepath.Join(root, "flows", "listed.json"), content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "flows", "unlisted.json"), content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	manifest := Pack{APIVersion: PackAPIVersion, Name: "development", Version: "1", Files: map[string]Digest{"flows/listed.json": digestBytes(content)}}
+	raw, _ := json.Marshal(manifest)
+	if err := os.WriteFile(filepath.Join(root, "pack.json"), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadPack(root); err == nil || !strings.Contains(err.Error(), "unlisted file") {
+		t.Fatalf("expected unlisted file error, got %v", err)
+	}
+}
+
+func TestLoadPackRejectsPortableTraversal(t *testing.T) {
+	root := t.TempDir()
+	manifest := Pack{APIVersion: PackAPIVersion, Name: "development", Version: "1", Files: map[string]Digest{`flows\..\outside.json`: digestBytes(nil)}}
+	raw, _ := json.Marshal(manifest)
+	if err := os.WriteFile(filepath.Join(root, "pack.json"), raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadPack(root); err == nil || !strings.Contains(err.Error(), "unsafe file path") {
+		t.Fatalf("expected unsafe path error, got %v", err)
 	}
 }

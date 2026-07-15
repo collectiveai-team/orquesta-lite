@@ -62,6 +62,10 @@ Negative:
 - `command.run` is at-most-once by default; an uncertain outcome is not retried.
 - A run pins compiled IR, policy, pack digests, and activity versions.
 - Parallel execution is deferred until sequential kill-and-resume tests pass.
+- Legacy package deletion requires a successful `orq-lite cutover check`; the
+  command validates versioned evidence plus current controlled-project and
+  pack state. Canary binaries select v2 through a link-time default while an
+  implicit v2 request still drains unfinished legacy state safely.
 
 ## Implementation
 

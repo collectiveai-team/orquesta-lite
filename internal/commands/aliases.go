@@ -22,21 +22,88 @@ var developmentAliases = map[string]string{
 	"factory": "factory-governed",
 }
 
-func CheckV2RunStart(projectDir string, forceNew bool) error {
-	list, err := tasks.Load(filepath.Join(projectDir, "tasks.json"))
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
+// SelectDevelopmentEngine applies the strangler routing rule during the
+// canary window. An implicit v2 default drains unfinished legacy state through
+// the legacy runtime; an explicit v2 request fails unless forceNew is set.
+func SelectDevelopmentEngine(projectDir, command, requested string, explicitlySet, forceNew bool, out io.Writer) (string, error) {
+	if err := ValidateEngine(requested); err != nil {
+		return "", err
 	}
+	if requested == "legacy" {
+		return requested, nil
+	}
+	active, err := hasRelevantLegacyState(projectDir, command)
+	if err != nil {
+		return "", err
+	}
+	if !active || forceNew {
+		return requested, nil
+	}
+	if explicitlySet {
+		return "", fmt.Errorf("unfinished legacy %s state exists; finish it with --engine=legacy or explicitly force a separate v2 run where supported", command)
+	}
+	if out != nil {
+		fmt.Fprintf(out, "warning: unfinished legacy %s state found; routing to --engine=legacy for this run\n", command)
+	}
+	return "legacy", nil
+}
+
+func hasRelevantLegacyState(projectDir, command string) (bool, error) {
+	switch command {
+	case "factory":
+		return hasUnfinishedLegacyFactory(projectDir)
+	case "plan", "run", "intake":
+		return hasUnfinishedLegacyTasks(projectDir)
+	default:
+		return false, nil
+	}
+}
+
+func hasUnfinishedLegacyTasks(projectDir string) (bool, error) {
+	paths := []string{
+		filepath.Join(projectDir, ".orquestalite", "tasks.json"),
+		filepath.Join(projectDir, "tasks.json"), // pre-state-dir compatibility
+	}
+	for _, path := range paths {
+		list, err := tasks.Load(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		for _, task := range list.Tasks {
+			if task.Status != tasks.StatusDone && task.Status != tasks.StatusDecomposed {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}
+
+func hasUnfinishedLegacyFactory(projectDir string) (bool, error) {
+	queue, err := factory.Load(projectDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	for _, feature := range queue.Features {
+		if feature.Status != factory.StatusDone {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func CheckV2RunStart(projectDir string, forceNew bool) error {
+	active, err := hasUnfinishedLegacyTasks(projectDir)
 	if err != nil {
 		return err
 	}
-	for _, task := range list.Tasks {
-		if task.Status != tasks.StatusDone && task.Status != tasks.StatusDecomposed {
-			if forceNew {
-				return nil
-			}
-			return fmt.Errorf("unfinished legacy task state exists; finish it with --engine=legacy or pass --force-new-run without deleting tasks.json")
-		}
+	if active && !forceNew {
+		return fmt.Errorf("unfinished legacy task state exists; finish it with --engine=legacy or pass --force-new-run without deleting tasks.json")
 	}
 	return nil
 }
@@ -63,20 +130,12 @@ func RunDevelopmentAlias(ctx context.Context, projectDir, command string, inputs
 }
 
 func CheckV2FactoryStart(projectDir string, forceNew bool) error {
-	queue, err := factory.Load(projectDir)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
+	active, err := hasUnfinishedLegacyFactory(projectDir)
 	if err != nil {
 		return err
 	}
-	for _, feature := range queue.Features {
-		if feature.Status != factory.StatusDone {
-			if forceNew {
-				return nil
-			}
-			return fmt.Errorf("unfinished legacy factory state exists; finish it with --engine=legacy or pass --force-new-run without deleting factory.json")
-		}
+	if active && !forceNew {
+		return fmt.Errorf("unfinished legacy factory state exists; finish it with --engine=legacy or pass --force-new-run without deleting factory.json")
 	}
 	return nil
 }

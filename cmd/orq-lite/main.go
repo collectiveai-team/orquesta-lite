@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"time"
 
 	"github.com/lionelchamorro/orquestalite/internal/commands"
@@ -14,6 +15,11 @@ import (
 )
 
 var version = "dev"
+
+// defaultEngine stays legacy in normal builds until the cutover gate opens.
+// Canary releases can dogfood v2 as the default without a source fork via:
+// -ldflags "-X main.defaultEngine=v2".
+var defaultEngine = "legacy"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -40,16 +46,17 @@ func main() {
 	case "plan":
 		fs := flag.NewFlagSet("plan", flag.ExitOnError)
 		appendFlag := fs.Bool("append", false, "append to existing tasks.json")
-		engineName := fs.String("engine", "legacy", "execution engine: legacy|v2")
+		engineName := fs.String("engine", defaultEngine, "execution engine: legacy|v2")
 		_ = fs.Parse(args)
 		if fs.NArg() < 1 {
 			fmt.Fprintln(os.Stderr, "usage: orq-lite plan <plan.md> [--append]")
 			os.Exit(2)
 		}
-		if err := commands.ValidateEngine(*engineName); err != nil {
+		selectedEngine, err := commands.SelectDevelopmentEngine(".", "plan", *engineName, flagWasSet(args, "engine"), false, os.Stderr)
+		if err != nil {
 			exit(err)
 		}
-		if *engineName == "v2" {
+		if selectedEngine == "v2" {
 			exit(commands.RunDevelopmentAlias(ctx, ".", "plan", map[string]any{"plan_path": fs.Arg(0), "append": *appendFlag}, os.Stdout))
 		}
 		exit(commands.PlanWithLiveCaller(ctx, ".", fs.Arg(0), *appendFlag))
@@ -60,16 +67,17 @@ func main() {
 		fast := fs.Bool("fast", false, "batch all pending tasks through coder once, then tester/critic once")
 		serve := fs.Bool("serve", false, "also host the web dashboard while running")
 		addr := fs.String("addr", "127.0.0.1:4173", "dashboard address (with --serve)")
-		engineName := fs.String("engine", "legacy", "execution engine: legacy|v2")
+		engineName := fs.String("engine", defaultEngine, "execution engine: legacy|v2")
 		forceNewRun := fs.Bool("force-new-run", false, "start v2 despite unfinished legacy tasks; preserves tasks.json")
 		_ = fs.Parse(args)
 		runCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
 		defer stop()
 		startDashboard(runCtx, *serve, *addr)
-		if err := commands.ValidateEngine(*engineName); err != nil {
+		selectedEngine, err := commands.SelectDevelopmentEngine(".", "run", *engineName, flagWasSet(args, "engine"), *forceNewRun, os.Stderr)
+		if err != nil {
 			exit(err)
 		}
-		if *engineName == "v2" {
+		if selectedEngine == "v2" {
 			if err := commands.CheckV2RunStart(".", *forceNewRun); err != nil {
 				exit(err)
 			}
@@ -94,7 +102,7 @@ func main() {
 		fast := fs.Bool("fast", false, "run coder/tester/critic once per feature, then final global review")
 		serve := fs.Bool("serve", true, "host the web dashboard while running (on by default)")
 		addr := fs.String("addr", "127.0.0.1:4173", "dashboard address")
-		engineName := fs.String("engine", "legacy", "execution engine: legacy|v2")
+		engineName := fs.String("engine", defaultEngine, "execution engine: legacy|v2")
 		forceNewRun := fs.Bool("force-new-run", false, "start v2 despite unfinished legacy state; preserves legacy files")
 		_ = fs.Parse(args)
 		featuresPath := ""
@@ -107,10 +115,11 @@ func main() {
 		// always sees its URL and can tell the run is live; --serve=false and
 		// --status both suppress it.
 		startDashboard(runCtx, *serve && !*statusOnly, *addr)
-		if err := commands.ValidateEngine(*engineName); err != nil {
+		selectedEngine, err := commands.SelectDevelopmentEngine(".", "factory", *engineName, flagWasSet(args, "engine"), *forceNewRun, os.Stderr)
+		if err != nil {
 			exit(err)
 		}
-		if *engineName == "v2" {
+		if selectedEngine == "v2" {
 			if err := commands.CheckV2FactoryStart(".", *forceNewRun); err != nil {
 				exit(err)
 			}
@@ -147,7 +156,7 @@ func main() {
 		base := fs.String("base", "", "explicit base git ref (overrides --pr resolution)")
 		head := fs.String("head", "", "explicit head git ref (overrides --pr resolution)")
 		publish := fs.Bool("publish", false, "post the verdict as a PR review via gh")
-		engineName := fs.String("engine", "legacy", "execution engine: legacy|v2")
+		engineName := fs.String("engine", defaultEngine, "execution engine: legacy|v2")
 		_ = fs.Parse(args)
 		if err := commands.ValidateEngine(*engineName); err != nil {
 			exit(err)
@@ -167,12 +176,13 @@ func main() {
 		fs := flag.NewFlagSet("intake", flag.ExitOnError)
 		issue := fs.String("issue", "", "path to a file holding the GitHub issue body")
 		noRun := fs.Bool("no-run", false, "stop after writing tasks.json (do not run the loop)")
-		engineName := fs.String("engine", "legacy", "execution engine: legacy|v2")
+		engineName := fs.String("engine", defaultEngine, "execution engine: legacy|v2")
 		_ = fs.Parse(args)
-		if err := commands.ValidateEngine(*engineName); err != nil {
+		selectedEngine, err := commands.SelectDevelopmentEngine(".", "intake", *engineName, flagWasSet(args, "engine"), false, os.Stderr)
+		if err != nil {
 			exit(err)
 		}
-		if *engineName == "v2" {
+		if selectedEngine == "v2" {
 			exit(commands.RunDevelopmentAlias(ctx, ".", "intake", map[string]any{"issue_path": *issue, "run": !*noRun}, os.Stdout))
 		}
 		exit(commands.Intake(ctx, commands.IntakeOptions{
@@ -188,7 +198,7 @@ func main() {
 		prs := fs.Bool("prs", false, "watch PRs (trigger review)")
 		reviewOwn := fs.Bool("review-own-prs", false, "review PRs that orq-lite itself opened (default: skip)")
 		publishPRs := fs.Bool("publish-prs", false, "post PR reviews via gh when reviewing")
-		engineName := fs.String("engine", "legacy", "execution engine: legacy|v2")
+		engineName := fs.String("engine", defaultEngine, "execution engine: legacy|v2")
 		issueFlow := fs.String("issue-flow", "development/issue-fix@1", "v2 flow for issues")
 		prFlow := fs.String("pr-flow", "development/pr-review@1", "v2 flow for pull requests")
 		_ = fs.Parse(args)
@@ -216,6 +226,9 @@ func main() {
 
 	case "doctor":
 		exit(commands.Doctor(".", os.Stdout))
+
+	case "cutover":
+		exit(commands.CutoverCLI(ctx, ".", args, os.Stdout))
 
 	case "index":
 		fs := flag.NewFlagSet("index", flag.ExitOnError)
@@ -329,6 +342,8 @@ Commands:
   watch <project> [--issues] [--prs] [--interval D] poll GitHub; v2 emits idempotent generic flow triggers (--issue-flow, --pr-flow)
   cost                  per-task spend rollup (run.log sessions priced via agtop)
   doctor                preflight the setup (git, team.json, CLIs, credentials) before spending
+  cutover check         verify the fail-closed legacy runtime deletion gate (--evidence path, --commit sha, --json)
+  cutover template      print the versioned evidence document required by the deletion gate
   index [--rebuild]     build the sqlite read-model (.orquestalite/orq.db) from run.log
   status [--watch]      print tasks table (--watch refreshes until Ctrl+C)
   serve [--addr A]      web dashboard with live events (default 127.0.0.1:4173)
@@ -349,4 +364,15 @@ func exit(err error) {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
+}
+
+func flagWasSet(args []string, name string) bool {
+	long := "--" + name
+	short := "-" + name
+	for _, arg := range args {
+		if arg == long || arg == short || strings.HasPrefix(arg, long+"=") || strings.HasPrefix(arg, short+"=") {
+			return true
+		}
+	}
+	return false
 }

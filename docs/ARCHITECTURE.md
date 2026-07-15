@@ -22,6 +22,9 @@ The v2 operational source of truth is `.orquestalite/workflows.db`; its
 transactional outbox publishes stable events into `run.log`.
 `.orquestalite/orq.db` remains only a rebuildable query projection. A resumed
 run uses its stored IR, policy, schemas, activity contracts, and pack digest.
+`orq-lite cutover check` is the executable boundary between coexistence and
+deletion; its evidence and canary procedure are defined in
+`docs/runtime-cutover.md`.
 
 This document explains how `orq-lite` turns a plan into shipped, gate-passed
 code, and what every component does. It reflects the architecture including the

@@ -97,3 +97,12 @@ func TestFlowCLIExecutesInstalledPinnedPack(t *testing.T) {
 		t.Fatalf("runs=%+v err=%v", runs, err)
 	}
 }
+
+func TestFlowCLIMissingPackHasActionableError(t *testing.T) {
+	dir := t.TempDir()
+	var out bytes.Buffer
+	err := FlowCLI(context.Background(), dir, []string{"run", "development/pr-review@1"}, &out)
+	if err == nil || !strings.Contains(err.Error(), "installed pack development@1 is required") {
+		t.Fatalf("err=%v", err)
+	}
+}

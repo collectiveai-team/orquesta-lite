@@ -36,3 +36,8 @@ pack, three comparable benchmark runs, a dogfooded canary release, tested
 rollback, and confirmation that controlled projects have no active legacy run.
 Until those external facts exist, `internal/loops`, `internal/factory`, and
 `internal/engine` remain frozen compatibility code.
+
+The gate is now executable with `orq-lite cutover check`. Its strict evidence
+schema, required chaos cases, live legacy-state scan, offline pack compilation,
+and canary procedure are documented in `docs/runtime-cutover.md`. Implementing
+the checker does not claim that the external evidence already exists.

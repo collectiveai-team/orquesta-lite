@@ -2,6 +2,7 @@ package flow
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -75,11 +76,31 @@ func LoadPack(root string) (*Pack, error) {
 	if pack.APIVersion != PackAPIVersion || !identifier.MatchString(pack.Name) || !versionPattern.MatchString(pack.Version) {
 		return nil, fmt.Errorf("pack: invalid apiVersion, name, or version")
 	}
+	verifiedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return nil, fmt.Errorf("pack: resolve root: %w", err)
+	}
 	for relative, expected := range pack.Files {
-		if filepath.IsAbs(relative) || strings.Contains(filepath.ToSlash(relative), "../") {
+		clean, cleanErr := cleanPackPath(relative)
+		if cleanErr != nil {
 			return nil, fmt.Errorf("pack: unsafe file path %q", relative)
 		}
-		content, readErr := os.ReadFile(filepath.Join(root, filepath.FromSlash(relative)))
+		if len(expected) != 64 {
+			return nil, fmt.Errorf("pack: invalid SHA-256 digest for %s", relative)
+		}
+		if _, decodeErr := hex.DecodeString(string(expected)); decodeErr != nil {
+			return nil, fmt.Errorf("pack: invalid SHA-256 digest for %s", relative)
+		}
+		target := filepath.Join(root, filepath.FromSlash(clean))
+		resolved, resolveErr := filepath.EvalSymlinks(target)
+		if resolveErr != nil {
+			return nil, fmt.Errorf("pack: resolve %s: %w", relative, resolveErr)
+		}
+		inside, relErr := filepath.Rel(verifiedRoot, resolved)
+		if relErr != nil || inside == ".." || strings.HasPrefix(inside, ".."+string(filepath.Separator)) {
+			return nil, fmt.Errorf("pack: file %s resolves outside pack root", relative)
+		}
+		content, readErr := os.ReadFile(resolved)
 		if readErr != nil {
 			return nil, fmt.Errorf("pack: read %s: %w", relative, readErr)
 		}
@@ -87,5 +108,52 @@ func LoadPack(root string) (*Pack, error) {
 			return nil, fmt.Errorf("pack: digest mismatch for %s: got %s want %s", relative, actual, expected)
 		}
 	}
+	if err = rejectUnlistedPackFiles(root, pack.Files); err != nil {
+		return nil, err
+	}
 	return &pack, nil
+}
+
+func cleanPackPath(relative string) (string, error) {
+	portable := strings.ReplaceAll(relative, `\`, "/")
+	if portable == "" || strings.HasPrefix(portable, "/") {
+		return "", fmt.Errorf("empty or absolute path")
+	}
+	parts := strings.Split(portable, "/")
+	for _, part := range parts {
+		if part == "" || part == "." || part == ".." {
+			return "", fmt.Errorf("unsafe path segment")
+		}
+	}
+	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(portable)))
+	if clean != portable || filepath.IsAbs(filepath.FromSlash(portable)) {
+		return "", fmt.Errorf("path is not canonical")
+	}
+	return clean, nil
+}
+
+func rejectUnlistedPackFiles(root string, listed map[string]Digest) error {
+	return filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return fmt.Errorf("pack: inspect files: %w", walkErr)
+		}
+		if path == root || entry.IsDir() {
+			return nil
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("pack: symlink is not allowed: %s", path)
+		}
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return fmt.Errorf("pack: inspect %s: %w", path, err)
+		}
+		relative = filepath.ToSlash(relative)
+		if relative == "pack.json" {
+			return nil
+		}
+		if _, ok := listed[relative]; !ok {
+			return fmt.Errorf("pack: unlisted file %s", relative)
+		}
+		return nil
+	})
 }

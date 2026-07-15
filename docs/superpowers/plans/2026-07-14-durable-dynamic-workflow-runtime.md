@@ -180,15 +180,16 @@ El número de intento no forma parte de la idempotency key.
 - [x] 6.1 Aliases con routing gradual.
 - [x] 6.2 Coexistencia de estado legacy.
 - [x] 6.3 Watch dispara flows.
-- [ ] 6.4 Gates para borrar código especializado.
+- [x] 6.4 Gates para borrar código especializado.
 - [ ] 6.5 Eliminación y cleanup.
 
-> Estado al 2026-07-14: el core y el routing de coexistencia están
-> implementados. 6.4 y 6.5 permanecen abiertos porque dependen de hechos
-> externos que este branch no puede fabricar: development pack con paridad,
-> benchmark N≥3, canary dogfooded, rollback probado y ausencia de runs legacy
-> activos. Eliminar el runtime especializado antes de esos gates contradiría
-> explícitamente la estrategia strangler de este mismo plan.
+> Estado al 2026-07-15: el core y el routing de coexistencia están
+> implementados. 6.4 es un gate ejecutable fail-closed (`orq-lite cutover
+> check`) que valida evidencia versionada, estado legacy vivo y el pack offline.
+> El gate todavía está cerrado porque este branch no puede fabricar el
+> development pack con paridad, benchmark N≥3, canary dogfooded ni rollback.
+> Por eso 6.5 continúa abierto: borrar antes de observar esos hechos
+> contradiría explícitamente la estrategia strangler de este mismo plan.
 
 ---
 
@@ -752,6 +753,11 @@ Cada alias imprime el flow ref/hash real que ejecuta.
 
 ### Task 6.4: Gates para borrar código especializado
 
+**Implementación:** `internal/cutover`, `orq-lite cutover check|template` y
+`docs/runtime-cutover.md`. El release canary puede compilar v2 como default con
+`-ldflags "-X main.defaultEngine=v2"`; el routing implícito preserva y drena
+estado legacy no terminal.
+
 Antes de eliminar packages:
 
 - Todos los scenarios de paridad relevantes verdes en v2.
@@ -763,6 +769,10 @@ Antes de eliminar packages:
 - Development pack versionado, instalado y resoluble offline.
 
 ### Task 6.5: Eliminación y cleanup
+
+**Estado:** bloqueada deliberadamente hasta que `orq-lite cutover check` salga
+con código cero usando evidencia real del release. El checker no crea ni
+autoaprueba esa evidencia.
 
 **Files to delete after gates:**
 

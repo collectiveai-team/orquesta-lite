@@ -374,6 +374,15 @@ the default until the external development pack passes the documented parity,
 benchmark, canary, and rollback gates; `--force-new-run` is required when an
 unfinished legacy task/factory state exists. See
 [`docs/adr/0005-durable-dynamic-workflow-runtime.md`](./docs/adr/0005-durable-dynamic-workflow-runtime.md).
+The deletion gate is executable:
+
+```bash
+orq-lite cutover template > .orquestalite/cutover-evidence.json
+orq-lite cutover check --evidence .orquestalite/cutover-evidence.json --commit <candidate-sha>
+```
+
+See [`docs/runtime-cutover.md`](./docs/runtime-cutover.md) for the evidence
+contract, offline pack check, and v2-default canary build.
 
 Runtime state lives in `.orquestalite/`, including:
 

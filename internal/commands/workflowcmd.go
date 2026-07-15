@@ -64,6 +64,9 @@ func compileWorkflowTarget(projectDir, target string) (*compiledWorkflow, error)
 					break
 				}
 			}
+			if root == "" {
+				return nil, fmt.Errorf("installed pack %s@%s is required for flow %s but was not found under %s", packName, version, flowName, filepath.Join(projectDir, ".orquestalite", "packs"))
+			}
 		}
 		ref, parseErr := flow.ParseResourceRef(target)
 		if parseErr != nil || ref.Kind != "flow" {
