@@ -301,7 +301,7 @@ func TestConfig_ResolveValidTeam(t *testing.T) {
 	p := writeTeamJSON(t, `{
 		"agents": {
 			"coder_agent": {"provider": "codex", "model": "gpt-5", "effort": "high", "rate_limit_pattern": "429"},
-			"parser_agent": {"cmd": ["parser", "{{PROMPT}}"], "dangerously_skip_permissions": true},
+			"parser_agent": {"cmd": ["parser", "{{PROMPT}}"], "dangerously_skip_permissions": true, "safe_mode": true},
 			"tester_agent": {"provider": "claude", "model": "claude-sonnet-4-6"},
 			"critic_agent": {"provider": "claude", "model": "claude-opus-4-8"},
 			"reviewer_agent": {"cmd": ["reviewer", "{{PROMPT}}"]}
@@ -346,6 +346,9 @@ func TestConfig_ResolveValidTeam(t *testing.T) {
 	}
 	if !parser.Agents[0].SkipPerms {
 		t.Errorf("parser agent SkipPerms = false, want true")
+	}
+	if !parser.Agents[0].SafeMode {
+		t.Errorf("parser agent SafeMode = false, want true")
 	}
 }
 
@@ -393,6 +396,7 @@ func completeResolveConfig() *Config {
 				Provider:                   "claude",
 				Model:                      "claude-opus-4-8",
 				DangerouslySkipPermissions: true,
+				SafeMode:                   true,
 				RateLimitPattern:           "429",
 			},
 			"claude_sonnet": {

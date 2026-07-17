@@ -1,0 +1,114 @@
+{
+  "apiVersion": "orq.dev/v2",
+  "kind": "Subflow",
+  "metadata": {"name": "integrated-review", "version": "1"},
+  "inputs": {
+    "features_path": {"schema": "schema:path@1"}
+  },
+  "steps": [
+    {
+      "id": "lint",
+      "uses": "activity:gate.run@1",
+      "with": {"argv": ["uv", "run", "ruff", "check", "."]}
+    },
+    {
+      "id": "tests",
+      "uses": "activity:gate.run@1",
+      "with": {"argv": ["uv", "run", "pytest", "-q"]}
+    },
+    {
+      "id": "qa",
+      "uses": "activity:agent.invoke@1",
+      "with": {
+        "role": "qa",
+        "outputSchema": "schema:review-result@1",
+        "vars": {"FEATURES_PATH": {"$ref": "inputs.features_path"}},
+        "fallbackOutput": {
+          "approved": false,
+          "summary": "global QA unavailable; critic and integration repair must continue fail-closed",
+          "findings": ["global QA did not produce a valid checkpoint; critic must inspect independently and final governance must not assume approval"]
+        }
+      }
+    },
+    {
+      "id": "critic",
+      "uses": "activity:agent.invoke@1",
+      "with": {
+        "role": "critic",
+        "outputSchema": "schema:review-result@1",
+        "context": {
+          "FEATURES_PATH": {"$ref": "inputs.features_path"},
+          "QA_REVIEW": {"$ref": "steps.qa.output"}
+        },
+        "fallbackOutput": {
+          "approved": false,
+          "summary": "critic unavailable; integration repair must continue from global QA evidence",
+          "findings": ["critic did not produce a valid checkpoint; preserve QA findings and require final governance review"]
+        }
+      }
+    },
+    {
+      "id": "integration_repair",
+      "uses": "activity:agent.invoke@1",
+      "while": {
+        "condition": "item.continue == true",
+        "maxIterations": 3,
+        "initial": {
+          "continue": true,
+          "summary": "global QA and critic findings must be reconciled",
+          "remaining": ["review QA and critic findings"]
+        }
+      },
+      "with": {
+        "role": "integrator",
+        "outputSchema": "schema:iteration-result@1",
+        "context": {
+          "FEATURES_PATH": {"$ref": "inputs.features_path"},
+          "FEEDBACK": {"$ref": "item"},
+          "ITERATION": {"$ref": "index"},
+          "QA_REVIEW": {"$ref": "steps.qa.output"},
+          "CRITIC_REVIEW": {"$ref": "steps.critic.output"}
+        }
+      }
+    },
+    {
+      "id": "final_lint",
+      "uses": "activity:gate.run@1",
+      "with": {"argv": ["uv", "run", "ruff", "check", "."]}
+    },
+    {
+      "id": "final_tests",
+      "uses": "activity:gate.run@1",
+      "with": {"argv": ["uv", "run", "pytest", "-q"]}
+    },
+    {
+      "id": "governance",
+      "uses": "activity:agent.invoke@1",
+      "with": {
+        "role": "gov_reviewer",
+        "outputSchema": "schema:review-result@1",
+        "vars": {"FEATURES_PATH": {"$ref": "inputs.features_path"}}
+      }
+    },
+    {
+      "id": "governance_gate",
+      "uses": "activity:gate.run@1",
+      "with": {
+        "argv": [
+          "uv",
+          "run",
+          "python",
+          "-c",
+          "import json,sys; data=json.load(open(sys.argv[1])); raise SystemExit(0 if data.get('approved') is True else 1)",
+          ".orquestalite/results/gov_reviewer.json"
+        ]
+      }
+    }
+  ],
+  "outputs": {
+    "qa": {"$ref": "steps.qa.output"},
+    "critic": {"$ref": "steps.critic.output"},
+    "repairs": {"$ref": "steps.integration_repair.output"},
+    "governance": {"$ref": "steps.governance.output"}
+  }
+}

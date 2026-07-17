@@ -32,6 +32,13 @@ func (r *sequenceResultRunner) Run(_ context.Context, spec runner.Spec) (*runner
 	return &runner.Result{ResultExists: true}, nil
 }
 
+type timeoutResultRunner struct{ calls int }
+
+func (r *timeoutResultRunner) Run(_ context.Context, _ runner.Spec) (*runner.Result, error) {
+	r.calls++
+	return &runner.Result{TimedOut: true, ResultExists: false, ExitCode: -1}, nil
+}
+
 func TestRawInvalidContractFallsBack(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0o755); err != nil {
@@ -79,6 +86,25 @@ func TestRawAllInvalidReturnsStableContractError(t *testing.T) {
 	}
 	_, err := Raw(context.Background(), inv, "custom", RoleCall{}, RunContext{TaskID: "T"}, func([]byte) error { return fmt.Errorf("always invalid") })
 	if !errors.Is(err, ErrInvalidContract) || runner.calls != 2 {
+		t.Fatalf("err=%v calls=%d", err, runner.calls)
+	}
+}
+
+func TestRawTimeoutReturnsStableTimeoutError(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "prompts", "role.md"), []byte("do it"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runner := &timeoutResultRunner{}
+	inv := &RoleInvoker{
+		Specs: map[string]config.RoleSpec{"custom": {Agents: []config.AgentSpec{{Name: "a"}}, PromptPath: "prompts/role.md", ResultPath: ".orquestalite/results/custom.json", Timeout: time.Minute}},
+		Dir:   dir, Runner: runner,
+	}
+	_, err := Raw(context.Background(), inv, "custom", RoleCall{}, RunContext{TaskID: "T"}, nil)
+	if !errors.Is(err, ErrAgentTimeout) || runner.calls != 1 {
 		t.Fatalf("err=%v calls=%d", err, runner.calls)
 	}
 }

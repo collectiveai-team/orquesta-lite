@@ -117,6 +117,30 @@ A run that exhausts a `retry_until` budget aborts before the PR — that is a
 valid result (score it as non-converged per `evaluation.md`), not something to
 patch by hand and resume.
 
+### Durable dynamic ticket canary (Flow v2)
+
+The versioned pack at `benchmark/packs/development/2` exercises the durable
+runtime with a different unit of work. `plan_tickets` creates runtime ticket
+data, and a bounded `while` calls the `develop-ticket` subflow once per ticket
+attempt. That subflow implements one `next_ticket`, verifies it independently,
+runs deterministic gates when approved, and asks the planner to produce the
+next durable state. The planner may retain, split, add, or reorder tickets from
+repository evidence; ticket ids are not encoded in the flow definition.
+
+Install the pack as `.orquestalite/packs/development/2`, use
+`benchmark/team-ticketed.json` as `team.json`, then run:
+
+```sh
+orq-lite flow validate development/factory-governed@2
+orq-lite flow run development/factory-governed@2 \
+  --policy=policy:development@2 \
+  --source-key=taskflow-ticketed-r1
+```
+
+The durable unit is now `develop_tickets/while-N/develop-ticket`, not one coder
+session over the complete contract. The final integrated QA, critic, repair,
+gates, and governance stages remain as defense in depth.
+
 ## Step 4 — Capture run data
 
 After each run, from the run's clone:

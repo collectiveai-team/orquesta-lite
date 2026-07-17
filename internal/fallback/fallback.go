@@ -14,7 +14,7 @@ type Outcome struct {
 
 	// ShouldFallback signals that the caller wants to advance to the next agent
 	// in the chain. Set FallbackReason to one of: "rate_limit", "result_missing",
-	// "agent_crashed", "invalid_contract" (reserved for Phase 3).
+	// "timeout", "invalid_contract".
 	// For backward compat, Call also treats RateLimited=true as ShouldFallback.
 	ShouldFallback bool
 	FallbackReason string
@@ -34,8 +34,8 @@ type Config struct {
 	MaxBackoff     time.Duration
 	// MaxAttempts caps non-rate-limit fallback attempts per agent per Call to
 	// prevent infinite loops on a permanently broken agent. Defaults to
-	// 2*len(chain) total (i.e. ~2 per agent) when zero. Rate-limited agents are
-	// NOT capped: the loop waits for them to recover (see Call).
+	// len(chain) total (one attempt per distinct agent) when zero. Rate-limited
+	// agents are NOT capped: the loop waits for them to recover (see Call).
 	MaxAttempts int
 	// Now is injectable for testing. Defaults to time.Now.
 	Now func() time.Time
@@ -71,7 +71,7 @@ func NewCaller(cfg Config) *Caller {
 var ErrRateLimitExhausted = errors.New("all agents rate-limited past max backoff")
 
 // ErrAllAgentsFailed is returned when every agent in the chain has failed for a
-// non-recoverable reason (result_missing, agent_crashed, …) and none is merely
+// non-recoverable reason (result_missing, timeout, …) and none is merely
 // rate-limited. A rate-limited agent is recoverable, so its presence keeps the
 // loop waiting instead of returning this error.
 var ErrAllAgentsFailed = errors.New("all agents in chain failed")
@@ -88,7 +88,7 @@ type AgentFunc func(ctx context.Context, agent string) (Outcome, error)
 //     — it waits for a rate-limited agent to become available rather than
 //     abandoning the role. Sleeps are chunked to MaxBackoff so other agents'
 //     cooldowns are rechecked promptly and ctx cancellation stays responsive.
-//   - non-rate-limit fallback (result_missing, agent_crashed): counted per
+//   - non-rate-limit fallback (result_missing, timeout): counted per
 //     agent toward MaxAttempts. Waiting will not help these, so once every
 //     agent is exhausted (and none is rate-limited) the loop returns
 //     ErrAllAgentsFailed.
@@ -99,7 +99,7 @@ func (c *Caller) Call(ctx context.Context, chain []string, fn AgentFunc) (Outcom
 		if n < 1 {
 			n = 1
 		}
-		maxAttempts = 2 * n
+		maxAttempts = n
 	}
 	perAgent := maxAttempts / max(1, len(chain))
 	if perAgent < 1 {

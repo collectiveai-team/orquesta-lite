@@ -65,13 +65,22 @@ func TestClassifyFallbackDisposition(t *testing.T) {
 			wantReason:   "rate_limit",
 		},
 		{
-			name: "timed out agent crashed",
+			name: "timed out agent preserves timeout reason",
 			result: &runner.Result{
 				TimedOut:     true,
 				ResultExists: false,
 			},
 			wantFallback: true,
-			wantReason:   "agent_crashed",
+			wantReason:   "timeout",
+		},
+		{
+			name: "checkpoint survives timeout",
+			result: &runner.Result{
+				TimedOut:     true,
+				ResultExists: true,
+			},
+			wantFallback: false,
+			wantReason:   "",
 		},
 		{
 			name: "result missing",

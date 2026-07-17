@@ -76,15 +76,17 @@ func TestBestEffortRoleDoesNotMarkAgentSkipped(t *testing.T) {
 	}
 }
 
-// Control: a normal (non-best-effort) role's repeated result_missing failures
-// still bench the agent, so the circuit breaker keeps working where it should.
+// Control: a normal (non-best-effort) role's result_missing failures across
+// distinct activity invocations still bench the agent. A single invocation no
+// longer repeats the same broken agent internally.
 func TestNonBestEffortRoleStillMarksAgentSkipped(t *testing.T) {
 	health := agenthealth.New(2)
 	inv := besteffortInvoker(t, "coder", health, nil)
 
 	_ = inv.RunOnce(context.Background(), "coder", RoleCall{}, RunContext{TaskID: "T001", Attempt: 1})
+	_ = inv.RunOnce(context.Background(), "coder", RoleCall{}, RunContext{TaskID: "T001", Attempt: 2})
 
 	if _, skipped := health.IsSkipped("claude_sonnet"); !skipped {
-		t.Fatal("repeated result_missing on a critical role should bench the agent")
+		t.Fatal("result_missing across critical-role invocations should bench the agent")
 	}
 }

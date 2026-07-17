@@ -38,3 +38,7 @@ flows.json
 !internal/commands/assets/prompts/
 !internal/commands/assets/prompts/**
 !internal/commands/assets/flows.json
+
+# versioned benchmark packs are source fixtures, not generated workspace state
+!benchmark/packs/
+!benchmark/packs/**

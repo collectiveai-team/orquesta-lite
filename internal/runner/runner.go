@@ -21,6 +21,7 @@ type Spec struct {
 	Model                      string
 	Effort                     string
 	DangerouslySkipPermissions bool
+	SafeMode                   bool
 	ResumeSessionID            string
 	ForkSession                bool
 	Prompt                     string
@@ -222,6 +223,7 @@ func buildLaunch(ctx context.Context, s Spec) (providers.Launch, providers.Provi
 			Model:                s.Model,
 			Effort:               s.Effort,
 			DangerouslySkipPerms: s.DangerouslySkipPermissions,
+			SafeMode:             s.SafeMode,
 			ResumeSessionID:      s.ResumeSessionID,
 			ForkSession:          s.ForkSession,
 		})

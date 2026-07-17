@@ -36,6 +36,7 @@ type Options struct {
 	Model                string
 	Effort               string
 	DangerouslySkipPerms bool
+	SafeMode             bool
 	ResumeSessionID      string
 	ForkSession          bool
 }

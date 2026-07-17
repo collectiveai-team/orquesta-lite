@@ -24,6 +24,7 @@ type Agent struct {
 	Model                      string   `json:"model,omitempty"`
 	Effort                     string   `json:"effort,omitempty"`
 	DangerouslySkipPermissions bool     `json:"dangerously_skip_permissions,omitempty"`
+	SafeMode                   bool     `json:"safe_mode,omitempty"`
 	RateLimitPattern           string   `json:"rate_limit_pattern,omitempty"`
 }
 
@@ -33,6 +34,7 @@ type AgentSpec struct {
 	Model       string
 	Effort      string
 	SkipPerms   bool
+	SafeMode    bool
 	RatePattern string
 	Cmd         []string
 }
@@ -443,6 +445,7 @@ func resolveAgentSpec(name string, agent Agent) (AgentSpec, error) {
 		Model:       agent.Model,
 		Effort:      agent.Effort,
 		SkipPerms:   agent.DangerouslySkipPermissions,
+		SafeMode:    agent.SafeMode,
 		RatePattern: agent.RateLimitPattern,
 		Cmd:         append([]string(nil), agent.Cmd...),
 	}, nil

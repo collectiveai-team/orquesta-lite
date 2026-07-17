@@ -318,6 +318,7 @@ func (inv *RoleInvoker) runValidated(ctx context.Context, roleName string, role 
 			Model:                      ag.Model,
 			Effort:                     ag.Effort,
 			DangerouslySkipPermissions: ag.SkipPerms,
+			SafeMode:                   ag.SafeMode,
 			Prompt:                     prompt,
 			ResultPath:                 absResultPath,
 			Timeout:                    role.Timeout,
@@ -404,6 +405,9 @@ func (inv *RoleInvoker) runValidated(ctx context.Context, roleName string, role 
 		message := fmt.Sprintf("all agents failed for role %q: tried [%s]; last error: %s", roleName, tried, lastErrStr)
 		if lastFallbackReason == "invalid_contract" {
 			return fmt.Errorf("%w: %s", ErrInvalidContract, message)
+		}
+		if lastFallbackReason == "timeout" {
+			return fmt.Errorf("%w: %s", ErrAgentTimeout, message)
 		}
 		return fmt.Errorf("%s", message)
 	}

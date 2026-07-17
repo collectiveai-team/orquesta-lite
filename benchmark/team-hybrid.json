@@ -4,12 +4,14 @@
       "provider": "claude",
       "model": "claude-opus-4-8",
       "dangerously_skip_permissions": true,
+      "safe_mode": true,
       "rate_limit_pattern": "(?i)(rate_?limit|429|quota|session limit|usage limit)"
     },
     "claude_sonnet": {
       "provider": "claude",
       "model": "claude-sonnet-4-6",
       "dangerously_skip_permissions": true,
+      "safe_mode": true,
       "rate_limit_pattern": "(?i)(rate_?limit|429|quota|session limit|usage limit)"
     },
     "qwen_coder": {

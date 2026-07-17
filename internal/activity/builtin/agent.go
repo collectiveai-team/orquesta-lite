@@ -22,11 +22,12 @@ func (a *AgentExecutor) Spec() activity.Spec {
 }
 
 type agentInput struct {
-	Role         string            `json:"role"`
-	Vars         map[string]string `json:"vars,omitempty"`
-	Context      map[string]any    `json:"context,omitempty"`
-	OutputSchema string            `json:"outputSchema"`
-	Skills       []string          `json:"skills,omitempty"`
+	Role           string            `json:"role"`
+	Vars           map[string]string `json:"vars,omitempty"`
+	Context        map[string]any    `json:"context,omitempty"`
+	OutputSchema   string            `json:"outputSchema"`
+	Skills         []string          `json:"skills,omitempty"`
+	FallbackOutput json.RawMessage   `json:"fallbackOutput,omitempty"`
 }
 
 func (a *AgentExecutor) Execute(ctx context.Context, request activity.Request) (activity.Result, error) {
@@ -57,9 +58,18 @@ func (a *AgentExecutor) Execute(ctx context.Context, request activity.Request) (
 	}
 	raw, err := invoke.Raw(ctx, a.Invoker, input.Role, invoke.RoleCall{Vars: vars, Skills: input.Skills}, invoke.RunContext{TaskID: request.StepID, Attempt: request.Attempt}, func(raw []byte) error { return a.Validate(input.OutputSchema, raw) })
 	if err != nil {
+		if len(input.FallbackOutput) > 0 {
+			if validationErr := a.Validate(input.OutputSchema, input.FallbackOutput); validationErr != nil {
+				return activity.Result{}, contractError("agent.invoke fallbackOutput", validationErr)
+			}
+			return activity.Result{Output: input.FallbackOutput}, nil
+		}
 		class := activity.ErrorPermanent
-		if errors.Is(err, invoke.ErrInvalidContract) {
+		switch {
+		case errors.Is(err, invoke.ErrInvalidContract):
 			class = activity.ErrorInvalidContract
+		case errors.Is(err, invoke.ErrAgentTimeout):
+			class = activity.ErrorTimeout
 		}
 		return activity.Result{}, &activity.Error{Class: class, Op: "agent.invoke", Err: err}
 	}

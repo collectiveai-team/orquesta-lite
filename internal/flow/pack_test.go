@@ -74,6 +74,114 @@ func TestDevelopmentFixturePackCompilesOffline(t *testing.T) {
 	}
 }
 
+func TestTicketedBenchmarkPackCompilesToDurableDynamicLoop(t *testing.T) {
+	root := filepath.Join("..", "..", "benchmark", "packs", "development", "2")
+	pack, err := LoadPack(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog := NewDirectoryCatalog(root, []activity.Spec{
+		{Name: "agent.invoke", Version: "1", Effect: activity.EffectAtMostOnce},
+		{Name: "gate.run", Version: "1", Effect: activity.EffectPure},
+	})
+	doc, _, err := catalog.ResolveDocument(ResourceRef{Kind: "flow", Name: "factory-governed", Version: "2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ir, diagnostics := Compile(doc, catalog)
+	if diagnostics.HasErrors() {
+		t.Fatalf("diagnostics=%+v", diagnostics)
+	}
+	if err = PinPack(ir, pack); err != nil {
+		t.Fatal(err)
+	}
+	if ir.Pack == nil || ir.Pack.Name != "development" || ir.Pack.Version != "2" {
+		t.Fatalf("pack snapshot=%+v", ir.Pack)
+	}
+
+	var loop *IRStep
+	for index := range ir.Steps {
+		if ir.Steps[index].ID == "develop_tickets" {
+			loop = &ir.Steps[index]
+			break
+		}
+	}
+	if loop == nil || loop.While == nil || loop.Subflow == nil {
+		t.Fatalf("develop_tickets must be a while over a pinned subflow: %+v", loop)
+	}
+	if loop.While.Condition != `item.state.status == "active"` || loop.While.MaxIterations != 20 {
+		t.Fatalf("unexpected durable loop contract: %+v", loop.While)
+	}
+	if len(loop.Subflow.Steps) != 5 || loop.Subflow.Steps[0].ID != "implement_ticket" || loop.Subflow.Steps[1].ID != "verify_ticket" || loop.Subflow.Steps[4].ID != "update_ticket_plan" {
+		t.Fatalf("unexpected ticket subflow steps: %+v", loop.Subflow.Steps)
+	}
+	var integratedReview *IRStep
+	for index := range ir.Steps {
+		if ir.Steps[index].ID == "integrated_review" {
+			integratedReview = &ir.Steps[index]
+			break
+		}
+	}
+	if integratedReview == nil || integratedReview.Subflow == nil {
+		t.Fatalf("factory must compose the integrated review subflow: %+v", integratedReview)
+	}
+	var qa, critic *IRStep
+	for index := range integratedReview.Subflow.Steps {
+		switch integratedReview.Subflow.Steps[index].ID {
+		case "qa":
+			qa = &integratedReview.Subflow.Steps[index]
+		case "critic":
+			critic = &integratedReview.Subflow.Steps[index]
+		}
+	}
+	if qa == nil {
+		t.Fatal("qa step is missing")
+	}
+	qaInputs, marshalErr := json.Marshal(qa.With)
+	if marshalErr != nil || !strings.Contains(string(qaInputs), `"fallbackOutput"`) {
+		t.Fatalf("qa must degrade to a validated fail-closed output: %+v", qa)
+	}
+	if critic == nil {
+		t.Fatal("critic step is missing")
+	}
+	if _, ok := critic.With["context"]; !ok {
+		t.Fatal("critic must receive structured QA output through context, not string vars")
+	}
+	criticInputs, marshalErr := json.Marshal(critic.With)
+	if marshalErr != nil || !strings.Contains(string(criticInputs), `"fallbackOutput"`) || !strings.Contains(string(criticInputs), `steps.qa.output`) {
+		t.Fatalf("critic must degrade to a validated output while consuming QA evidence: %+v", critic)
+	}
+	reviewDoc, _, resolveErr := catalog.ResolveDocument(ResourceRef{Kind: "flow", Name: "review-existing", Version: "2"})
+	if resolveErr != nil {
+		t.Fatal(resolveErr)
+	}
+	reviewIR, reviewDiagnostics := Compile(reviewDoc, catalog)
+	if reviewDiagnostics.HasErrors() || len(reviewIR.Steps) != 1 || reviewIR.Steps[0].Subflow == nil {
+		t.Fatalf("review-existing must compile to the same reusable subflow: diagnostics=%+v ir=%+v", reviewDiagnostics, reviewIR)
+	}
+	for path, expected := range map[string]string{
+		"prompts/ticket-planner.md": ".orquestalite/results/ticket_planner.json",
+		"prompts/coder.md":          ".orquestalite/results/coder.json",
+		"prompts/ticket-qa.md":      ".orquestalite/results/ticket_qa.json",
+	} {
+		raw, readErr := os.ReadFile(filepath.Join(root, path))
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if strings.Contains(string(raw), "{{RESULT_PATH}}") || !strings.Contains(string(raw), expected) {
+			t.Fatalf("%s must pin its durable result path %q", path, expected)
+		}
+	}
+	stateSchema, _, schemaErr := catalog.ResolveSchema(ResourceRef{Kind: "schema", Name: "workflow-state", Version: "1"})
+	if schemaErr != nil {
+		t.Fatal(schemaErr)
+	}
+	structuredHistory := []byte(`{"status":"complete","revision":1,"summary":"done","next_ticket":null,"pending":[],"completed":[],"blocked":[],"risks":[],"history":[{"revision":1,"mode":"initial"}]}`)
+	if err = stateSchema.ValidateJSON(structuredHistory); err != nil {
+		t.Fatalf("workflow state must accept structured durable history: %v", err)
+	}
+}
+
 func TestLoadPackRejectsUnlistedResource(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "flows"), 0o755); err != nil {

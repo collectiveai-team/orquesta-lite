@@ -15,6 +15,11 @@ import (
 // output that failed the requested runtime contract.
 var ErrInvalidContract = errors.New("all agent outputs violated the contract")
 
+// ErrAgentTimeout marks fallback exhaustion where the last usable agent was
+// terminated by its configured timeout. Callers use this stable sentinel to
+// preserve timeout semantics across the generic agent.invoke boundary.
+var ErrAgentTimeout = errors.New("all usable agents timed out")
+
 // RawValidator validates the exact JSON bytes written by an agent. Returning
 // an error classifies that agent attempt as invalid_contract and advances the
 // configured fallback chain.
