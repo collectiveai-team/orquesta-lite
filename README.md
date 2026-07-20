@@ -9,6 +9,27 @@ roles until a plan is implemented task by task.
 The Go module is `github.com/lionelchamorro/orquestalite`. The CLI command is
 `orq-lite`, and runtime state lives under `.orquestalite/`.
 
+## Bootstrap a repo
+
+Run this from the root of the repo you want to set up.
+
+**Existing working repo (recommended): let an agent do it.** The bootstrap needs
+judgment the CLI can't automate — new-vs-existing detection, getting the
+baseline test/lint gates green at HEAD, toolchain/lockfile pinning, choosing
+which flow fits the repo, and additive `team.json` / `conventions` merges. The
+CLI does the deterministic clean-adds (`orq-lite init`); the agent drives it and
+handles the judgment calls. Point your agent at the guide:
+
+> Set up this repo by following the instructions here:
+> https://raw.githubusercontent.com/lionelchamorro/orquesta-lite/main/guide.md
+> Don't summarize it — follow every step.
+
+The guide covers installing `orq-lite` if it isn't already on PATH, scaffolding
+config, making the gates green, and picking + wiring the right flow (from a
+quick per-feature batch to the governed [`examples/governed-pack/`](./examples/governed-pack/)).
+
+**Just want the binary?** See [Install](#install) below, then `orq-lite init`.
+
 ## What It Does
 
 `orquestalite` turns a free-form plan into structured tasks, runs those tasks

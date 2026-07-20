@@ -1,0 +1,70 @@
+{
+  "apiVersion": "orq.dev/v2",
+  "kind": "Subflow",
+  "metadata": {"name": "develop-ticket", "version": "1"},
+  "inputs": {
+    "features_path": {"schema": "schema:path@1"},
+    "state": {"schema": "schema:workflow-state@1"}
+  },
+  "steps": [
+    {
+      "id": "implement_ticket",
+      "uses": "activity:agent.invoke@1",
+      "with": {
+        "role": "coder",
+        "outputSchema": "schema:ticket-implementation@1",
+        "context": {
+          "FEATURES_PATH": {"$ref": "inputs.features_path"},
+          "WORKFLOW_STATE": {"$ref": "inputs.state"},
+          "TICKET": {"$ref": "inputs.state.next_ticket"}
+        }
+      }
+    },
+    {
+      "id": "verify_ticket",
+      "uses": "activity:agent.invoke@1",
+      "with": {
+        "role": "ticket_qa",
+        "outputSchema": "schema:ticket-verification@1",
+        "context": {
+          "FEATURES_PATH": {"$ref": "inputs.features_path"},
+          "WORKFLOW_STATE": {"$ref": "inputs.state"},
+          "TICKET": {"$ref": "inputs.state.next_ticket"},
+          "IMPLEMENTATION": {"$ref": "steps.implement_ticket.output"}
+        }
+      }
+    },
+    {
+      "id": "ticket_lint",
+      "uses": "activity:gate.run@1",
+      "if": "steps.verify_ticket.output.approved == true",
+      "with": {"argv": ["uv", "run", "ruff", "check", "."]}
+    },
+    {
+      "id": "ticket_tests",
+      "uses": "activity:gate.run@1",
+      "if": "steps.verify_ticket.output.approved == true",
+      "with": {"argv": ["uv", "run", "pytest", "-q"]}
+    },
+    {
+      "id": "update_ticket_plan",
+      "uses": "activity:agent.invoke@1",
+      "with": {
+        "role": "ticket_planner",
+        "outputSchema": "schema:workflow-state@1",
+        "context": {
+          "MODE": "advance",
+          "FEATURES_PATH": {"$ref": "inputs.features_path"},
+          "CURRENT_STATE": {"$ref": "inputs.state"},
+          "IMPLEMENTATION": {"$ref": "steps.implement_ticket.output"},
+          "VERIFICATION": {"$ref": "steps.verify_ticket.output"}
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "state": {"$ref": "steps.update_ticket_plan.output"},
+    "implementation": {"$ref": "steps.implement_ticket.output"},
+    "verification": {"$ref": "steps.verify_ticket.output"}
+  }
+}
