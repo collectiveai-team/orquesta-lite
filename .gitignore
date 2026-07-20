@@ -42,3 +42,8 @@ flows.json
 # versioned benchmark packs are source fixtures, not generated workspace state
 !benchmark/packs/
 !benchmark/packs/**
+
+# Benchmark: heavy run artifacts (bundles, dbs, logs) and personal post drafts
+benchmark/results/*-artifacts/
+benchmark/posts/
+__pycache__/

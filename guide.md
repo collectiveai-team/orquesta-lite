@@ -11,6 +11,13 @@ are red for pre-existing reasons, every feature inherits that failure, the coder
 drowns in feedback about code it never touched, and no review loop can converge.
 Budget real time for step 2 — it is where most of the setup work actually is.
 
+**Which engine?** For governed, production-grade builds, use the durable **v2
+runtime** and start from [`examples/governed-pack/`](./examples/governed-pack/)
+(`development/factory-governed@4`) — §4 covers it. The legacy config-driven
+engine (`orq-lite factory`, root `flows.json`) is fine for quick per-feature
+batches and the review/issue flows. Steps 0–3 and 5 apply to both; §4 is where
+they diverge.
+
 ## 0. Preconditions
 
 Verify before touching anything:
@@ -126,66 +133,99 @@ Both commands must exit 0 from a fresh checkout state before you continue.
   fall back to inferring style from surrounding code — fine, but a real doc
   converges faster. `docs/conventions/` in this repo has worked examples.
 
-## 4. Optional: governance loop (`factory_governed`-style flows)
+## 4. Governed builds: start from the `governed-pack` example
 
-For a governed flow (fast per-feature build + an approval loop where review
-roles propose `new_tasks` until all approve — see
-`examples/fastapi-governed/`):
+For anything you'd ship, don't hand-author a governance loop — start from
+[`examples/governed-pack/`](./examples/governed-pack/), the durable **v2**
+pack (`development/factory-governed@4`). It bakes in the field lessons below so
+you don't rediscover them the hard way. Its shape:
 
-- Declare the extra roles (`architect`, `qa`, `pm`, …) in `team.json` like any
-  role; `config.Resolve` surfaces any declared role to configuration-driven
-  flows, no code changes needed.
-- Write one prompt per role with **deliberately non-overlapping lenses**
-  (structure / test depth / scope) and a strict output contract
-  (`status: approved|changes_requested` + `new_tasks`). Adapt the example
-  prompts: replace the project-layout section with the real tree, and name the
-  real gate commands so reviewers can run them.
-- In the flow, surface the deterministic suite result to the reviewers (e.g.
-  `TESTS_PASS={pytest_res.pass}`) and instruct them they may not approve over a
-  red suite — the hard gate must stay deterministic, not vibes.
-- Copy the gate commands into every `command` step of the flow (flows do not
-  read `full_test_command`), using the same repo-root-relative form.
-- Remember the engine's `factory_extract_features` splits `features.md` by
-  `## ` headings deterministically — the LLM planner pass only exists in the
-  built-in `orq-lite factory` command, not in `flow run` flows.
+```
+plan_tickets (budget-sized)
+└─ develop_tickets  [per ticket: coder → ticket_qa → replan]
+integrated_review:
+   lint → tests → qa → adversary → critic
+   → integration_repair   [loop: reconcile findings]
+   → gates → governance
+   → governance_repair     [loop ×2: repair → gates → FRESH re-audit]
+   → governance_gate       (fail-closed)
+```
 
-### Governance blind spots (field lessons — bake these in from day one)
+To adopt it: install the pack under `.orquestalite/packs/development/4/`, point
+your `team.json` roles at its prompts, set real reviewer models (see below),
+and write your `features.md` (§5). The pack's own README has the exact copy/run
+commands.
+
+**Model placement is the whole game.** The review roles are where bugs get
+caught — across three benchmark rounds they were ~78% of a governed run's cost,
+and that spend *is* the product, not overhead. Put a strong coder on
+`coder`/`integrator` and **Opus (or your best model) on the test/gate roles**:
+`ticket_qa`, `qa`, `adversary`, `critic`, `gov_reviewer`. A cheap reviewer is a
+decorative reviewer.
+
+### Why the flow is shaped this way (field lessons — earned, not theorized)
 
 A governed run that converged in one round with unanimous approvals still
-shipped 10 confirmed bugs on its first real project. Root causes, and the
-countermeasure for each:
+shipped 10 confirmed bugs on its first real project. Later rounds shipped a
+crash and a data race *past* an approving governance. Each countermeasure below
+is now a piece of `factory-governed@4` — the list doubles as "what each stage
+is for":
 
-1. **An ungated stage is advisory.** If phase 1 runs
-   `coder → lint → tester → critic` linearly, a tester `fail` or critic
-   `rejected` doesn't stop the commit — the verdict is decoration. Wrap the
-   stage in `retry_until {lint_res.pass} && {tester_res.pass} &&
-   {critic_res.pass}` so vetoes route feedback back to the coder.
-2. **Spec-anchored reviewers share one blind spot.** Architect/QA/PM all judge
-   against the features file; a defect the spec never mentions gets three
-   unanimous approvals. Add an **adversarial reviewer** role whose prompt reads
-   the raw `git diff base...HEAD` with an explicit hunt list of spec-blind
-   failure modes: partial-update data loss (`exclude_unset`), alternative write
-   paths bypassing router-level validation, broken existing consumers of
-   changed contracts, boundary math (inclusive windows, divisors, unit
-   constants), name-vs-id joins, N+1s. Gate the loop on its approval too.
-3. **"Out of scope" is not "allowed to break".** A backend-only batch can
-   still break the frontend (a new default that fails new validation on
-   payloads the UI already sends). Make "existing consumers keep working" an
-   implicit acceptance criterion in the PM prompt and the features preamble,
-   and name the consumer entry points (UI api client, MCP servers) explicitly.
-4. **QA must exercise old flows black-box, not read new tests.** The batch's
-   own tests always pass by construction. Require QA to start the app and run
-   the pre-existing happy paths against every touched surface.
-5. **Conventions must encode hard rules, not style.** A generic style guide
-   prevents none of the above. Put the project's failure-mode rules (partial
-   updates, validation depth, single-source constants, id joins) in the
-   `conventions_file` so the coder/critic see them on every invocation.
-6. **Batch size bounds review depth.** The governance loop has a fixed round
-   budget for the whole batch, so 3–5 tightly-cut features per batch converge
-   and get real scrutiny; fifteen do not. To queue several dependent batches
-   in one unattended run, use a multi-batch flow (an outer loop over features
-   files, each batch getting its own governance budget — see
-   `factory_governed_multi` in `examples/fastapi-governed/`).
+1. **An ungated stage is advisory.** A linear `coder → lint → tester → critic`
+   doesn't stop a commit on a `rejected` verdict — the verdict is decoration.
+   *In the pack:* the per-ticket loop retries until lint, ticket_qa, and the
+   gates pass; vetoes route feedback back to the coder.
+2. **Spec-anchored reviewers share one blind spot.** Reviewers who all judge
+   against `features.md` unanimously approve a defect the spec never named — in
+   the benchmark, the same *class* of bug shipped every round, just moving from
+   "timezones" to "concurrent writers" as the spec got tighter. *In the pack:*
+   the **`adversary`** role sets the spec aside and hunts the system's *shape*
+   — shared state, concurrent writers, lifecycles, I/O boundaries — reproducing
+   each hypothesis against running code. A finding only counts with a
+   reproduction.
+3. **A veto needs a repair path.** A fail-closed governance that just kills the
+   run wastes a finding its own auditor documented to the line; a build died
+   over a 10-line fix. But you can't let the fixer's opinion re-approve its own
+   work. *In the pack:* the **governance repair loop** feeds findings to the
+   integrator, re-runs the gates, and calls a **fresh** governance invocation —
+   up to twice, then the run still dies. Separate *who repairs* from *who
+   re-approves*.
+4. **A reviewer's findings must actually reach the fix path.** This one bit the
+   author: a mis-wired role wrote its verdict to the wrong file, the runtime
+   substituted the "didn't run" fallback, and the real findings vanished
+   silently while the run went green. *Lesson:* verify each review role's
+   `result_path` and the flow's `steps.<role>.output` wiring; a step that
+   "succeeded" on a fallback is not a step that reviewed anything.
+5. **A reproduced finding must become a gate, not prose.** Even correctly
+   wired, an adversary finding handed to the integrator as *text* got a
+   plausible-but-partial fix that governance rubber-stamped — the bug shipped.
+   The durable fix is the `issue-fix` pattern: turn each reproduction into a
+   **failing test** in `tests/`, and let the standard gates hold the line —
+   red until the real fix lands, and governance can't approve past a red suite.
+   (This is the round-4 hardening; wire it in as a step that materializes
+   reproductions into tests before the repair loop.)
+6. **QA must exercise old flows black-box, not read new tests.** A build's own
+   tests pass by construction. The `qa` role starts the app and runs
+   pre-existing happy paths against every touched surface.
+7. **Conventions encode hard rules, not style.** Put the project's failure-mode
+   rules (partial updates, validation depth, single-source constants, id joins,
+   "existing consumers keep working") in the `conventions_file` so every role
+   sees them on every invocation — a generic style guide prevents none of the
+   above.
+8. **Scope bounds review depth.** Budgets are per-run, so 3–5 tightly-cut
+   features (or the planner's small tickets) get real scrutiny; fifteen broad
+   ones do not. Let the planner split infra concerns (streaming, workers,
+   lifecycle) into their own tickets, and size the `coder` timeout to your
+   heaviest one.
+
+*Authoring your own flow instead?* The legacy `flows.json` path
+(`examples/fastapi-governed/`, config-driven engine) still works; declare extra
+roles in `team.json` (`config.Resolve` surfaces any declared role, no code
+changes), give each a non-overlapping lens and a strict
+`status: approved|changes_requested` contract, copy gate commands into every
+`command` step (flows don't read `full_test_command`), and surface the
+deterministic suite result so reviewers can't approve over a red suite. But the
+v2 pack already does all of this correctly — prefer it.
 
 ## 5. Write `features.md` so the loops can converge
 
@@ -231,9 +271,11 @@ the dashboard. Interrupted or failed queues resume with `orq-lite factory`
       re-tested**, legacy debt explicitly baselined + queued as a cleanup feature
 - [ ] `team.json`: agent fallback chains, repo-root self-contained gate
       commands, `conventions_file`
-- [ ] (governed) extra roles + non-overlapping prompts + `TESTS_PASS` surfaced,
-      phase 1 gated by `retry_until`, adversarial reviewer in the approval
-      condition, consumers-keep-working rule in PM prompt + preamble
+- [ ] (governed) started from `examples/governed-pack/` (v2 `factory-governed@4`);
+      pack installed under `.orquestalite/packs/development/4/`, strong models on
+      the test/gate roles (`ticket_qa`/`qa`/`adversary`/`critic`/`gov_reviewer`),
+      each review role's `result_path` + `steps.<role>.output` wiring verified,
+      `coder` timeout sized to the heaviest ticket
 - [ ] `features.md`: preamble contract, one `## ` per vertical slice, checkable
       acceptance criteria, dependency order, 3–5 per batch
 - [ ] `orq-lite doctor` all green, everything committed, then run
