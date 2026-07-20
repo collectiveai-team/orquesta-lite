@@ -16,7 +16,7 @@
     },
     "qwen_coder": {
       "provider": "opencode",
-      "model": "openrouter/qwen/qwen3.6-coder",
+      "model": "opencode-go/qwen3.6-plus",
       "dangerously_skip_permissions": true,
       "rate_limit_pattern": "(?i)(rate_?limit|429|quota|too many requests)"
     }
