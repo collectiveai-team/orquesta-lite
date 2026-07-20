@@ -1,10 +1,10 @@
 {
   "apiVersion": "orq.pack/v1",
   "name": "development",
-  "version": "4",
+  "version": "1",
   "files": {
-    "flows/factory-governed@4.json": "f43293548bc0665b695d5ce068e3cbf82729496dfc79e797fb07cf0dc774da2e",
-    "flows/review-existing@4.json": "c6583c89538aa39b48eb23856eb8452fce941f59c595d2dc6f610e86be420a2c",
+    "flows/factory-governed@1.json": "b26cdf6889a246e2f67e19d3791da79d557a6c2051054eb5bb8f9c92b2c0a79e",
+    "flows/review-existing@1.json": "c5dc2409f95e5e5ba94fca3a7e40164e2df43bd305b3fb4b688a681129cfbf35",
     "policies/development@2.json": "ab8201e3c4c380413875619bf3100e79f946e3ea0a0f0ac55876d887942082ca",
     "prompts/adversary.md": "cbf548436d5c0b1c403432fb0f40af66e7fef1e0927447e81562fe623857cc03",
     "prompts/coder.md": "f27c86f9325fcdc72330c98250d800facbefe1ec2fcc58e033bdddf82d063c6a",
@@ -22,6 +22,6 @@
     "schemas/workflow-state@1.json": "5abcd12542f0c34eba9115ae88023262381068c16565ec0613dc5f3b4e2e5104",
     "subflows/develop-ticket@1.json": "a3af5bd653f3eafb5a84b6a690f4cb4924c25686eb60f86fa6008defa11c892a",
     "subflows/governance-cycle@1.json": "9297900862a4c245c9cd85874b3092d1f5e431831abeb5204c687c032344d84c",
-    "subflows/integrated-review@3.json": "7d1b3f81a78431dc71b301c62f3b41a1b7e45a3884dbd01aa809cc8cefab0b89"
+    "subflows/integrated-review@1.json": "e8c2072e6485c3537214ec8e9eb091f81304ab7f831e18f42a26b4b1ba282eec"
   }
 }

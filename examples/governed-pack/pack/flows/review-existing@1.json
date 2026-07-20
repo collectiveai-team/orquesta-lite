@@ -3,7 +3,7 @@
  "kind": "Flow",
  "metadata": {
   "name": "review-existing",
-  "version": "4"
+  "version": "1"
  },
  "inputs": {
   "features_path": {
@@ -13,7 +13,7 @@
  "steps": [
   {
    "id": "integrated_review",
-   "uses": "subflow:integrated-review@3",
+   "uses": "subflow:integrated-review@1",
    "with": {
     "features_path": {
      "$ref": "inputs.features_path"

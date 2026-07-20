@@ -1,4 +1,4 @@
-# Example: the governed development pack (`development@4`)
+# Example: the governed development pack (`development@1`)
 
 The recommended production setup for the durable **v2 runtime**: a per-ticket
 build flow wrapped in layered, adversarial review with a **veto that has a
@@ -11,7 +11,7 @@ strict `orq.dev/v2` Flow/Subflow JSON from an installed pack, never from a
 downloaded one. Orquesta installs and selects pack versions in production; this
 example is the reference copy you can run locally.
 
-## What the flow does (`factory-governed@4`)
+## What the flow does (`factory-governed@1`)
 
 ```
 plan_tickets (budget-sized)
@@ -52,13 +52,13 @@ drop this team over the generated one:
 # from a fresh project dir with git initialized and both gates green at HEAD
 orq-lite init                              # base team.json + prompts/ + .gitignore
 mkdir -p .orquestalite/packs/development
-cp -R path/to/examples/governed-pack/pack .orquestalite/packs/development/4
+cp -R path/to/examples/governed-pack/pack .orquestalite/packs/development/1
 cp path/to/examples/governed-pack/{team.json,features.md,CONVENTIONS.md} .
 
 orq-lite doctor                            # resolves the team, checks CLIs + gates
-orq-lite flow validate development/factory-governed@4
-orq-lite flow run development/factory-governed@4 \
-  --policy=.orquestalite/packs/development/4/policies/development@2.json \
+orq-lite flow validate development/factory-governed@1
+orq-lite flow run development/factory-governed@1 \
+  --policy=.orquestalite/packs/development/1/policies/development@2.json \
   features_path=features.md
 ```
 
@@ -66,7 +66,7 @@ orq-lite flow run development/factory-governed@4 \
 > (`parser`/`coder`/`tester`/`critic`/`reviewer`) even for a v2-pack-only
 > project, which is why this team declares them alongside the flow roles. The
 > `parser`/`tester`/`reviewer` entries point at the `init`-generated prompts
-> and are unused by `factory-governed@4`.
+> and are unused by `factory-governed@1`.
 
 If a run stops (rate limit, timeout, host sleep), resume it — the durable
 runtime continues from persisted step state, never repeating finished work:
