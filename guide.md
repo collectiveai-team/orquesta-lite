@@ -24,11 +24,32 @@ Verify before touching anything:
 
 - The project is a **git repository** with a clean working tree (`git status`).
   Factory mode refuses a dirty tree; per-task commits need a repo.
-- `orq-lite` is on PATH (`orq-lite version`).
+- **`orq-lite` is on PATH** (`orq-lite version`). If it isn't installed, install
+  it first (see below), then re-check.
 - The provider CLIs you plan to use (`claude`, `codex`, `gemini`, `opencode`)
   are installed **and authenticated headless** — an agent that falls back to an
-  interactive OAuth prompt is skipped at runtime, not waited on.
-- `gh` is authenticated if any flow pushes branches or opens PRs.
+  interactive OAuth prompt is skipped at runtime, not waited on. Verify one is
+  authenticated (e.g. `claude -p "ok" | head`) rather than assuming.
+- `gh` is authenticated if any flow pushes branches or opens PRs
+  (`gh auth status`).
+
+### Installing `orq-lite` (only if missing)
+
+Prefer a published release binary; fall back to building from source if you
+have the Go toolchain and no matching release.
+
+```bash
+# 1) Release binary (recommended) — pick your platform from the releases page
+#    and put orq-lite on PATH. See the repo README "Install" section for the
+#    exact curl/checksum commands.
+orq-lite version || echo "not installed"
+
+# 2) From source (needs Go ≥ the version in go.mod)
+go install github.com/lionelchamorro/orquestalite/cmd/orq-lite@latest
+#    or, inside a checkout:  go build -o ~/bin/orq-lite ./cmd/orq-lite
+```
+
+Then confirm `orq-lite version` prints and continue.
 
 ## 1. Scaffold
 
@@ -43,6 +64,32 @@ treat an empty gate as a TODO, not a feature.
 
 Commit `team.json`, `prompts/`, and `flows.json` (project configuration);
 `.orquestalite/` stays gitignored (runtime state).
+
+### 1b. Choose the flow(s) for this repo
+
+Pick what fits the work in front of you — you can wire more than one. Match the
+repo's needs against the shipped reference configs
+([`examples/`](./examples/)):
+
+| If the goal is… | Use | Keyed by |
+|---|---|---|
+| **Ship features to production, with real review** | `development/factory-governed@4` — the governed v2 pack ([`examples/governed-pack/`](./examples/governed-pack/)) | `features.md` |
+| Build features fast, light review, per-feature batches | `factory_fast` (root `flows.json`, see [`examples/go-hello-api/`](./examples/go-hello-api/)) | `features.md` |
+| Continuously fix incoming GitHub issues | `issue_fix` ([`examples/issue-fix/`](./examples/issue-fix/)) — reproduce with a failing test → fix until green → PR | `issue_number` |
+| Review incoming PRs | `pr_review` ([`examples/pr-review/`](./examples/pr-review/)) — critic + security lenses → one verdict | `pr_number` |
+| Grind a checklist plan to done | `ralph_loop` ([`examples/ralph-loop/`](./examples/ralph-loop/)) | `plan.md` |
+
+Decision rule of thumb: **if the output is code someone will run in production,
+default to the governed v2 pack** (§4) — its adversary + repair loop is what
+stops the class of bug that green tests and a spec-anchored reviewer both miss.
+Use the lighter flows for throwaway work, internal tooling, or when a human
+reviews every diff anyway. The review/issue flows (`pr_review`, `issue_fix`)
+are orthogonal — wire them alongside whatever build flow you choose.
+
+What to add per choice: the governed pack needs its own install + strong
+reviewer models (§4); the legacy flows need their `flows.json` + role prompts
+copied from the matching example and adapted to your tree. Either way, §2–§3
+(green gates, `team.json`) come first.
 
 ## 2. Make the baseline green (the critical step)
 
