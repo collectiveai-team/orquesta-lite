@@ -1,0 +1,83 @@
+{
+ "apiVersion": "orq.dev/v2",
+ "kind": "Subflow",
+ "metadata": {
+  "name": "governance-cycle",
+  "version": "1"
+ },
+ "inputs": {
+  "features_path": {
+   "schema": "schema:path@1"
+  },
+  "verdict": {
+   "schema": "schema:review-result@1"
+  }
+ },
+ "steps": [
+  {
+   "id": "repair",
+   "uses": "activity:agent.invoke@1",
+   "with": {
+    "role": "integrator",
+    "outputSchema": "schema:iteration-result@1",
+    "context": {
+     "FEATURES_PATH": {
+      "$ref": "inputs.features_path"
+     },
+     "FEEDBACK": {
+      "$ref": "inputs.verdict"
+     },
+     "GOV_REVIEW": {
+      "$ref": "inputs.verdict"
+     }
+    }
+   }
+  },
+  {
+   "id": "lint",
+   "uses": "activity:gate.run@1",
+   "with": {
+    "argv": [
+     "uv",
+     "run",
+     "ruff",
+     "check",
+     "."
+    ]
+   }
+  },
+  {
+   "id": "tests",
+   "uses": "activity:gate.run@1",
+   "with": {
+    "argv": [
+     "uv",
+     "run",
+     "pytest",
+     "-q"
+    ]
+   }
+  },
+  {
+   "id": "governance",
+   "uses": "activity:agent.invoke@1",
+   "with": {
+    "role": "gov_reviewer",
+    "outputSchema": "schema:review-result@1",
+    "vars": {
+     "FEATURES_PATH": {
+      "$ref": "inputs.features_path"
+     }
+    }
+   }
+  }
+ ],
+ "outputs": {
+  "approved": {
+   "$ref": "steps.governance.output.approved"
+  },
+  "verdict": {
+   "$ref": "steps.governance.output"
+  }
+ }
+}
