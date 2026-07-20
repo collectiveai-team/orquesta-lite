@@ -143,7 +143,10 @@ func (e *Engine) runAction(ctx context.Context, c *Context, s Step) error {
 }
 
 // runLoop iterates over a list from the Context, exposing each element under
-// `as` and running the body steps for each.
+// `as` and running the body steps for each. Iterations are isolated: each one
+// starts from the context as it was at loop entry, so step outputs from one
+// iteration (critic feedback, coder summaries, ...) never leak into the next.
+// The final iteration's outputs stay visible after the loop.
 func (e *Engine) runLoop(ctx context.Context, c *Context, s Step) error {
 	iterPath := strings.Trim(s.Iterator, "{} ")
 	list, ok := c.Get(iterPath)
@@ -158,7 +161,9 @@ func (e *Engine) runLoop(ctx context.Context, c *Context, s Step) error {
 		return fmt.Errorf("loop: missing `as`")
 	}
 	savedCycle := e.cycle
+	base := c.Snapshot()
 	for i, el := range seq {
+		c.Restore(base)
 		c.Set(s.As, el)
 		c.Set("_index", i)
 		c.Set("_count", len(seq))

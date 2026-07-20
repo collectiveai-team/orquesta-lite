@@ -1,0 +1,24 @@
+{
+  "apiVersion": "orq.dev/v2",
+  "kind": "Flow",
+  "metadata": {"name": "neutral-pipeline", "version": "1"},
+  "inputs": {"message": {"schema": "schema:message@1"}},
+  "steps": [
+    {
+      "id": "produce",
+      "uses": "activity:artifact.capture@1",
+      "with": {"name": "message.txt", "kind": "fixture", "text": {"$ref": "inputs.message"}}
+    },
+    {
+      "id": "verify",
+      "uses": "activity:gate.run@1",
+      "with": {"argv": ["/usr/bin/true"]}
+    },
+    {
+      "id": "publish",
+      "uses": "activity:command.run@1",
+      "with": {"argv": ["/usr/bin/true"]}
+    }
+  ],
+  "outputs": {"artifact": {"$ref": "steps.produce.output"}}
+}

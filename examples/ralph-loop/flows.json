@@ -1,0 +1,77 @@
+{
+  "flows": {
+    "ralph_loop": {
+      "description": "Minimal ralph loop over a plan.md checklist: the ralph_coder is re-invoked with the SAME prompt, each pass implementing the first unchecked `- [ ]` task and ticking it, until none remain; then an adversarial ralph_reviewer validates the whole pass and appends new `- [ ]` tasks to plan.md when it finds defects; the coder loop reruns. Converges when the reviewer approves. plan.md is the only shared state — no parser, no tasks.json.",
+      "inputs": {
+        "plan_path": {
+          "type": "string",
+          "default": "plan.md"
+        },
+        "test_command": {
+          "type": "string",
+          "default": "go test ./..."
+        }
+      },
+      "steps": [
+        {
+          "type": "retry_until",
+          "condition": "{reviewer_res.pass}",
+          "max_retries": 4,
+          "body": [
+            {
+              "type": "command",
+              "args": ["printf", "%s", "{_attempt}"],
+              "outputs": {
+                "review_round": "."
+              }
+            },
+            {
+              "type": "retry_until",
+              "condition": "{coder_res.pass} && {test_res.pass}",
+              "max_retries": 25,
+              "body": [
+                {
+                  "type": "agent",
+                  "agent": "ralph_coder",
+                  "inputs": {
+                    "PLAN_PATH": "{inputs.plan_path}",
+                    "TEST_COMMAND": "{inputs.test_command}",
+                    "ATTEMPT_NUMBER": "{_attempt}",
+                    "REVIEW_ROUND": "{review_round.stdout}",
+                    "PREVIOUS_SUMMARY": "{coder_res.summary}",
+                    "TEST_OUTPUT": "{test_res.stdout}",
+                    "REVIEWER_FEEDBACK": "{reviewer_res.summary}"
+                  },
+                  "outputs": {
+                    "coder_res": "."
+                  }
+                },
+                {
+                  "type": "command",
+                  "command": "{inputs.test_command}",
+                  "on_failure": "continue",
+                  "outputs": {
+                    "test_res": "."
+                  }
+                }
+              ]
+            },
+            {
+              "type": "agent",
+              "agent": "ralph_reviewer",
+              "inputs": {
+                "PLAN_PATH": "{inputs.plan_path}",
+                "TEST_COMMAND": "{inputs.test_command}",
+                "ROUND": "{review_round.stdout}",
+                "CODER_SUMMARY": "{coder_res.summary}"
+              },
+              "outputs": {
+                "reviewer_res": "."
+              }
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

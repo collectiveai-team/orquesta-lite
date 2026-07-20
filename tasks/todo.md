@@ -22,19 +22,18 @@ Source plan: `docs/superpowers/plans/2026-07-01-product-readiness.md`
 - [ ] Task 11: task_id en todos los agent_run + log grouped
 - [x] Task 11b: Proyección SQLite + API consulta serve
 
-## Fase 2 — Endurecimiento del engine
-- [ ] Task 12: Validación de flows al cargar
-- [ ] Task 13: invalid_contract dentro del fallback loop
-- [ ] Task 14: when/break_if/timeout/retry_delay
-- [ ] Task 15: Persistencia de estado del flow + flow resume
-- [ ] Task 16: Acciones nativas alta fidelidad
+## Fases 2–3 — Runtime durable y flows dinámicos
 
-## Fase 3 — Los 3 flows por defecto
-- [ ] Task 17: factory_fast_governed
-- [ ] Task 18: pr_review + watch ruteado a flows
-- [ ] Task 19: GitHub Action template + deploy docs
-- [ ] Task 20: issue_fix
-- [ ] Task 21: flow list + docs de flows
+Las Tasks 12–21 originales fueron reemplazadas por el plan ejecutable
+[`docs/superpowers/plans/2026-07-14-durable-dynamic-workflow-runtime.md`](../docs/superpowers/plans/2026-07-14-durable-dynamic-workflow-runtime.md).
+
+- [x] Milestone 0: baseline y matriz de paridad.
+- [x] Milestone 1: flow spec v2, compiler e IR.
+- [x] Milestone 2: activity model y protocolo externo.
+- [x] Milestone 3: store durable, scheduler y recovery.
+- [x] Milestone 4: CLI, config y observabilidad v2.
+- [x] Milestone 5: control dinámico y pack contract.
+- [ ] Milestone 6: aliases y gate de cutover listos; eliminación bloqueada hasta evidencia real.
 
 ## Fase 4 — Recovery + medic
 - [ ] Task 22: internal/recovery + rol medic

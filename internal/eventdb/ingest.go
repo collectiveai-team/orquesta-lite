@@ -169,17 +169,28 @@ func applyLine(tx *sql.Tx, line string) error {
 		return nil
 	}
 	var env struct {
-		Ts     string `json:"ts"`
-		Event  string `json:"event"`
-		RunID  string `json:"run_id"`
-		TaskID string `json:"task_id"`
+		EventID string `json:"event_id"`
+		Ts      string `json:"ts"`
+		Event   string `json:"event"`
+		RunID   string `json:"run_id"`
+		TaskID  string `json:"task_id"`
 	}
 	if err := json.Unmarshal([]byte(line), &env); err != nil {
 		return nil // corrupt line (torn write): skip rather than poison ingest
 	}
-	if _, err := tx.Exec(`INSERT INTO events(run_id, ts, type, task_id, raw) VALUES(?,?,?,?,?)`,
-		env.RunID, env.Ts, env.Event, env.TaskID, line); err != nil {
+	var eventID any
+	if env.EventID != "" {
+		eventID = env.EventID
+	}
+	result, err := tx.Exec(`INSERT OR IGNORE INTO events(event_id, run_id, ts, type, task_id, raw) VALUES(?,?,?,?,?,?)`,
+		eventID, env.RunID, env.Ts, env.Event, env.TaskID, line)
+	if err != nil {
 		return err
+	}
+	if env.EventID != "" {
+		if inserted, _ := result.RowsAffected(); inserted == 0 {
+			return nil
+		}
 	}
 
 	switch env.Event {

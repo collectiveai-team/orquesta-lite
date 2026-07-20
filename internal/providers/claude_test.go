@@ -10,6 +10,7 @@ func TestClaudeBuildUsesStdinPrompt(t *testing.T) {
 	launch, err := (Claude{}).Build(context.Background(), "large prompt", Options{
 		Model:                "claude-test",
 		DangerouslySkipPerms: true,
+		SafeMode:             true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -22,6 +23,9 @@ func TestClaudeBuildUsesStdinPrompt(t *testing.T) {
 	}
 	if !slices.Contains(launch.Args, "--dangerously-skip-permissions") {
 		t.Fatalf("Args = %v, want dangerous permissions flag", launch.Args)
+	}
+	if !slices.Contains(launch.Args, "--safe-mode") {
+		t.Fatalf("Args = %v, want safe mode flag", launch.Args)
 	}
 }
 

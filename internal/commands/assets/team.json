@@ -124,6 +124,16 @@
     "max_seconds": 1800,
     "default_pattern": "(?i)(rate_?limit|429|quota|too many requests|session limit|usage limit)"
   },
+  "runtime": {
+    "retention_runs": 20,
+    "artifact_max_bytes": 8388608,
+    "provider_backoff": {
+      "initial_seconds": 30,
+      "factor": 2,
+      "max_seconds": 1800,
+      "default_pattern": "(?i)(rate_?limit|429|quota|too many requests|session limit|usage limit)"
+    }
+  },
   "full_test_command": "go test ./...",
   "lint_command": ""
 }

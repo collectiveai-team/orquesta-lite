@@ -1,0 +1,61 @@
+{
+  "apiVersion": "orq.dev/v2",
+  "kind": "Flow",
+  "metadata": {"name": "factory-governed", "version": "2"},
+  "inputs": {
+    "features_path": {"schema": "schema:path@1"}
+  },
+  "steps": [
+    {
+      "id": "plan_tickets",
+      "uses": "activity:agent.invoke@1",
+      "with": {
+        "role": "ticket_planner",
+        "outputSchema": "schema:workflow-state@1",
+        "vars": {
+          "MODE": "initial",
+          "FEATURES_PATH": {"$ref": "inputs.features_path"},
+          "CURRENT_STATE": "{}",
+          "IMPLEMENTATION": "{}",
+          "VERIFICATION": "{}"
+        }
+      }
+    },
+    {
+      "id": "develop_tickets",
+      "uses": "subflow:develop-ticket@1",
+      "while": {
+        "condition": "item.state.status == \"active\"",
+        "maxIterations": 20,
+        "initial": {"state": {"$ref": "steps.plan_tickets.output"}}
+      },
+      "with": {
+        "features_path": {"$ref": "inputs.features_path"},
+        "state": {"$ref": "item.state"}
+      }
+    },
+    {
+      "id": "ticket_plan_complete",
+      "uses": "activity:gate.run@1",
+      "with": {
+        "argv": [
+          "uv",
+          "run",
+          "python",
+          "-c",
+          "import json,sys; data=json.load(open(sys.argv[1])); raise SystemExit(0 if data.get('status') == 'complete' and not data.get('pending') and data.get('next_ticket') is None else 1)",
+          ".orquestalite/results/ticket_planner.json"
+        ]
+      }
+    },
+    {
+      "id": "integrated_review",
+      "uses": "subflow:integrated-review@1",
+      "with": {"features_path": {"$ref": "inputs.features_path"}}
+    }
+  ],
+  "outputs": {
+    "ticket_iterations": {"$ref": "steps.develop_tickets.output"},
+    "governance": {"$ref": "steps.integrated_review.output.governance"}
+  }
+}

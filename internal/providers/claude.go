@@ -32,6 +32,9 @@ func (Claude) Build(_ context.Context, prompt string, opts Options) (Launch, err
 	if opts.DangerouslySkipPerms {
 		args = insertAfter(args, "--verbose", "--dangerously-skip-permissions")
 	}
+	if opts.SafeMode {
+		args = insertAfter(args, "--verbose", "--safe-mode")
+	}
 	if opts.Effort != "" {
 		args = append(args[:len(args)-2], "--effort", opts.Effort, "-p", "-")
 	}

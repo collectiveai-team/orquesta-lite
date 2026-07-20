@@ -354,11 +354,42 @@ injection, test-through-the-interface, mock only at boundaries, deletion test
 before adding an abstraction, two-axis Standards/Spec review) drawn from Matt
 Pocock's [skills collection](https://github.com/mattpocock/skills).
 
+### Durable dynamic workflows (v2)
+
+The generic runtime loads strict `orq.dev/v2` Flow/Subflow JSON from disk or a
+locally installed versioned pack. It checkpoints run, step, attempt, artifact,
+approval, and outbox state in `.orquestalite/workflows.db` and resumes from the
+pinned IR rather than recompiling changed files.
+
+```bash
+orq-lite flow validate flows/release.json
+orq-lite flow inspect development/release@1
+orq-lite flow run development/release@1 issue=42 --policy=policy:safe@1
+orq-lite flow status <run-id>
+orq-lite flow resume <run-id>
+```
+
+Historical development commands accept `--engine=legacy|v2`. Legacy remains
+the default until the external development pack passes the documented parity,
+benchmark, canary, and rollback gates; `--force-new-run` is required when an
+unfinished legacy task/factory state exists. See
+[`docs/adr/0005-durable-dynamic-workflow-runtime.md`](./docs/adr/0005-durable-dynamic-workflow-runtime.md).
+The deletion gate is executable:
+
+```bash
+orq-lite cutover template > .orquestalite/cutover-evidence.json
+orq-lite cutover check --evidence .orquestalite/cutover-evidence.json --commit <candidate-sha>
+```
+
+See [`docs/runtime-cutover.md`](./docs/runtime-cutover.md) for the evidence
+contract, offline pack check, and v2-default canary build.
+
 Runtime state lives in `.orquestalite/`, including:
 
 - `tasks.json` for task state
 - `results/<role>.json` for agent result contracts
 - `run.log` for JSONL event logs
+- `workflows.db` for durable v2 operational state
 - `memory.md` for cross-iteration notes
 
 ## Architecture

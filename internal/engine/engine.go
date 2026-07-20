@@ -147,6 +147,44 @@ func (c *Context) setLocked(segs []string, v any) {
 	sub.setLocked(tail, v)
 }
 
+// Snapshot returns a deep copy of the context's current data, suitable for
+// restoring later with Restore.
+func (c *Context) Snapshot() map[string]any {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return deepCopyMap(c.data)
+}
+
+// Restore replaces the context's data with a deep copy of snap.
+func (c *Context) Restore(snap map[string]any) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.data = deepCopyMap(snap)
+}
+
+func deepCopyMap(m map[string]any) map[string]any {
+	out := make(map[string]any, len(m))
+	for k, v := range m {
+		out[k] = deepCopyValue(v)
+	}
+	return out
+}
+
+func deepCopyValue(v any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		return deepCopyMap(x)
+	case []any:
+		out := make([]any, len(x))
+		for i, el := range x {
+			out[i] = deepCopyValue(el)
+		}
+		return out
+	default:
+		return x
+	}
+}
+
 // Get resolves a dotted path. Returns (value, true) when every segment
 // resolves; (nil, false) otherwise. Slice indices must be numeric strings.
 func (c *Context) Get(path string) (any, bool) {

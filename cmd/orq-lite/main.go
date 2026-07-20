@@ -16,6 +16,11 @@ import (
 
 var version = "dev"
 
+// defaultEngine stays legacy in normal builds until the cutover gate opens.
+// Canary releases can dogfood v2 as the default without a source fork via:
+// -ldflags "-X main.defaultEngine=v2".
+var defaultEngine = "legacy"
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
@@ -41,10 +46,18 @@ func main() {
 	case "plan":
 		fs := flag.NewFlagSet("plan", flag.ExitOnError)
 		appendFlag := fs.Bool("append", false, "append to existing tasks.json")
+		engineName := fs.String("engine", defaultEngine, "execution engine: legacy|v2")
 		_ = fs.Parse(args)
 		if fs.NArg() < 1 {
 			fmt.Fprintln(os.Stderr, "usage: orq-lite plan <plan.md> [--append]")
 			os.Exit(2)
+		}
+		selectedEngine, err := commands.SelectDevelopmentEngine(".", "plan", *engineName, flagWasSet(args, "engine"), false, os.Stderr)
+		if err != nil {
+			exit(err)
+		}
+		if selectedEngine == "v2" {
+			exit(commands.RunDevelopmentAlias(ctx, ".", "plan", map[string]any{"plan_path": fs.Arg(0), "append": *appendFlag}, os.Stdout))
 		}
 		exit(commands.PlanWithLiveCaller(ctx, ".", fs.Arg(0), *appendFlag))
 
@@ -54,10 +67,22 @@ func main() {
 		fast := fs.Bool("fast", false, "batch all pending tasks through coder once, then tester/critic once")
 		serve := fs.Bool("serve", false, "also host the web dashboard while running")
 		addr := fs.String("addr", "127.0.0.1:4173", "dashboard address (with --serve)")
+		engineName := fs.String("engine", defaultEngine, "execution engine: legacy|v2")
+		forceNewRun := fs.Bool("force-new-run", false, "start v2 despite unfinished legacy tasks; preserves tasks.json")
 		_ = fs.Parse(args)
 		runCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
 		defer stop()
 		startDashboard(runCtx, *serve, *addr)
+		selectedEngine, err := commands.SelectDevelopmentEngine(".", "run", *engineName, flagWasSet(args, "engine"), *forceNewRun, os.Stderr)
+		if err != nil {
+			exit(err)
+		}
+		if selectedEngine == "v2" {
+			if err := commands.CheckV2RunStart(".", *forceNewRun); err != nil {
+				exit(err)
+			}
+			exit(commands.RunDevelopmentAlias(runCtx, ".", "run", map[string]any{"fast": *fast}, os.Stdout))
+		}
 		teamPath := "team.json"
 		exit(commands.Run(runCtx, commands.RunOptions{
 			ProjectDir: ".",
@@ -77,6 +102,8 @@ func main() {
 		fast := fs.Bool("fast", false, "run coder/tester/critic once per feature, then final global review")
 		serve := fs.Bool("serve", true, "host the web dashboard while running (on by default)")
 		addr := fs.String("addr", "127.0.0.1:4173", "dashboard address")
+		engineName := fs.String("engine", defaultEngine, "execution engine: legacy|v2")
+		forceNewRun := fs.Bool("force-new-run", false, "start v2 despite unfinished legacy state; preserves legacy files")
 		_ = fs.Parse(args)
 		featuresPath := ""
 		if fs.NArg() > 0 {
@@ -88,6 +115,16 @@ func main() {
 		// always sees its URL and can tell the run is live; --serve=false and
 		// --status both suppress it.
 		startDashboard(runCtx, *serve && !*statusOnly, *addr)
+		selectedEngine, err := commands.SelectDevelopmentEngine(".", "factory", *engineName, flagWasSet(args, "engine"), *forceNewRun, os.Stderr)
+		if err != nil {
+			exit(err)
+		}
+		if selectedEngine == "v2" {
+			if err := commands.CheckV2FactoryStart(".", *forceNewRun); err != nil {
+				exit(err)
+			}
+			exit(commands.RunDevelopmentAlias(runCtx, ".", "factory", map[string]any{"features_path": featuresPath, "fast": *fast, "create_pr": *createPR}, os.Stdout))
+		}
 		exit(commands.Factory(runCtx, commands.FactoryOptions{
 			ProjectDir:   ".",
 			FeaturesPath: featuresPath,
@@ -119,7 +156,14 @@ func main() {
 		base := fs.String("base", "", "explicit base git ref (overrides --pr resolution)")
 		head := fs.String("head", "", "explicit head git ref (overrides --pr resolution)")
 		publish := fs.Bool("publish", false, "post the verdict as a PR review via gh")
+		engineName := fs.String("engine", defaultEngine, "execution engine: legacy|v2")
 		_ = fs.Parse(args)
+		if err := commands.ValidateEngine(*engineName); err != nil {
+			exit(err)
+		}
+		if *engineName == "v2" {
+			exit(commands.RunDevelopmentAlias(ctx, ".", "review", map[string]any{"pr": *pr, "base": *base, "head": *head, "publish": *publish}, os.Stdout))
+		}
 		exit(commands.Review(ctx, commands.ReviewOptions{
 			ProjectDir: ".",
 			PR:         *pr,
@@ -132,7 +176,15 @@ func main() {
 		fs := flag.NewFlagSet("intake", flag.ExitOnError)
 		issue := fs.String("issue", "", "path to a file holding the GitHub issue body")
 		noRun := fs.Bool("no-run", false, "stop after writing tasks.json (do not run the loop)")
+		engineName := fs.String("engine", defaultEngine, "execution engine: legacy|v2")
 		_ = fs.Parse(args)
+		selectedEngine, err := commands.SelectDevelopmentEngine(".", "intake", *engineName, flagWasSet(args, "engine"), false, os.Stderr)
+		if err != nil {
+			exit(err)
+		}
+		if selectedEngine == "v2" {
+			exit(commands.RunDevelopmentAlias(ctx, ".", "intake", map[string]any{"issue_path": *issue, "run": !*noRun}, os.Stdout))
+		}
 		exit(commands.Intake(ctx, commands.IntakeOptions{
 			ProjectDir: ".",
 			IssuePath:  *issue,
@@ -146,6 +198,9 @@ func main() {
 		prs := fs.Bool("prs", false, "watch PRs (trigger review)")
 		reviewOwn := fs.Bool("review-own-prs", false, "review PRs that orq-lite itself opened (default: skip)")
 		publishPRs := fs.Bool("publish-prs", false, "post PR reviews via gh when reviewing")
+		engineName := fs.String("engine", defaultEngine, "execution engine: legacy|v2")
+		issueFlow := fs.String("issue-flow", "development/issue-fix@1", "v2 flow for issues")
+		prFlow := fs.String("pr-flow", "development/pr-review@1", "v2 flow for pull requests")
 		_ = fs.Parse(args)
 		dir := "."
 		if fs.NArg() > 0 {
@@ -153,6 +208,9 @@ func main() {
 		}
 		watchCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
 		defer stop()
+		if err := commands.ValidateEngine(*engineName); err != nil {
+			exit(err)
+		}
 		exit(commands.Watch(watchCtx, commands.WatchOptions{
 			ProjectDir:   dir,
 			Interval:     *interval,
@@ -161,10 +219,16 @@ func main() {
 			ReviewOwnPRs: *reviewOwn,
 			PublishPRs:   *publishPRs,
 			Out:          os.Stdout,
+			Engine:       *engineName,
+			IssueFlow:    *issueFlow,
+			PRFlow:       *prFlow,
 		}))
 
 	case "doctor":
 		exit(commands.Doctor(".", os.Stdout))
+
+	case "cutover":
+		exit(commands.CutoverCLI(ctx, ".", args, os.Stdout))
 
 	case "index":
 		fs := flag.NewFlagSet("index", flag.ExitOnError)
@@ -226,55 +290,21 @@ func main() {
 
 	case "flow":
 		if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
-			if names := commands.ListFlowNames("flows.json"); len(names) > 0 {
-				fmt.Fprintln(os.Stderr, "Available flows in flows.json:")
-				for _, n := range names {
-					fmt.Fprintf(os.Stderr, "  %s\n", n)
-				}
-			}
-			fmt.Fprintln(os.Stderr, `Usage: orq-lite flow run <name> [key=value ...] [--log-format F]
-  Execute a configured flow from flows.json.`)
+			fmt.Fprintln(os.Stderr, `Usage: orq-lite flow <command>
+  validate <ref|path>        compile and validate a v2 flow
+  inspect <ref|path>         print pinned compiled IR
+  list                       list local v1/v2 flows
+  run <ref|path> [k=v...]    start a workflow (legacy names remain supported)
+  status <run-id>            print run, steps and approvals
+  resume <run-id>            resume the pinned workflow definition
+  cancel <run-id>            cancel a workflow
+  approve <run> <id> --decision approve|reject
+  events <run-id>            print durable workflow events`)
 			os.Exit(0)
-		}
-		if args[0] != "run" {
-			fmt.Fprintln(os.Stderr, "usage: orq-lite flow run <name> [key=value ...]")
-			os.Exit(2)
-		}
-		// Separate flags from positionals by hand: the stdlib flag package stops
-		// at the first positional, which would push a trailing `--log-format`
-		// into the key=value inputs. Here flags may appear in any position.
-		logFormat := "auto"
-		var positional []string
-		for i := 1; i < len(args); i++ {
-			a := args[i]
-			switch {
-			case a == "--log-format" || a == "-log-format":
-				if i+1 < len(args) {
-					logFormat = args[i+1]
-					i++
-				}
-			case strings.HasPrefix(a, "--log-format="):
-				logFormat = strings.TrimPrefix(a, "--log-format=")
-			case strings.HasPrefix(a, "-log-format="):
-				logFormat = strings.TrimPrefix(a, "-log-format=")
-			default:
-				positional = append(positional, a)
-			}
 		}
 		runCtx, stop := signal.NotifyContext(ctx, os.Interrupt)
 		defer stop()
-		if len(positional) == 0 {
-			fmt.Fprintln(os.Stderr, "usage: orq-lite flow run <name> [key=value ...] [--log-format F]")
-			os.Exit(2)
-		}
-		exit(commands.RunFlow(runCtx, commands.FlowOptions{
-			ProjectDir: ".",
-			TeamPath:   "team.json",
-			FlowsPath:  "flows.json",
-			FlowName:   positional[0],
-			InputArgs:  positional[1:],
-			LogFormat:  eventlog.Format(logFormat),
-		}))
+		exit(commands.FlowCLI(runCtx, ".", args, os.Stdout))
 
 	default:
 		usage()
@@ -303,22 +333,29 @@ func usage() {
 
 Commands:
   init [--lang L] [dir] scaffold .orquestalite, team.json, prompts/ (--lang: python|node|go|auto; --precommit writes .pre-commit-config + lint_command)
-  plan <plan.md>        invoke parser, write tasks.json (--append to add)
-  run [--log-format F]  run review/task/fix loops over existing tasks.json (--log-format: auto|verbose|human; --fast batches pending tasks)
-  factory <features.md> develop each feature on its own branch (--fast batches each feature; no args: resume queue; --resume: retry failed features; --replan: fresh decomposition; --status; --force; --serve; --pr)
+  plan <plan.md>        invoke parser, write tasks.json (--engine legacy|v2)
+  run [--log-format F]  run review/task/fix loops (--engine legacy|v2; --fast batches pending tasks)
+  factory <features.md> develop each feature on its own branch (--engine legacy|v2; --force-new-run guards legacy state)
   precommit [dir]       write .pre-commit-config + set team.json lint_command for the detected language
   review [--pr N|--base B --head H] [--publish] critic-review a PR diff and post the verdict via gh
   intake --issue <file> triage a GitHub issue: plan+run, or write missing_info (--no-run)
-  watch <project> [--issues] [--prs] [--interval D] poll GitHub via gh; intake new issues, review new PRs (--review-own-prs, --publish-prs)
+  watch <project> [--issues] [--prs] [--interval D] poll GitHub; v2 emits idempotent generic flow triggers (--issue-flow, --pr-flow)
   cost                  per-task spend rollup (run.log sessions priced via agtop)
   doctor                preflight the setup (git, team.json, CLIs, credentials) before spending
+  cutover check         verify the fail-closed legacy runtime deletion gate (--evidence path, --commit sha, --json)
+  cutover template      print the versioned evidence document required by the deletion gate
   index [--rebuild]     build the sqlite read-model (.orquestalite/orq.db) from run.log
   status [--watch]      print tasks table (--watch refreshes until Ctrl+C)
   serve [--addr A]      web dashboard with live events (default 127.0.0.1:4173)
   log [--role R]        replay .orquestalite/run.log (--event T, --expand N, --full)
   reset                 remove .orquestalite state
   update [--check]      download and install the latest release from GitHub
-  flow run <name>       execute a flow from flows.json (e.g. orq-lite flow run factory features.md)
+  flow validate|inspect <ref|path> compile a strict v2 flow without executing it
+  flow list             list legacy flows and locally installed versioned pack flows
+  flow run <ref|path>   execute v2 flow data (--policy=<ref|path>, --source-key=<stable-key>, key=value...)
+  flow status|events <run-id> inspect durable workflow state/history
+  flow resume|cancel <run-id> resume the pinned IR or cancel a run
+  flow approve <run-id> <approval-id> --decision approve|reject
   version               print the binary version`)
 }
 
@@ -327,4 +364,15 @@ func exit(err error) {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
+}
+
+func flagWasSet(args []string, name string) bool {
+	long := "--" + name
+	short := "-" + name
+	for _, arg := range args {
+		if arg == long || arg == short || strings.HasPrefix(arg, long+"=") || strings.HasPrefix(arg, short+"=") {
+			return true
+		}
+	}
+	return false
 }

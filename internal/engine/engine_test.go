@@ -379,6 +379,57 @@ func TestFactoryFlow_RetryExhaustion(t *testing.T) {
 	}
 }
 
+// ---- Unit: loop iteration isolation ----
+//
+// Step outputs written inside a loop body (critic_res, coder_res, ...) must not
+// leak into the next iteration: feature N's first coder attempt would otherwise
+// receive feature N-1's final critic feedback as CRITIC_FEEDBACK.
+
+func TestLoopIterationsStartFromCleanContext(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir+"/features.md", "## Login\nplan A\n## Export\nplan B\n")
+
+	flow := &Flow{
+		Inputs: map[string]InputSpec{
+			"features_path": {Default: "features.md"},
+		},
+		Steps: []Step{
+			{Type: "action", Action: "factory_extract_features", Inputs: map[string]any{"path": "{inputs.features_path}"}, Outputs: map[string]string{"features_queue": "."}},
+			{Type: "loop", Iterator: "{features_queue}", As: "feature", Body: []Step{
+				{Type: "agent", Agent: "coder", Inputs: map[string]any{"TASK_ID": "{feature.id}", "CRITIC_FEEDBACK": "{critic_res.concerns}"}, Outputs: map[string]string{"coder_res": "."}},
+				{Type: "agent", Agent: "critic", Inputs: map[string]any{"FILES": "{coder_res.files_changed}"}, Outputs: map[string]string{"critic_res": "."}},
+			}},
+		},
+	}
+	agent := &recordingAgent{
+		t:       t,
+		scripts: map[string][]map[string]any{},
+		resolved: map[string]map[string]any{
+			"coder":  {"status": "completed", "files_changed": []any{"a.go"}},
+			"critic": {"status": "approved", "concerns": []any{"tighten error handling"}},
+		},
+	}
+	e := New(flow, agent, &recordingCommand{t: t}, WithDir(dir))
+	if err := e.Run(context.Background(), map[string]any{"features_path": dir + "/features.md"}); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+
+	var feedback []string
+	for _, call := range agent.calls {
+		if call.role == "coder" {
+			feedback = append(feedback, call.vars["CRITIC_FEEDBACK"])
+		}
+	}
+	if len(feedback) != 2 {
+		t.Fatalf("want 2 coder calls, got %d", len(feedback))
+	}
+	for i, fb := range feedback {
+		if fb != "" {
+			t.Fatalf("loop iteration %d: coder received stale critic feedback %q; iterations must start clean", i, fb)
+		}
+	}
+}
+
 // ---- helpers ----
 
 func writeFile(t *testing.T, path, body string) {

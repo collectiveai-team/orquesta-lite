@@ -94,6 +94,18 @@ func TestIngest_SecondIngestDoesNotDuplicate(t *testing.T) {
 	}
 }
 
+func TestIngest_DeduplicatesOutboxReplayByEventID(t *testing.T) {
+	db, dir := newTestDB(t)
+	line := `{"event_id":"e1","ts":"2026-07-01T10:00:00Z","event":"workflow_started","run_id":"r1"}`
+	appendLog(t, dir, line+"\n"+line+"\n")
+	if err := db.Ingest(dir); err != nil {
+		t.Fatal(err)
+	}
+	if n := count(t, db, "SELECT COUNT(*) FROM events WHERE event_id='e1'"); n != 1 {
+		t.Fatalf("events = %d, want 1", n)
+	}
+}
+
 func TestIngest_RunWithoutEndIsRunning(t *testing.T) {
 	db, dir := newTestDB(t)
 	appendLog(t, dir, lineRunStart+"\n")

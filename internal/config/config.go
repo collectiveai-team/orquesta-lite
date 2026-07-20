@@ -24,6 +24,7 @@ type Agent struct {
 	Model                      string   `json:"model,omitempty"`
 	Effort                     string   `json:"effort,omitempty"`
 	DangerouslySkipPermissions bool     `json:"dangerously_skip_permissions,omitempty"`
+	SafeMode                   bool     `json:"safe_mode,omitempty"`
 	RateLimitPattern           string   `json:"rate_limit_pattern,omitempty"`
 }
 
@@ -33,6 +34,7 @@ type AgentSpec struct {
 	Model       string
 	Effort      string
 	SkipPerms   bool
+	SafeMode    bool
 	RatePattern string
 	Cmd         []string
 }
@@ -161,11 +163,32 @@ type RateLimitBackoff struct {
 	DefaultPattern string `json:"default_pattern"`
 }
 
+type Runtime struct {
+	RetentionRuns    int              `json:"retention_runs,omitempty"`
+	ArtifactMaxBytes int64            `json:"artifact_max_bytes,omitempty"`
+	ProviderBackoff  RateLimitBackoff `json:"provider_backoff,omitempty"`
+}
+
+func (r Runtime) RetentionCeiling() int {
+	if r.RetentionRuns <= 0 {
+		return 20
+	}
+	return r.RetentionRuns
+}
+
+func (r Runtime) ArtifactLimit() int64 {
+	if r.ArtifactMaxBytes <= 0 {
+		return 8 << 20
+	}
+	return r.ArtifactMaxBytes
+}
+
 type Config struct {
 	Agents           map[string]Agent `json:"agents"`
 	Roles            map[string]Role  `json:"roles"`
 	Limits           Limits           `json:"limits"`
 	RateLimitBackoff RateLimitBackoff `json:"rate_limit_backoff"`
+	Runtime          Runtime          `json:"runtime,omitempty"`
 	FullTestCommand  string           `json:"full_test_command"`
 	// LintCommand is an optional quality gate run before the test suite after
 	// each task; a non-zero exit blocks the commit (the change is rolled back),
@@ -196,7 +219,68 @@ func Load(path string) (*Config, error) {
 	return &c, nil
 }
 
+// LoadDynamic decodes team configuration for a compiled v2 flow. Validation is
+// deferred to ResolveRoles so unrelated legacy or optional roles cannot block
+// a flow that does not reference them.
+func LoadDynamic(path string) (*Config, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	var config Config
+	if err := json.Unmarshal(raw, &config); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	return &config, nil
+}
+
 func (c *Config) Resolve() (map[string]RoleSpec, error) {
+	return c.resolve(true)
+}
+
+// ResolveAll resolves exactly the roles declared by configuration without
+// imposing the legacy parser/coder/tester/critic/reviewer set. Dynamic flow v2
+// uses this path and validates only roles referenced by its compiled IR.
+func (c *Config) ResolveAll() (map[string]RoleSpec, error) {
+	return c.resolve(false)
+}
+
+// ResolveRoles resolves only names referenced by one compiled workflow IR.
+func (c *Config) ResolveRoles(names []string) (map[string]RoleSpec, error) {
+	if c == nil {
+		return nil, fmt.Errorf("config is nil")
+	}
+	resolved := make(map[string]RoleSpec, len(names))
+	for _, name := range names {
+		if _, done := resolved[name]; done {
+			continue
+		}
+		role, ok := c.Roles[name]
+		if !ok {
+			return nil, fmt.Errorf("missing referenced role %q", name)
+		}
+		agents := make(map[string]AgentSpec, len(role.Agents)+len(role.EscalationLadder))
+		for _, agentName := range append(append([]string(nil), role.Agents...), role.EscalationLadder...) {
+			agent, exists := c.Agents[agentName]
+			if !exists {
+				return nil, fmt.Errorf("role %q references unknown agent %q", name, agentName)
+			}
+			spec, err := resolveAgentSpec(agentName, agent)
+			if err != nil {
+				return nil, err
+			}
+			agents[agentName] = spec
+		}
+		spec, err := resolveRoleSpec(name, role, agents)
+		if err != nil {
+			return nil, err
+		}
+		resolved[name] = spec
+	}
+	return resolved, nil
+}
+
+func (c *Config) resolve(requireLegacy bool) (map[string]RoleSpec, error) {
 	if c == nil {
 		return nil, fmt.Errorf("config is nil")
 	}
@@ -213,8 +297,12 @@ func (c *Config) Resolve() (map[string]RoleSpec, error) {
 		resolvedAgents[name] = spec
 	}
 
-	roles := make(map[string]RoleSpec, len(orchestratedRoles)+len(optionalRoles))
-	for _, roleName := range orchestratedRoles {
+	roles := make(map[string]RoleSpec, len(c.Roles))
+	legacyRoles := orchestratedRoles
+	if !requireLegacy {
+		legacyRoles = nil
+	}
+	for _, roleName := range legacyRoles {
 		role, ok := c.Roles[roleName]
 		if !ok {
 			return nil, fmt.Errorf("missing orchestrated role %q", roleName)
@@ -357,6 +445,7 @@ func resolveAgentSpec(name string, agent Agent) (AgentSpec, error) {
 		Model:       agent.Model,
 		Effort:      agent.Effort,
 		SkipPerms:   agent.DangerouslySkipPermissions,
+		SafeMode:    agent.SafeMode,
 		RatePattern: agent.RateLimitPattern,
 		Cmd:         append([]string(nil), agent.Cmd...),
 	}, nil

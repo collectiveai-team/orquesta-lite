@@ -16,6 +16,7 @@ full run is cheap.
 | [`fastapi-governed/`](./fastapi-governed/) | `factory_governed` (bundled) | `features.md` | Adds a governance loop: iterate until **architect + QA + PM** approve, each filing tasks as feedback |
 | [`pr-review/`](./pr-review/) | `pr_review` (bundled) | `pr_number` | Reviews a PR: **critic + security** lenses + test/lint gates → a `review_lead` posts one verdict |
 | [`issue-fix/`](./issue-fix/) | `issue_fix` (bundled) | `issue_number` | Evidence-gated triage → **reproduce with a failing test → fix until green → PR** (branch is an empty-vs-single-element queue) |
+| [`ralph-loop/`](./ralph-loop/) | `ralph_loop` (bundled) | `plan.md` checkboxes | Minimal ralph loop: **same coder prompt per task until the plan is done**, then an adversarial reviewer appends findings as new tasks and the loop reruns |
 
 ## Running an example
 

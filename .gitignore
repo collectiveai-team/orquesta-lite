@@ -29,6 +29,8 @@ flows.json
 !examples/**/team.json
 !examples/**/prompts/
 !examples/**/prompts/**
+!examples/**/flows.json
+!examples/**/plan.md
 
 # the embedded assets that `orq-lite init` scaffolds from are part of the binary,
 # not runtime-generated dogfooding config — keep them trackable despite the
@@ -36,3 +38,7 @@ flows.json
 !internal/commands/assets/prompts/
 !internal/commands/assets/prompts/**
 !internal/commands/assets/flows.json
+
+# versioned benchmark packs are source fixtures, not generated workspace state
+!benchmark/packs/
+!benchmark/packs/**

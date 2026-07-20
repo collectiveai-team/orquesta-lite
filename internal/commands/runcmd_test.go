@@ -1218,11 +1218,10 @@ func TestRunFix_EscalationLadderPlumbedFromConfig(t *testing.T) {
 	}
 }
 
-// TestCallRole_TimedOutReportsAgentCrashed verifies that when the first agent
-// times out (TimedOut=true, ResultExists=false), the fallback reason logged is
-// "agent_crashed" (not "result_missing"), and the chain advances to the second
-// agent which succeeds.
-func TestCallRole_TimedOutReportsAgentCrashed(t *testing.T) {
+// TestCallRole_TimedOutPreservesTimeoutReason verifies that when the first
+// agent times out, the event preserves the stable timeout reason and the chain
+// advances to the second agent.
+func TestCallRole_TimedOutPreservesTimeoutReason(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("posix shell script test, skipping on windows")
 	}
@@ -1323,9 +1322,10 @@ exit 0
 		t.Errorf("agent_a agent_run event: timed_out = %v, want true", agentAEvent["timed_out"])
 	}
 
-	// fallback_reason must be "agent_crashed", NOT "result_missing".
-	if reason, _ := agentAEvent["fallback_reason"].(string); reason != "agent_crashed" {
-		t.Errorf("agent_a agent_run event: fallback_reason = %q, want \"agent_crashed\"", reason)
+	// fallback_reason must preserve "timeout", not collapse it into a crash or
+	// a missing result.
+	if reason, _ := agentAEvent["fallback_reason"].(string); reason != "timeout" {
+		t.Errorf("agent_a agent_run event: fallback_reason = %q, want \"timeout\"", reason)
 	}
 }
 

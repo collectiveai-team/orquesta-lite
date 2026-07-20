@@ -90,8 +90,9 @@ func TestRoleRunsArchivesParsesAndAppendsMemory(t *testing.T) {
 		Specs: map[string]config.RoleSpec{
 			"tester": {
 				Agents: []config.AgentSpec{{
-					Name: "agent1",
-					Cmd:  []string{"fake", "{{PROMPT}}"},
+					Name:     "agent1",
+					Cmd:      []string{"fake", "{{PROMPT}}"},
+					SafeMode: true,
 				}},
 				PromptPath: "prompts/tester.md",
 				ResultPath: ".orquestalite/results/tester.json",
@@ -129,6 +130,9 @@ func TestRoleRunsArchivesParsesAndAppendsMemory(t *testing.T) {
 	}
 	if len(fake.specs) != 1 {
 		t.Fatalf("runner calls = %d, want 1", len(fake.specs))
+	}
+	if !fake.specs[0].SafeMode {
+		t.Fatal("safe mode was not propagated to runner spec")
 	}
 	if !strings.Contains(fake.specs[0].Prompt, "memory=prior note") || !strings.Contains(fake.specs[0].Prompt, "task=T123") {
 		t.Fatalf("prompt was not interpolated with memory and vars: %q", fake.specs[0].Prompt)

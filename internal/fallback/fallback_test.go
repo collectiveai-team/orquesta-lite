@@ -235,11 +235,16 @@ func TestCall_AllAgentsFailMaxAttempts(t *testing.T) {
 	cfg := Config{InitialBackoff: time.Millisecond, Factor: 2, MaxBackoff: 100 * time.Millisecond, Now: time.Now}
 	c := NewCaller(cfg)
 
+	calls := map[string]int{}
 	_, _, err := c.Call(context.Background(), chain, func(ctx context.Context, name string) (Outcome, error) {
+		calls[name]++
 		return Outcome{ShouldFallback: true, FallbackReason: "result_missing"}, nil
 	})
 	if !errors.Is(err, ErrAllAgentsFailed) {
 		t.Fatalf("expected ErrAllAgentsFailed, got %v", err)
+	}
+	if calls["a"] != 1 || calls["b"] != 1 {
+		t.Fatalf("default fallback must try each distinct agent once, calls=%v", calls)
 	}
 }
 

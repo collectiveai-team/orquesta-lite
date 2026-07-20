@@ -153,7 +153,15 @@ func Role[T MemoryNoting](
 	prompt := prompts.Interpolate(tmpl, roleVars)
 	resultAbs := absPath(inv.Dir, resultPath)
 
-	if err := inv.run(ctx, roleName, spec, call.AgentOverride, prompt, resultPath, resultAbs, rc); err != nil {
+	var parsed *T
+	validate := func(path string) error {
+		value, parseErr := parse(path)
+		if parseErr == nil {
+			parsed = value
+		}
+		return parseErr
+	}
+	if err := inv.runValidated(ctx, roleName, spec, call.AgentOverride, prompt, resultPath, resultAbs, rc, validate); err != nil {
 		return nil, err
 	}
 
@@ -165,9 +173,8 @@ func Role[T MemoryNoting](
 		return nil, err
 	}
 
-	parsed, err := parse(resultAbs)
-	if err != nil {
-		return nil, err
+	if parsed == nil {
+		return nil, fmt.Errorf("role %q returned no parsed result", roleName)
 	}
 	if note := (*parsed).MemoryNote(); note != nil {
 		taskID := rc.TaskID
@@ -255,6 +262,13 @@ func (call RoleCall) templateVars() map[string]string {
 }
 
 func (inv *RoleInvoker) run(ctx context.Context, roleName string, role config.RoleSpec, agentOverride, prompt, relResultPath, absResultPath string, rc RunContext) error {
+	return inv.runValidated(ctx, roleName, role, agentOverride, prompt, relResultPath, absResultPath, rc, nil)
+}
+
+// runValidated runs the fallback chain and considers a result successful only
+// after validate accepts it. This keeps invalid_contract inside the same
+// per-agent fallback loop as missing results and provider failures.
+func (inv *RoleInvoker) runValidated(ctx context.Context, roleName string, role config.RoleSpec, agentOverride, prompt, relResultPath, absResultPath string, rc RunContext, validate func(path string) error) error {
 	agents, err := selectAgents(role, agentOverride)
 	if err != nil {
 		return err
@@ -275,6 +289,7 @@ func (inv *RoleInvoker) run(ctx context.Context, roleName string, role config.Ro
 
 	var lastResult *runner.Result
 	var lastErr error
+	var lastFallbackReason string
 	var triedAgents []string
 	fc := inv.Fallback
 	if fc == nil {
@@ -303,6 +318,7 @@ func (inv *RoleInvoker) run(ctx context.Context, roleName string, role config.Ro
 			Model:                      ag.Model,
 			Effort:                     ag.Effort,
 			DangerouslySkipPermissions: ag.SkipPerms,
+			SafeMode:                   ag.SafeMode,
 			Prompt:                     prompt,
 			ResultPath:                 absResultPath,
 			Timeout:                    role.Timeout,
@@ -325,9 +341,19 @@ func (inv *RoleInvoker) run(ctx context.Context, roleName string, role config.Ro
 		triedAgents = append(triedAgents, agentName)
 
 		shouldFallback, fallbackReason := Classify(r)
+		if !shouldFallback && validate != nil {
+			if validationErr := validate(absResultPath); validationErr != nil {
+				shouldFallback = true
+				fallbackReason = "invalid_contract"
+				lastErr = fmt.Errorf("agent %q (role %q) wrote invalid contract to %s: %w", agentName, roleName, relResultPath, validationErr)
+			}
+		}
 		if shouldFallback {
-			lastErr = fmt.Errorf("agent %q (role %q) did not write %s: exit=%d; detail: %s",
-				agentName, roleName, relResultPath, r.ExitCode, errorDetail(r))
+			lastFallbackReason = fallbackReason
+			if fallbackReason != "invalid_contract" {
+				lastErr = fmt.Errorf("agent %q (role %q) did not write %s: exit=%d; detail: %s",
+					agentName, roleName, relResultPath, r.ExitCode, errorDetail(r))
+			}
 		}
 
 		inv.recordHealth(roleName, agentName, shouldFallback, fallbackReason)
@@ -376,7 +402,14 @@ func (inv *RoleInvoker) run(ctx context.Context, roleName string, role config.Ro
 		} else if lastResult != nil {
 			lastErrStr = fmt.Sprintf("exit=%d; detail: %s", lastResult.ExitCode, errorDetail(lastResult))
 		}
-		return fmt.Errorf("all agents failed for role %q: tried [%s]; last error: %s", roleName, tried, lastErrStr)
+		message := fmt.Sprintf("all agents failed for role %q: tried [%s]; last error: %s", roleName, tried, lastErrStr)
+		if lastFallbackReason == "invalid_contract" {
+			return fmt.Errorf("%w: %s", ErrInvalidContract, message)
+		}
+		if lastFallbackReason == "timeout" {
+			return fmt.Errorf("%w: %s", ErrAgentTimeout, message)
+		}
+		return fmt.Errorf("%s", message)
 	}
 	return err
 }
