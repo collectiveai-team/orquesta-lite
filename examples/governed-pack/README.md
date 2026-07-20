@@ -25,7 +25,8 @@ integrated_review:
 ```
 
 Three things distinguish it from a plain per-ticket flow, each a lesson learned
-the hard way (see `../../benchmark/results/round{1,2,3}-*.md`):
+the hard way (see `../../benchmark/results/sixway-r1.md` for round 1 and
+`round2-r1.md` / `round3-r1.md` for the later rounds):
 
 1. **An `adversary` role** that hunts for what the *spec didn't say* —
    deriving failure hypotheses from the system's shape (shared state,
@@ -42,21 +43,30 @@ the hard way (see `../../benchmark/results/round{1,2,3}-*.md`):
 
 ## Run it
 
-The example ships a **haiku-only** team so a full run is cheap. Drop the files
-into a throwaway working dir and install the pack:
+The example ships a **haiku-only** team so a full run is cheap. The governed
+pack is an *overlay* on an initialized project — run `orq-lite init` first so
+the base `prompts/` (parser, tester, reviewer) exist, then install the pack and
+drop this team over the generated one:
 
 ```sh
 # from a fresh project dir with git initialized and both gates green at HEAD
+orq-lite init                              # base team.json + prompts/ + .gitignore
 mkdir -p .orquestalite/packs/development
 cp -R path/to/examples/governed-pack/pack .orquestalite/packs/development/4
 cp path/to/examples/governed-pack/{team.json,features.md,CONVENTIONS.md} .
 
-orq-lite doctor
+orq-lite doctor                            # resolves the team, checks CLIs + gates
 orq-lite flow validate development/factory-governed@4
 orq-lite flow run development/factory-governed@4 \
   --policy=.orquestalite/packs/development/4/policies/development@2.json \
   features_path=features.md
 ```
+
+> `orq-lite doctor` still imposes the legacy role set
+> (`parser`/`coder`/`tester`/`critic`/`reviewer`) even for a v2-pack-only
+> project, which is why this team declares them alongside the flow roles. The
+> `parser`/`tester`/`reviewer` entries point at the `init`-generated prompts
+> and are unused by `factory-governed@4`.
 
 If a run stops (rate limit, timeout, host sleep), resume it — the durable
 runtime continues from persisted step state, never repeating finished work:

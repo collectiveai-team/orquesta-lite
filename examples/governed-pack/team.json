@@ -9,6 +9,9 @@
     }
   },
   "roles": {
+    "parser": {"agents": ["haiku"], "prompt": "prompts/parser.md", "result_path": ".orquestalite/results/parser.json", "timeout_seconds": 600},
+    "tester": {"agents": ["haiku"], "prompt": "prompts/tester.md", "result_path": ".orquestalite/results/tester.json", "timeout_seconds": 900},
+    "reviewer": {"agents": ["haiku"], "prompt": "prompts/reviewer.md", "result_path": ".orquestalite/results/reviewer.json", "timeout_seconds": 900},
     "ticket_planner": {"agents": ["haiku"], "prompt": ".orquestalite/packs/development/4/prompts/ticket-planner.md", "result_path": ".orquestalite/results/ticket_planner.json", "timeout_seconds": 900},
     "coder": {"agents": ["haiku"], "prompt": ".orquestalite/packs/development/4/prompts/coder.md", "result_path": ".orquestalite/results/coder.json", "timeout_seconds": 1800},
     "ticket_qa": {"agents": ["haiku"], "prompt": ".orquestalite/packs/development/4/prompts/ticket-qa.md", "result_path": ".orquestalite/results/ticket_qa.json", "timeout_seconds": 900},
