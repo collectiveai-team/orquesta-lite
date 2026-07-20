@@ -44,6 +44,12 @@ rebuilt with the new version string.
   "didn't run" and still show green. Emit a signal (log + step field) on
   fallback substitution. This is the one Go-level lesson the benchmark proved
   necessary; see `benchmark/results/round3-r1.md`.
+- **Engine v2-awareness:** `orq-lite doctor` (via `config.Resolve`) still
+  imposes the legacy `parser`/`coder`/`tester`/`critic`/`reviewer` role set even
+  for a v2-pack-only project (`internal/config/config.go`). A pure-v2 team gets
+  a spurious "missing orchestrated role" failure; the `governed-pack` example
+  works around it by declaring the legacy roles. `doctor` should resolve
+  against the installed pack's referenced roles when a v2 flow is present.
 - **Round-4 hardening:** a `regression_forge` step that materializes each
   adversary/critic reproduction into a failing test in `tests/` before the
   repair loop, so the gates — not a prose-reading reviewer — hold the line.
