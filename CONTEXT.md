@@ -344,7 +344,6 @@ condition stops the outer loop. The reviewer prompt receives:
 orq-lite init                # scaffold team.json + prompts/ + .orquestalite/
 orq-lite plan plan.md        # run parser, write tasks.json, do NOT start loops
 orq-lite run                 # run loops over existing tasks.json
-orq-lite run plan.md         # plan + run in one call (AFK mode)
 orq-lite factory features.md # queue features, one branch + plan + run each
 orq-lite factory             # resume queue (--status to inspect, --force to replace)
 orq-lite serve               # web dashboard (tasks, factory queue, SSE events)
@@ -355,8 +354,7 @@ orq-lite reset               # wipe .orquestalite/ state
 - **Plan input is free-form markdown.** The parser role is responsible for
   splitting verbose human intent into atomic, testable tasks.
 - **Resume is idempotent.** `orq-lite run` without args continues the
-  existing `tasks.json`. `orq-lite run plan.md` with prior state asks for
-  confirmation (or `--force`).
+  existing `tasks.json`. Planning and running are separate commands: `orq-lite plan plan.md` then `orq-lite run`.
 - **`orq-lite plan plan.md --append`** adds tasks to an existing backlog.
 
 ## Observability

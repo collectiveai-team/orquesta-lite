@@ -3,6 +3,23 @@
 All notable changes to orq-lite are recorded here. Versions follow the git
 tags cut as GitHub releases (the binary's `--version` is stamped from the tag).
 
+## Unreleased
+
+### Added
+
+- **`orq-lite pack install <dir>`** — verifies a pack against its `pack.json`
+  manifest (digests, no unlisted files, no symlinks) and installs it to
+  `.orquestalite/packs/<name>/<version>/`, replacing the manual `cp -R`.
+- **`benchmark/cutover-evidence.json`** — machine-readable cutover-gate
+  evidence; `orq-lite cutover check` output is now the authoritative gap list.
+
+### Changed
+
+- **`orq-lite doctor`** no longer fails pack-only projects: a `team.json`
+  without the legacy `parser`/`tester`/`reviewer` roles now resolves, with a
+  `legacy roles` warn noting that only `plan`/`run`/`factory` need them.
+- **`examples/governed-pack/team.json`** dropped its unused legacy shim roles.
+
 ## v0.2.3 — Governed pack example + guide overhaul
 
 Docs and examples release. No engine behavior changes; the pinned binary is
@@ -11,7 +28,7 @@ rebuilt with the new version string.
 ### Added
 
 - **`examples/governed-pack/`** — the recommended production setup for the
-  durable v2 runtime: the `development/factory-governed@4` pack, self-contained
+  durable v2 runtime: the `development/factory-governed@1` (originally shipped as @4; renumbered to @1) pack, self-contained
   and runnable locally with a cheap haiku team. The flow distils three
   benchmark rounds of field lessons into structure:
   - an **`adversary`** role that hunts what the spec *didn't* say (failure
@@ -29,7 +46,7 @@ rebuilt with the new version string.
 
 - **`guide.md` §4** rewritten around the v2 governed pack: model placement on
   the review/gate roles, and the field lessons reframed as "what each stage of
-  `factory-governed@4` is for" — now including the round 2/3 lessons: a veto
+  `factory-governed@1` is for" — now including the round 2/3 lessons: a veto
   needs a repair path, a reviewer's findings must actually reach the fix path
   (verify `result_path` + `steps.<role>.output` wiring), and a reproduced
   finding must become a failing test (a gate), not prose the integrator reads.

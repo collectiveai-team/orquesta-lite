@@ -209,6 +209,9 @@ orq-lite factory <plan.md>     plan vertical-slice features, develop each on its
 orq-lite factory               resume an interrupted queue (--status, --force, --pr, --serve)
 orq-lite factory --resume      retry failed features, reusing their persisted task lists
 orq-lite factory --replan      force a fresh task decomposition for every feature
+orq-lite pack install <dir>    verify a v2 pack and install it into .orquestalite/packs/
+orq-lite flow run <ref> [k=v]  run a v2 flow, e.g. development/factory-governed@1 features_path=features.md
+orq-lite flow list             list local v1/v2 flows
 orq-lite serve [--addr A]      web dashboard with live SSE event stream
 orq-lite doctor                preflight git/team.json/CLIs/credentials before spending
 orq-lite cost                  per-task spend rollup (sessions priced via agtop)
@@ -383,17 +386,21 @@ approval, and outbox state in `.orquestalite/workflows.db` and resumes from the
 pinned IR rather than recompiling changed files.
 
 ```bash
-orq-lite flow validate flows/release.json
-orq-lite flow inspect development/release@1
-orq-lite flow run development/release@1 issue=42 --policy=policy:safe@1
+orq-lite pack install examples/governed-pack/pack
+orq-lite flow validate development/factory-governed@1
+orq-lite flow inspect development/factory-governed@1
+orq-lite flow run development/factory-governed@1 features_path=features.md \
+  --policy=.orquestalite/packs/development/1/policies/development@2.json
 orq-lite flow status <run-id>
 orq-lite flow resume <run-id>
 ```
 
-Historical development commands accept `--engine=legacy|v2`. Legacy remains
-the default until the external development pack passes the documented parity,
-benchmark, canary, and rollback gates; `--force-new-run` is required when an
-unfinished legacy task/factory state exists. See
+`orq-lite flow run` (above) is the recommended path today and is not gated.
+Separately, the historical commands (`plan`, `run`, `factory`, `review`,
+`intake`) accept `--engine=legacy|v2`; legacy remains their default until the
+development pack passes the documented parity, benchmark, canary, and rollback
+gates, and `--force-new-run` is required when an unfinished legacy
+task/factory state exists. See
 [`docs/adr/0005-durable-dynamic-workflow-runtime.md`](./docs/adr/0005-durable-dynamic-workflow-runtime.md).
 The deletion gate is executable:
 
@@ -441,14 +448,14 @@ model and [docs/adr/](./docs/adr/) the architecture decisions.
 
 ## Development
 
-The repository's own `team.json`, `prompts/`, and `schemas/` at the repo root
+The repository's own `team.json`, `prompts/`, `schemas/`, and `flows.json` at the repo root
 are **runtime-generated dogfooding config** — they are gitignored and never
 committed. After a fresh clone, regenerate them with:
 
 ```bash
 go build -o /tmp/orq-lite-dev ./cmd/orq-lite
 cd /path/to/this-repo   # or any target project
-/tmp/orq-lite-dev init  # scaffolds team.json / prompts/ / schemas/ from the embedded assets
+/tmp/orq-lite-dev init  # scaffolds team.json / prompts/ / schemas/ / flows.json from the embedded assets
 ```
 
 `init` autodetects Go (sets `full_test_command: "go test ./..."`); pass

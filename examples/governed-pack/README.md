@@ -50,9 +50,8 @@ drop this team over the generated one:
 
 ```sh
 # from a fresh project dir with git initialized and both gates green at HEAD
-orq-lite init                              # base team.json + prompts/ + .gitignore
-mkdir -p .orquestalite/packs/development
-cp -R path/to/examples/governed-pack/pack .orquestalite/packs/development/1
+orq-lite init                              # scaffold project config + .gitignore
+orq-lite pack install path/to/examples/governed-pack/pack
 cp path/to/examples/governed-pack/{team.json,features.md,CONVENTIONS.md} .
 
 orq-lite doctor                            # resolves the team, checks CLIs + gates

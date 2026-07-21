@@ -62,8 +62,10 @@ orq-lite init          # writes team.json, prompts/, schemas/, .orquestalite/ + 
 unrecognized layout it leaves the command empty rather than guessing wrong —
 treat an empty gate as a TODO, not a feature.
 
-Commit `team.json`, `prompts/`, and `flows.json` (project configuration);
-`.orquestalite/` stays gitignored (runtime state).
+`init` adds `team.json`, `prompts/`, `schemas/`, and `flows.json` to
+`.gitignore` on purpose: `run`'s rollback (`git clean -fd`) only removes
+untracked files it can then regenerate, so keeping them untracked protects
+them. Commit the `.gitignore` change; the config files themselves stay local.
 
 ### 1b. Choose the flow(s) for this repo
 
@@ -311,7 +313,7 @@ the dashboard. Interrupted or failed queues resume with `orq-lite factory`
 ## Quick checklist
 
 - [ ] git repo, clean tree; `orq-lite`, provider CLIs, `gh` authenticated headless
-- [ ] `orq-lite init`; config committed, `.orquestalite/` ignored
+- [ ] `orq-lite init`; generated config present, `.gitignore` entries committed
 - [ ] toolchain pinned (interpreter version, single lockfile)
 - [ ] full test suite green at HEAD, self-contained (no live infra)
 - [ ] lint at zero: false positives configured away, auto-fixes applied **and
