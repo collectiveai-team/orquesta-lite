@@ -87,11 +87,14 @@ func Run(ctx context.Context, dir string) []Check {
 		add(StatusError, "team.json", err.Error())
 		return checks // everything below depends on the config
 	}
-	if _, err := cfg.Resolve(); err != nil {
+	if _, err := cfg.ResolveAll(); err != nil {
 		add(StatusError, "team.json", "resolve: "+err.Error())
 		return checks
 	}
 	add(StatusOK, "team.json", "loads and resolves")
+	if missing := cfg.MissingOrchestratedRoles(); len(missing) > 0 {
+		add(StatusWarn, "legacy roles", "missing "+strings.Join(missing, ", ")+" — legacy commands (plan/run/factory) need them; v2 `flow run` does not")
+	}
 
 	// prompts referenced by roles
 	missing := missingPromptFiles(dir, cfg)
