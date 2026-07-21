@@ -395,7 +395,7 @@ orq-lite flow status <run-id>
 orq-lite flow resume <run-id>
 ```
 
-`orq-lite flow run` (above) is the recommended path today and is not gated. The governed pack ships all six flows the CLI aliases and `watch` defaults reference (`plan-tickets`, `task-list`, `factory-fast`, `factory-governed`, `issue-fix`, `pr-review`).
+`orq-lite flow run` (above) is the recommended path today and is not gated. The governed pack ships all six flows the cutover gate requires (`plan-tickets`, `task-list`, `factory-fast`, `factory-governed`, `issue-fix`, `pr-review`) — five back the CLI aliases and `watch` defaults; `factory-fast` runs standalone or via `factory-governed`'s `fast=true`.
 Separately, the historical commands (`plan`, `run`, `factory`, `review`,
 `intake`) accept `--engine=legacy|v2`; legacy remains their default until the
 development pack passes the documented parity, benchmark, canary, and rollback

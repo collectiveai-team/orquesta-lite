@@ -14,7 +14,7 @@ tags cut as GitHub releases (the binary's `--version` is stamped from the tag).
   evidence; `orq-lite cutover check` output is now the authoritative gap list.
 - **`plan-tickets@1`** — planning-only flow; powers `orq-lite plan` alias.
 - **`task-list@1`** — per-task develop loop; powers `orq-lite run` alias.
-- **`factory-fast@1`** — single-batch fast path; the `fast=true` switch inside `factory-governed@1`.
+- **`factory-fast@1`** — standalone single-batch fast path (`factory-governed@1` reaches the same batch path via its `fast=true` input).
 - **`issue-fix@1`** — triage → plan → develop; powers `orq-lite intake` alias and `watch --issues` default.
 - **`pr-review@1`** — agent-driven PR review; powers `orq-lite review` alias and `watch --prs` default.
 - **`fast-batch@1`** subflow — shared one-batch develop step extracted from `factory-fast@1` and `factory-governed@1` (when `fast=true`).
