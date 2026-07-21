@@ -3,11 +3,13 @@
   "name": "development",
   "version": "1",
   "files": {
+    "flows/factory-fast@1.json": "7137b3c0f3625f8c16e4c24d4d12b6e5a3f2585b7ce6cf6e54ca3da50bbd5350",
     "flows/factory-governed@1.json": "dea893d6d35a3cf877b7e8efd7d9cb50befc47b9f50c8a82895fa01678cb149a",
     "flows/plan-tickets@1.json": "d93daae2659d8c0d92a46654c0dbc827c12e999f17a8dd4697e1fa2833b87c39",
     "flows/review-existing@1.json": "c5dc2409f95e5e5ba94fca3a7e40164e2df43bd305b3fb4b688a681129cfbf35",
     "policies/development@2.json": "ab8201e3c4c380413875619bf3100e79f946e3ea0a0f0ac55876d887942082ca",
     "prompts/adversary.md": "cbf548436d5c0b1c403432fb0f40af66e7fef1e0927447e81562fe623857cc03",
+    "prompts/batch-coder.md": "213b529c7805a36425aa05740c66937416093d6804547116b5f12da443b8954f",
     "prompts/coder.md": "f27c86f9325fcdc72330c98250d800facbefe1ec2fcc58e033bdddf82d063c6a",
     "prompts/critic.md": "e36e3b7017c8cbffb6446fbc6b208f20675759ecfb46b3601c869d7bc2ebf8f3",
     "prompts/gov-reviewer.md": "b1577ad51b44b91cd357b02e65aa585797f0e5b3ce8ca9eba2d5ec22d8d56fb8",
@@ -25,6 +27,7 @@
     "schemas/ticket-verification@1.json": "d2cbab2be691ab0ed27e905598e1ed59b32f1085fad2749fe7cba1de46b0283e",
     "schemas/workflow-state@1.json": "5abcd12542f0c34eba9115ae88023262381068c16565ec0613dc5f3b4e2e5104",
     "subflows/develop-ticket@1.json": "c8f5d269fd75204ea5859dbf13741451cedff57ad0d53a3389461c26d8fc1876",
+    "subflows/fast-batch@1.json": "2907e4cffde44305de1024cb47aa367c67b3cb2b7a178cb4412b170c95d7355a",
     "subflows/governance-cycle@1.json": "9297900862a4c245c9cd85874b3092d1f5e431831abeb5204c687c032344d84c",
     "subflows/integrated-review@1.json": "e8c2072e6485c3537214ec8e9eb091f81304ab7f831e18f42a26b4b1ba282eec"
   }

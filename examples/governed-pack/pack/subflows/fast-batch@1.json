@@ -1,0 +1,158 @@
+{
+ "apiVersion": "orq.dev/v2",
+ "kind": "Subflow",
+ "metadata": {
+  "name": "fast-batch",
+  "version": "1"
+ },
+ "inputs": {
+  "features_path": {
+   "schema": "schema:path@1"
+  },
+  "state": {
+   "schema": "schema:workflow-state@1"
+  }
+ },
+ "steps": [
+  {
+   "id": "implement_batch",
+   "uses": "activity:agent.invoke@1",
+   "with": {
+    "role": "batch_coder",
+    "vars": {
+     "FEATURES_PATH": {
+      "$ref": "inputs.features_path"
+     }
+    },
+    "context": {
+     "WORKFLOW_STATE": {
+      "$ref": "inputs.state"
+     }
+    },
+    "outputSchema": "schema:ticket-implementation@1"
+   }
+  },
+  {
+   "id": "batch_lint",
+   "uses": "activity:gate.run@1",
+   "with": {
+    "argv": [
+     "uv",
+     "run",
+     "ruff",
+     "check",
+     "."
+    ]
+   }
+  },
+  {
+   "id": "batch_tests",
+   "uses": "activity:gate.run@1",
+   "with": {
+    "argv": [
+     "uv",
+     "run",
+     "pytest",
+     "-q"
+    ]
+   }
+  },
+  {
+   "id": "batch_qa",
+   "uses": "activity:agent.invoke@1",
+   "with": {
+    "role": "qa",
+    "vars": {
+     "FEATURES_PATH": {
+      "$ref": "inputs.features_path"
+     }
+    },
+    "outputSchema": "schema:review-result@1",
+    "fallbackOutput": {
+     "approved": false,
+     "summary": "qa agent failed; fail closed",
+     "findings": [
+      "qa agent did not produce a verdict"
+     ]
+    }
+   }
+  },
+  {
+   "id": "batch_repair",
+   "uses": "activity:agent.invoke@1",
+   "if": "steps.batch_qa.output.approved != true",
+   "while": {
+    "condition": "item.continue == true",
+    "maxIterations": 3,
+    "initial": {
+     "continue": true,
+     "summary": "resolve batch QA findings",
+     "remaining": [
+      "review batch QA findings"
+     ]
+    }
+   },
+   "with": {
+    "role": "integrator",
+    "vars": {
+     "FEATURES_PATH": {
+      "$ref": "inputs.features_path"
+     }
+    },
+    "context": {
+     "QA_REVIEW": {
+      "$ref": "steps.batch_qa.output"
+     },
+     "CRITIC_REVIEW": "",
+     "FEEDBACK": {
+      "$ref": "item"
+     },
+     "ITERATION": {
+      "$ref": "index"
+     }
+    },
+    "outputSchema": "schema:iteration-result@1",
+    "fallbackOutput": {
+     "continue": false,
+     "summary": "integrator agent failed; stopping repair loop",
+     "remaining": [
+      "integrator did not report"
+     ]
+    }
+   }
+  },
+  {
+   "id": "final_lint",
+   "uses": "activity:gate.run@1",
+   "with": {
+    "argv": [
+     "uv",
+     "run",
+     "ruff",
+     "check",
+     "."
+    ]
+   }
+  },
+  {
+   "id": "final_tests",
+   "uses": "activity:gate.run@1",
+   "with": {
+    "argv": [
+     "uv",
+     "run",
+     "pytest",
+     "-q"
+    ]
+   }
+  }
+ ],
+ "outputs": {
+  "implementation": {
+   "$ref": "steps.implement_batch.output"
+  },
+  "qa": {
+   "$ref": "steps.batch_qa.output"
+  }
+ }
+}
