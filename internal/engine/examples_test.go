@@ -40,7 +40,10 @@ func TestExampleConfigsParse(t *testing.T) {
 			cfg, err := config.Load(teamPath)
 			if err != nil {
 				t.Errorf("%s: %v", teamPath, err)
-			} else if _, err := cfg.Resolve(); err != nil {
+			} else if _, err := cfg.ResolveAll(); err != nil {
+				// ResolveAll validates all declared roles without enforcing the
+				// legacy parser/coder/tester/critic/reviewer set, so v2-pack-only
+				// team.json files (e.g. governed-pack) resolve correctly.
 				t.Errorf("%s: resolve: %v", teamPath, err)
 			}
 			checked++

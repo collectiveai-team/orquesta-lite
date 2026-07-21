@@ -44,8 +44,8 @@ the hard way (see `../../benchmark/results/sixway-r1.md` for round 1 and
 ## Run it
 
 The example ships a **haiku-only** team so a full run is cheap. The governed
-pack is an *overlay* on an initialized project — run `orq-lite init` first so
-the base `prompts/` (parser, tester, reviewer) exist, then install the pack and
+pack is an *overlay* on an initialized project — run `orq-lite init` first to
+scaffold the project (`.gitignore`, base config), then install the pack and
 drop this team over the generated one:
 
 ```sh
@@ -62,11 +62,10 @@ orq-lite flow run development/factory-governed@1 \
   features_path=features.md
 ```
 
-> `orq-lite doctor` still imposes the legacy role set
-> (`parser`/`coder`/`tester`/`critic`/`reviewer`) even for a v2-pack-only
-> project, which is why this team declares them alongside the flow roles. The
-> `parser`/`tester`/`reviewer` entries point at the `init`-generated prompts
-> and are unused by `factory-governed@1`.
+> `orq-lite doctor` reports a `legacy roles` **warn** for this team (no
+> `parser`/`tester`/`reviewer`). That is expected and harmless: those roles are
+> only needed by the legacy `plan`/`run`/`factory` commands, not by
+> `orq-lite flow run`.
 
 If a run stops (rate limit, timeout, host sleep), resume it — the durable
 runtime continues from persisted step state, never repeating finished work:
