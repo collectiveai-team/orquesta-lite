@@ -1,0 +1,32 @@
+{
+  "apiVersion": "orq.dev/v2",
+  "kind": "Flow",
+  "metadata": {"name": "plan-tickets", "version": "1"},
+  "inputs": {
+    "plan_path": {"schema": "schema:path@1", "default": "features.md"},
+    "append": {"schema": "schema:flag@1", "default": false}
+  },
+  "steps": [
+    {
+      "id": "plan_tickets",
+      "uses": "activity:agent.invoke@1",
+      "with": {
+        "role": "ticket_planner",
+        "outputSchema": "schema:workflow-state@1",
+        "vars": {
+          "MODE": "initial",
+          "FEATURES_PATH": {"$ref": "inputs.plan_path"},
+          "CURRENT_STATE": "{}",
+          "IMPLEMENTATION": "{}",
+          "VERIFICATION": "{}"
+        },
+        "context": {
+          "APPEND": {"$ref": "inputs.append"}
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "state": {"$ref": "steps.plan_tickets.output"}
+  }
+}

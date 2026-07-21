@@ -4,6 +4,7 @@
   "version": "1",
   "files": {
     "flows/factory-governed@1.json": "b26cdf6889a246e2f67e19d3791da79d557a6c2051054eb5bb8f9c92b2c0a79e",
+    "flows/plan-tickets@1.json": "4903c21ee78edd96e84f69ea10bb4bf75a487cc5f16fcff6a505f33172aa88b0",
     "flows/review-existing@1.json": "c5dc2409f95e5e5ba94fca3a7e40164e2df43bd305b3fb4b688a681129cfbf35",
     "policies/development@2.json": "ab8201e3c4c380413875619bf3100e79f946e3ea0a0f0ac55876d887942082ca",
     "prompts/adversary.md": "cbf548436d5c0b1c403432fb0f40af66e7fef1e0927447e81562fe623857cc03",
@@ -12,7 +13,7 @@
     "prompts/gov-reviewer.md": "b1577ad51b44b91cd357b02e65aa585797f0e5b3ce8ca9eba2d5ec22d8d56fb8",
     "prompts/integrator.md": "2e0e26c54a4e0de471b683ae389b575fce2d10b6561e5d700664c7ee07433420",
     "prompts/qa.md": "4dd8b6658192240d80abd007b679c8d6d24094e472fb51a418eac121f0ebf103",
-    "prompts/ticket-planner.md": "38636e049df2f92b17adb49ee96fd82d21ffea7d37f9bc147b6d887ca8b933a6",
+    "prompts/ticket-planner.md": "3dad17ec436fa6f8d83e77834b0158ec969ff7738830f29e92a3a09132915832",
     "prompts/ticket-qa.md": "9688706a831bc8bd49b841b369dba44e57b3aee4e98e22b873a2abd1099bf229",
     "schemas/flag@1.json": "95a594d4f807140ef824ec0f7c01383dd5e682a7031d278ea2fef0278546ae9a",
     "schemas/intake-result@1.json": "794f22817dd13e44bc0464d52dc50e8f1ae43048d4206678cfe2df92e138b3d3",
