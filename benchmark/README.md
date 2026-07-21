@@ -178,3 +178,22 @@ Follow [`evaluation.md`](./evaluation.md) end to end:
   counts (see `evaluation.md` §5).
 - If a default-team run delivered mostly via fallback agents (check
   `agent-runs`), label it: it no longer measures the intended mapping.
+
+## Cutover evidence
+
+`cutover-evidence.json` is the machine-readable evidence document for the
+legacy-runtime deletion gate (`orq-lite cutover check`). It records what has
+actually been proven so far — benchmark rounds 1–3 — and leaves everything
+unproven (parity scenarios, chaos runs, canary, rollback) honestly failing.
+
+Check the current gate status with:
+
+```sh
+orq-lite cutover check --evidence benchmark/cutover-evidence.json --commit "$(git rev-parse HEAD)"
+```
+
+The gate is expected to be CLOSED; its output is the authoritative list of
+what remains before the legacy engine can be deleted. Note the rounds 1–3
+benchmark entries do not satisfy the benchmarks gate as-is: it requires ≥3
+runs on the same commit, model, and config digest, and the recorded rounds
+intentionally varied all three.
