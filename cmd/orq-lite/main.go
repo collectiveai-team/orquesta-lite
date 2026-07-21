@@ -288,6 +288,9 @@ func main() {
 	case "version", "--version", "-v":
 		fmt.Println(version)
 
+	case "pack":
+		exit(commands.PackCLI(ctx, ".", args, os.Stdout))
+
 	case "flow":
 		if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
 			fmt.Fprintln(os.Stderr, `Usage: orq-lite flow <command>
@@ -350,6 +353,7 @@ Commands:
   log [--role R]        replay .orquestalite/run.log (--event T, --expand N, --full)
   reset                 remove .orquestalite state
   update [--check]      download and install the latest release from GitHub
+  pack install <dir>    verify a v2 pack and install it into .orquestalite/packs/
   flow validate|inspect <ref|path> compile a strict v2 flow without executing it
   flow list             list legacy flows and locally installed versioned pack flows
   flow run <ref|path>   execute v2 flow data (--policy=<ref|path>, --source-key=<stable-key>, key=value...)
