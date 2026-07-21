@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -624,6 +625,21 @@ func TestResolveAllDoesNotRequireLegacyRoles(t *testing.T) {
 	}
 	if _, err := cfg.Resolve(); err == nil {
 		t.Fatal("legacy Resolve should still require orchestrated roles")
+	}
+}
+
+func TestMissingOrchestratedRoles(t *testing.T) {
+	c := &Config{Roles: map[string]Role{"coder": {}, "critic": {}}}
+	got := c.MissingOrchestratedRoles()
+	want := []string{"parser", "tester", "reviewer"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("MissingOrchestratedRoles() = %v, want %v", got, want)
+	}
+	full := &Config{Roles: map[string]Role{
+		"parser": {}, "coder": {}, "tester": {}, "critic": {}, "reviewer": {},
+	}}
+	if got := full.MissingOrchestratedRoles(); len(got) != 0 {
+		t.Fatalf("full legacy set: MissingOrchestratedRoles() = %v, want empty", got)
 	}
 }
 
