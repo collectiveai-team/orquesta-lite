@@ -18,7 +18,8 @@
           "FEATURES_PATH": {"$ref": "inputs.plan_path"},
           "CURRENT_STATE": "{}",
           "IMPLEMENTATION": "{}",
-          "VERIFICATION": "{}"
+          "VERIFICATION": "{}",
+          "TRIAGE": ""
         },
         "context": {
           "APPEND": {"$ref": "inputs.append"}

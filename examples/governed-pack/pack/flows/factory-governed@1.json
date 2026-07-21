@@ -24,7 +24,9 @@
      },
      "CURRENT_STATE": "{}",
      "IMPLEMENTATION": "{}",
-     "VERIFICATION": "{}"
+     "VERIFICATION": "{}",
+     "APPEND": "false",
+     "TRIAGE": ""
     }
    }
   },

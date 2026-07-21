@@ -8,6 +8,8 @@ Implementation result for the current ticket:
 {{IMPLEMENTATION}}
 Verification result for the current ticket:
 {{VERIFICATION}}
+Append mode: {{APPEND}}
+Triage: {{TRIAGE}}
 
 If a `TRIAGE` context variable is provided (issue-fix flow), its `plan` field
 is the contract to decompose — treat it as the authoritative scope and use the
