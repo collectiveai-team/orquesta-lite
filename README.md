@@ -390,7 +390,7 @@ orq-lite pack install examples/governed-pack/pack
 orq-lite flow validate development/factory-governed@1
 orq-lite flow inspect development/factory-governed@1
 orq-lite flow run development/factory-governed@1 features_path=features.md \
-  --policy=.orquestalite/packs/development/1/policies/development@2.json
+  --policy=.orquestalite/packs/development/1/policies/development@2.json  # @2 is the policy file's own revision; the pack version is 1
 orq-lite flow status <run-id>
 orq-lite flow resume <run-id>
 ```

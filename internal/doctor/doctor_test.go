@@ -59,7 +59,7 @@ func TestRun_PackOnlyTeamResolvesWithLegacyWarn(t *testing.T) {
 	if !ok || legacy.Status != StatusWarn {
 		t.Fatalf("legacy roles = %+v, want StatusWarn", legacy)
 	}
-	for _, role := range []string{"parser", "tester", "reviewer"} {
+	for _, role := range []string{"parser", "tester", "reviewer", "critic"} {
 		if !strings.Contains(legacy.Detail, role) {
 			t.Fatalf("legacy roles detail %q missing %q", legacy.Detail, role)
 		}

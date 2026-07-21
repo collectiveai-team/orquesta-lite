@@ -86,3 +86,28 @@ func TestPackInstall_RejectsTamperedPack(t *testing.T) {
 		t.Fatalf("tampered pack must not leave files behind")
 	}
 }
+
+// TestPackInstall_RejectsSourceInsideInstallRoot verifies that --force cannot
+// delete the source while trying to replace it when the source is already the
+// installed pack directory.
+func TestPackInstall_RejectsSourceInsideInstallRoot(t *testing.T) {
+	src := writeInstallablePack(t)
+	project := t.TempDir()
+
+	// First install: must succeed.
+	if err := PackCLI(context.Background(), project, []string{"install", src}, io.Discard); err != nil {
+		t.Fatalf("initial install failed: %v", err)
+	}
+	installed := filepath.Join(project, ".orquestalite", "packs", "development", "1")
+
+	// Re-install using the installed path as source with --force: must be rejected.
+	err := PackCLI(context.Background(), project, []string{"install", installed, "--force"}, io.Discard)
+	if err == nil {
+		t.Fatal("expected error when source is inside install root, got nil")
+	}
+
+	// The originally installed pack must still be intact.
+	if _, statErr := os.Stat(filepath.Join(installed, "pack.json")); statErr != nil {
+		t.Fatalf("installed pack.json should still exist after rejected re-install: %v", statErr)
+	}
+}

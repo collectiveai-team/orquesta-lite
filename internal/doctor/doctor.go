@@ -93,7 +93,7 @@ func Run(ctx context.Context, dir string) []Check {
 	}
 	add(StatusOK, "team.json", "loads and resolves")
 	if missing := cfg.MissingOrchestratedRoles(); len(missing) > 0 {
-		add(StatusWarn, "legacy roles", "missing "+strings.Join(missing, ", ")+" — legacy commands (plan/run/factory) need them; v2 `flow run` does not")
+		add(StatusWarn, "legacy roles", "missing "+strings.Join(missing, ", ")+" — BLOCKING for plan/run/factory; safe to ignore if you only use `flow run`")
 	}
 
 	// prompts referenced by roles
