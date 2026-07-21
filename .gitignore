@@ -29,6 +29,8 @@ flows.json
 !examples/**/team.json
 !examples/**/prompts/
 !examples/**/prompts/**
+!examples/**/schemas/
+!examples/**/schemas/**
 !examples/**/flows.json
 !examples/**/plan.md
 
