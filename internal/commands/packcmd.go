@@ -75,6 +75,13 @@ func packInstall(projectDir, source string, force bool, out io.Writer) error {
 		return fmt.Errorf("source %q is inside the pack install root; copy the pack to a location outside %s before installing", source, packsRoot)
 	}
 
+	// Fail fast on an existing install before staging any bytes; the force
+	// path re-checks after staging so the old install is only removed once
+	// the replacement is fully verified.
+	if _, statErr := os.Stat(dest); statErr == nil && !force {
+		return fmt.Errorf("pack %s@%s is already installed at %s (use --force to replace)", pack.Name, pack.Version, dest)
+	}
+
 	// Create the packs root if it does not exist, then stage the pack in a
 	// temporary directory on the same filesystem so the final rename is atomic.
 	if err := os.MkdirAll(packsRoot, 0o755); err != nil {
