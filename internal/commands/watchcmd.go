@@ -80,6 +80,17 @@ func Watch(ctx context.Context, opts WatchOptions) error {
 			opts.PRFlow = "development/pr-review@1"
 		}
 		cfg.FlowRefs = map[watch.ItemType]string{watch.ItemIssue: opts.IssueFlow, watch.ItemPR: opts.PRFlow}
+		// Fail fast: compile every enabled flow ref now so a misconfigured watch
+		// daemon surfaces the error at startup rather than silently hours later on
+		// the first event.
+		for itemType, ref := range cfg.FlowRefs {
+			if !enabled[itemType] {
+				continue
+			}
+			if _, compileErr := compileWorkflowTarget(opts.ProjectDir, ref); compileErr != nil {
+				return fmt.Errorf("watch: flow %s does not compile: %w", ref, compileErr)
+			}
+		}
 		cfg.Trigger = func(ctx context.Context, trigger watch.Trigger) error {
 			args := []string{"run", trigger.FlowRef, "--source-key=" + trigger.IdempotencyKey}
 			keys := make([]string, 0, len(trigger.Inputs))
