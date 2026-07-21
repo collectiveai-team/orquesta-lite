@@ -57,6 +57,10 @@ The pack ships seven flows:
 
 ## Run it
 
+> This pack's gate steps assume a **Python project** managed with `uv`
+> (`uv run ruff check .`, `uv run pytest -q`). For other ecosystems, adapt the
+> `gate.run` argv arrays in each flow/subflow JSON before installing.
+
 The example ships a **haiku-only** team so a full run is cheap. The governed
 pack is an *overlay* on an initialized project — run `orq-lite init` first to
 scaffold the project (`.gitignore`, base config), then install the pack and

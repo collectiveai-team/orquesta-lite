@@ -27,6 +27,10 @@ tags cut as GitHub releases (the binary's `--version` is stamped from the tag).
   `legacy roles` warn noting that only `plan`/`run`/`factory` need them.
 - **`examples/governed-pack/team.json`** dropped its unused legacy shim roles.
 - **`orq-lite watch`** now fail-fasts on the first flow error in `--issues` and `--prs` mode, stopping the polling loop rather than continuing with unhandled failures.
+- **`factory-governed@1` `governance` output** now carries the full
+  `integrated_review` result object (previously the `.governance` sub-key);
+  this resolves cleanly when `fast=true` skips the review step (nil sub-property
+  navigation would previously cause a "reference not found" run failure).
 
 ## v0.2.3 — Governed pack example + guide overhaul
 

@@ -96,11 +96,8 @@
   }
  ],
  "outputs": {
-  "ticket_iterations": {
-   "$ref": "steps.develop_tickets.output"
-  },
-  "governance": {
-   "$ref": "steps.integrated_review.output.governance"
-  }
+  "ticket_iterations": {"$ref": "steps.develop_tickets.output"},
+  "governance": {"$ref": "steps.integrated_review.output"},
+  "batch": {"$ref": "steps.fast_batch.output"}
  }
 }

@@ -4,7 +4,7 @@
   "version": "1",
   "files": {
     "flows/factory-fast@1.json": "7137b3c0f3625f8c16e4c24d4d12b6e5a3f2585b7ce6cf6e54ca3da50bbd5350",
-    "flows/factory-governed@1.json": "e08b1534940740ea05c623473ef3c165230fab38f7ba7afb7858175dfe69a9b3",
+    "flows/factory-governed@1.json": "34fc7e4ca5c978be9c9e0baf9993937b8e6039b0768ef26b007d606374902174",
     "flows/issue-fix@1.json": "3d55fdce38455bc06f9c485fc57bd477372da3238890ba237c2d1b3ee40534cf",
     "flows/plan-tickets@1.json": "d93daae2659d8c0d92a46654c0dbc827c12e999f17a8dd4697e1fa2833b87c39",
     "flows/pr-review@1.json": "c6e2fdbf80f8f35078b052f2c12d62321261b14a13eb97944b58a962fd35ec50",

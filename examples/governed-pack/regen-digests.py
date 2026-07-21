@@ -14,6 +14,9 @@ manifest_path = pack_dir / "pack.json"
 manifest = json.loads(manifest_path.read_text())
 
 files = {}
+# NOTE: this digests EVERY file under pack/ — accidental or unlisted files are
+# legitimized into the manifest. Review `git diff pack/pack.json` and confirm
+# the file list is intentional before committing.
 for path in sorted(pack_dir.rglob("*")):
     if path.is_dir() or path == manifest_path:
         continue
