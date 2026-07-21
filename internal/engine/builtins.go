@@ -10,7 +10,7 @@ import (
 )
 
 // BuiltinActions returns the registry of native actions shipped with the
-// engine. Callers may add more via WithActions.
+// engine.
 func BuiltinActions() map[string]ActionFunc {
 	return map[string]ActionFunc{
 		"factory_extract_features": actionExtractFeatures,

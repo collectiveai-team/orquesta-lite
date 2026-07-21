@@ -280,6 +280,20 @@ func (c *Config) ResolveRoles(names []string) (map[string]RoleSpec, error) {
 	return resolved, nil
 }
 
+// MissingOrchestratedRoles returns the legacy orchestrated roles (parser,
+// coder, tester, critic, reviewer) that are not declared in the config, in
+// canonical order. Legacy commands (plan/run/factory) require all of them;
+// v2 `flow run` only needs the roles its compiled IR references.
+func (c *Config) MissingOrchestratedRoles() []string {
+	var missing []string
+	for _, name := range orchestratedRoles {
+		if _, ok := c.Roles[name]; !ok {
+			missing = append(missing, name)
+		}
+	}
+	return missing
+}
+
 func (c *Config) resolve(requireLegacy bool) (map[string]RoleSpec, error) {
 	if c == nil {
 		return nil, fmt.Errorf("config is nil")

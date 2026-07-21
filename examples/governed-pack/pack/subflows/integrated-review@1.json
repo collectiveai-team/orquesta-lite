@@ -3,7 +3,7 @@
  "kind": "Subflow",
  "metadata": {
   "name": "integrated-review",
-  "version": "3"
+  "version": "1"
  },
  "inputs": {
   "features_path": {

@@ -1,0 +1,178 @@
+{
+  "apiVersion": "orq.cutover/v1",
+  "runtimeCommit": "27733f166405122e8a9738832225058cffcd5218",
+  "parity": [
+    {
+      "scenario": "invalid_contract_fallback",
+      "legacyBaseline": "",
+      "v2Passed": false,
+      "commit": ""
+    },
+    {
+      "scenario": "bounded_retry",
+      "legacyBaseline": "",
+      "v2Passed": false,
+      "commit": ""
+    },
+    {
+      "scenario": "quality_gate_failure",
+      "legacyBaseline": "",
+      "v2Passed": false,
+      "commit": ""
+    },
+    {
+      "scenario": "full_suite_gate",
+      "legacyBaseline": "",
+      "v2Passed": false,
+      "commit": ""
+    },
+    {
+      "scenario": "rollback_on_failure",
+      "legacyBaseline": "",
+      "v2Passed": false,
+      "commit": ""
+    },
+    {
+      "scenario": "decomposition_limit",
+      "legacyBaseline": "",
+      "v2Passed": false,
+      "commit": ""
+    },
+    {
+      "scenario": "needs_human",
+      "legacyBaseline": "",
+      "v2Passed": false,
+      "commit": ""
+    },
+    {
+      "scenario": "review_stop",
+      "legacyBaseline": "",
+      "v2Passed": false,
+      "commit": ""
+    },
+    {
+      "scenario": "resume_reuses_plan",
+      "legacyBaseline": "",
+      "v2Passed": false,
+      "commit": ""
+    },
+    {
+      "scenario": "repeated_failure",
+      "legacyBaseline": "",
+      "v2Passed": false,
+      "commit": ""
+    },
+    {
+      "scenario": "residue_checkpoint",
+      "legacyBaseline": "",
+      "v2Passed": false,
+      "commit": ""
+    },
+    {
+      "scenario": "merge_conflict",
+      "legacyBaseline": "",
+      "v2Passed": false,
+      "commit": ""
+    },
+    {
+      "scenario": "budget_exhausted",
+      "legacyBaseline": "",
+      "v2Passed": false,
+      "commit": ""
+    },
+    {
+      "scenario": "interrupt_resume",
+      "legacyBaseline": "",
+      "v2Passed": false,
+      "commit": ""
+    },
+    {
+      "scenario": "publish_uncertain",
+      "legacyBaseline": "",
+      "v2Passed": false,
+      "commit": ""
+    }
+  ],
+  "benchmarks": [
+    {
+      "id": "round1-taskflow-hybrid",
+      "commit": "82e7f8b",
+      "model": "",
+      "configDigest": "",
+      "passed": false,
+      "criticalRegressions": 1,
+      "completedAt": "2026-07-13T00:00:00Z"
+    },
+    {
+      "id": "round2-hookrelay",
+      "commit": "",
+      "model": "claude-sonnet-5",
+      "configDigest": "",
+      "passed": true,
+      "criticalRegressions": 1,
+      "completedAt": ""
+    },
+    {
+      "id": "round3-taskflow",
+      "commit": "",
+      "model": "claude-sonnet-5",
+      "configDigest": "",
+      "passed": false,
+      "criticalRegressions": 1,
+      "completedAt": "2026-07-19T17:35:33Z"
+    }
+  ],
+  "chaos": [
+    {
+      "scenario": "crash_before_effect",
+      "passed": false,
+      "commit": "",
+      "completedAt": ""
+    },
+    {
+      "scenario": "crash_after_effect",
+      "passed": false,
+      "commit": "",
+      "completedAt": ""
+    },
+    {
+      "scenario": "outbox_replay",
+      "passed": false,
+      "commit": "",
+      "completedAt": ""
+    },
+    {
+      "scenario": "parallel_isolation",
+      "passed": false,
+      "commit": "",
+      "completedAt": ""
+    }
+  ],
+  "canary": {
+    "release": "",
+    "commit": "",
+    "project": "",
+    "v2Default": false,
+    "passed": false,
+    "completedAt": ""
+  },
+  "rollback": {
+    "fromVersion": "",
+    "toVersion": "",
+    "project": "",
+    "passed": false,
+    "completedAt": ""
+  },
+  "controlledProjects": [
+    {
+      "name": "orquesta-lite",
+      "path": ".."
+    }
+  ],
+  "developmentPack": {
+    "root": "../examples/governed-pack/pack",
+    "name": "development",
+    "version": "1",
+    "manifestDigest": "81b6069fb37f6def275c7eb1e15a89bba04d44dfe93abdd852d522ecd9c30555"
+  }
+}

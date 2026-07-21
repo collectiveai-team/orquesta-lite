@@ -1,0 +1,72 @@
+{
+ "apiVersion": "orq.dev/v2",
+ "kind": "Flow",
+ "metadata": {
+  "name": "factory-fast",
+  "version": "1"
+ },
+ "inputs": {
+  "features_path": {
+   "schema": "schema:path@1",
+   "default": "features.md"
+  },
+  "create_pr": {
+   "schema": "schema:flag@1",
+   "default": false
+  }
+ },
+ "steps": [
+  {
+   "id": "plan_tickets",
+   "uses": "activity:agent.invoke@1",
+   "with": {
+    "role": "ticket_planner",
+    "outputSchema": "schema:workflow-state@1",
+    "vars": {
+     "MODE": "initial",
+     "FEATURES_PATH": {
+      "$ref": "inputs.features_path"
+     },
+     "CURRENT_STATE": "{}",
+     "IMPLEMENTATION": "{}",
+     "VERIFICATION": "{}",
+     "APPEND": "false",
+     "TRIAGE": ""
+    }
+   }
+  },
+  {
+   "id": "fast_batch",
+   "uses": "subflow:fast-batch@1",
+   "with": {
+    "features_path": {
+     "$ref": "inputs.features_path"
+    },
+    "state": {
+     "$ref": "steps.plan_tickets.output"
+    }
+   }
+  },
+  {
+   "id": "publish_pr",
+   "uses": "activity:command.run@1",
+   "if": "inputs.create_pr == true",
+   "with": {
+    "argv": [
+     "gh",
+     "pr",
+     "create",
+     "--fill"
+    ]
+   }
+  }
+ ],
+ "outputs": {
+  "plan": {
+   "$ref": "steps.plan_tickets.output"
+  },
+  "batch": {
+   "$ref": "steps.fast_batch.output"
+  }
+ }
+}

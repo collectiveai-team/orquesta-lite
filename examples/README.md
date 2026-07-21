@@ -17,7 +17,7 @@ full run is cheap.
 | [`pr-review/`](./pr-review/) | `pr_review` (bundled) | `pr_number` | Reviews a PR: **critic + security** lenses + test/lint gates → a `review_lead` posts one verdict |
 | [`issue-fix/`](./issue-fix/) | `issue_fix` (bundled) | `issue_number` | Evidence-gated triage → **reproduce with a failing test → fix until green → PR** (branch is an empty-vs-single-element queue) |
 | [`ralph-loop/`](./ralph-loop/) | `ralph_loop` (bundled) | `plan.md` checkboxes | Minimal ralph loop: **same coder prompt per task until the plan is done**, then an adversarial reviewer appends findings as new tasks and the loop reruns |
-| [`governed-pack/`](./governed-pack/) ⭐ | `development/factory-governed@4` (v2 pack) | `features.md` | **Recommended governed setup.** Per-ticket build + layered review with an **`adversary`** (hunts what the spec didn't say), a **governance veto with a repair loop**, and a **test-integrity audit**. Runs on the durable v2 runtime. |
+| [`governed-pack/`](./governed-pack/) ⭐ | `development/factory-governed@1` (v2 pack) | `features.md` | **Recommended governed setup.** Per-ticket build + layered review with an **`adversary`** (hunts what the spec didn't say), a **governance veto with a repair loop**, and a **test-integrity audit**. Runs on the durable v2 runtime. |
 
 The `governed-pack/` example uses the durable **v2 runtime** and ships a
 self-contained local pack; the others are `flows.json` reference configs for

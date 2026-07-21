@@ -11,8 +11,12 @@ import (
 
 // TestExampleConfigsParse guards the reference configs under examples/: every
 // bundled flows.json must parse into the engine's flow model and every
-// team.json must load, validate, and resolve. Catches drift between the
-// examples and the engine/config schemas.
+// team.json must load, validate, and resolve. Legacy examples (no pack/
+// subdirectory) must declare all five orchestrated roles (parser, coder,
+// tester, critic, reviewer) and also pass the strict Resolve() check.
+// v2 pack examples are only required to pass ResolveAll() (their roles are
+// governed by the pack manifest, not the legacy set). Catches drift between
+// the examples and the engine/config schemas.
 func TestExampleConfigsParse(t *testing.T) {
 	root := filepath.Join("..", "..", "examples")
 	entries, err := os.ReadDir(root)
@@ -40,8 +44,28 @@ func TestExampleConfigsParse(t *testing.T) {
 			cfg, err := config.Load(teamPath)
 			if err != nil {
 				t.Errorf("%s: %v", teamPath, err)
-			} else if _, err := cfg.Resolve(); err != nil {
+				checked++
+				continue
+			}
+			if _, err := cfg.ResolveAll(); err != nil {
+				// ResolveAll validates all declared roles without enforcing the
+				// legacy parser/coder/tester/critic/reviewer set, so v2-pack-only
+				// team.json files (e.g. governed-pack) resolve correctly.
 				t.Errorf("%s: resolve: %v", teamPath, err)
+			}
+			// Legacy examples (no pack/ subdirectory) must declare the full set
+			// of orchestrated roles so removing one fails this test.
+			_, packStatErr := os.Stat(filepath.Join(dir, "pack"))
+			if os.IsNotExist(packStatErr) {
+				if missing := cfg.MissingOrchestratedRoles(); len(missing) != 0 {
+					t.Errorf("%s: legacy example missing orchestrated roles: %v", teamPath, missing)
+				}
+			}
+			// When all five legacy roles are present, also verify strict resolution.
+			if len(cfg.MissingOrchestratedRoles()) == 0 {
+				if _, err := cfg.Resolve(); err != nil {
+					t.Errorf("%s: strict resolve: %v", teamPath, err)
+				}
 			}
 			checked++
 		}

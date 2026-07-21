@@ -1,0 +1,67 @@
+{
+  "apiVersion": "orq.dev/v2",
+  "kind": "Flow",
+  "metadata": {"name": "task-list", "version": "1"},
+  "inputs": {
+    "features_path": {"schema": "schema:path@1", "default": "features.md"},
+    "fast": {"schema": "schema:flag@1", "default": false}
+  },
+  "steps": [
+    {
+      "id": "plan_tickets",
+      "uses": "activity:agent.invoke@1",
+      "with": {
+        "role": "ticket_planner",
+        "outputSchema": "schema:workflow-state@1",
+        "vars": {
+          "MODE": "initial",
+          "FEATURES_PATH": {"$ref": "inputs.features_path"},
+          "CURRENT_STATE": "{}",
+          "IMPLEMENTATION": "{}",
+          "VERIFICATION": "{}",
+          "APPEND": "false",
+          "TRIAGE": ""
+        }
+      }
+    },
+    {
+      "id": "develop_tickets",
+      "uses": "subflow:develop-ticket@1",
+      "if": "inputs.fast != true",
+      "while": {
+        "condition": "item.state.status == \"active\"",
+        "maxIterations": 20,
+        "initial": {
+          "state": {"$ref": "steps.plan_tickets.output"}
+        }
+      },
+      "with": {
+        "features_path": {"$ref": "inputs.features_path"},
+        "state": {"$ref": "item.state"}
+      }
+    },
+    {
+      "id": "fast_batch",
+      "uses": "subflow:fast-batch@1",
+      "if": "inputs.fast == true",
+      "with": {
+        "features_path": {"$ref": "inputs.features_path"},
+        "state": {"$ref": "steps.plan_tickets.output"}
+      }
+    },
+    {
+      "id": "final_lint",
+      "uses": "activity:gate.run@1",
+      "with": {"argv": ["uv", "run", "ruff", "check", "."]}
+    },
+    {
+      "id": "final_tests",
+      "uses": "activity:gate.run@1",
+      "with": {"argv": ["uv", "run", "pytest", "-q"]}
+    }
+  ],
+  "outputs": {
+    "plan": {"$ref": "steps.plan_tickets.output"},
+    "developed": {"$ref": "steps.develop_tickets.output"}
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "apiVersion": "orq.dev/v2",
+  "kind": "Flow",
+  "metadata": {"name": "pr-review", "version": "1"},
+  "inputs": {
+    "pr": {"schema": "schema:text@1", "default": ""},
+    "base": {"schema": "schema:text@1", "default": ""},
+    "head": {"schema": "schema:text@1", "default": ""},
+    "publish": {"schema": "schema:flag@1", "default": false}
+  },
+  "steps": [
+    {
+      "id": "review",
+      "uses": "activity:agent.invoke@1",
+      "with": {
+        "role": "pr_reviewer",
+        "context": {
+          "PR": {"$ref": "inputs.pr"},
+          "BASE": {"$ref": "inputs.base"},
+          "HEAD": {"$ref": "inputs.head"},
+          "PUBLISH": {"$ref": "inputs.publish"}
+        },
+        "outputSchema": "schema:review-result@1",
+        "fallbackOutput": {"approved": false, "summary": "pr reviewer agent failed; fail closed", "findings": ["reviewer agent did not produce a verdict"]}
+      }
+    }
+  ],
+  "outputs": {
+    "verdict": {"$ref": "steps.review.output"}
+  }
+}

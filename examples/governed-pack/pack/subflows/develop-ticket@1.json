@@ -57,7 +57,9 @@
           "FEATURES_PATH": {"$ref": "inputs.features_path"},
           "CURRENT_STATE": {"$ref": "inputs.state"},
           "IMPLEMENTATION": {"$ref": "steps.implement_ticket.output"},
-          "VERIFICATION": {"$ref": "steps.verify_ticket.output"}
+          "VERIFICATION": {"$ref": "steps.verify_ticket.output"},
+          "APPEND": "false",
+          "TRIAGE": ""
         }
       }
     }

@@ -3,6 +3,35 @@
 All notable changes to orq-lite are recorded here. Versions follow the git
 tags cut as GitHub releases (the binary's `--version` is stamped from the tag).
 
+## Unreleased
+
+### Added
+
+- **`orq-lite pack install <dir>`** — verifies a pack against its `pack.json`
+  manifest (digests, no unlisted files, no symlinks) and installs it to
+  `.orquestalite/packs/<name>/<version>/`, replacing the manual `cp -R`.
+- **`benchmark/cutover-evidence.json`** — machine-readable cutover-gate
+  evidence; `orq-lite cutover check` output is now the authoritative gap list.
+- **`plan-tickets@1`** — planning-only flow; powers `orq-lite plan` alias.
+- **`task-list@1`** — per-task develop loop; powers `orq-lite run` alias.
+- **`factory-fast@1`** — standalone single-batch fast path (`factory-governed@1` reaches the same batch path via its `fast=true` input).
+- **`issue-fix@1`** — triage → plan → develop; powers `orq-lite intake` alias and `watch --issues` default.
+- **`pr-review@1`** — agent-driven PR review; powers `orq-lite review` alias and `watch --prs` default.
+- **`fast-batch@1`** subflow — shared one-batch develop step extracted from `factory-fast@1` and `factory-governed@1` (when `fast=true`).
+- **`team.json`: three new roles** — `batch_coder` (whole-backlog fast-path implementation), `intake` (issue triage), and `pr_reviewer` (end-to-end PR review) — with their prompts shipped inside the pack.
+
+### Changed
+
+- **`orq-lite doctor`** no longer fails pack-only projects: a `team.json`
+  without the legacy `parser`/`tester`/`reviewer` roles now resolves, with a
+  `legacy roles` warn noting that only `plan`/`run`/`factory` need them.
+- **`examples/governed-pack/team.json`** dropped its unused legacy shim roles.
+- **`orq-lite watch --engine=v2`** now compiles the configured issue/PR flow refs at startup and exits with a clear error if one does not resolve, instead of surfacing the failure only when the first event fires.
+- **`factory-governed@1` `governance` output** now carries the full
+  `integrated_review` result object (previously the `.governance` sub-key);
+  this resolves cleanly when `fast=true` skips the review step (nil sub-property
+  navigation would previously cause a "reference not found" run failure).
+
 ## v0.2.3 — Governed pack example + guide overhaul
 
 Docs and examples release. No engine behavior changes; the pinned binary is
@@ -11,7 +40,7 @@ rebuilt with the new version string.
 ### Added
 
 - **`examples/governed-pack/`** — the recommended production setup for the
-  durable v2 runtime: the `development/factory-governed@4` pack, self-contained
+  durable v2 runtime: the `development/factory-governed@1` (originally shipped as @4; renumbered to @1) pack, self-contained
   and runnable locally with a cheap haiku team. The flow distils three
   benchmark rounds of field lessons into structure:
   - an **`adversary`** role that hunts what the spec *didn't* say (failure
@@ -29,7 +58,7 @@ rebuilt with the new version string.
 
 - **`guide.md` §4** rewritten around the v2 governed pack: model placement on
   the review/gate roles, and the field lessons reframed as "what each stage of
-  `factory-governed@4` is for" — now including the round 2/3 lessons: a veto
+  `factory-governed@1` is for" — now including the round 2/3 lessons: a veto
   needs a repair path, a reviewer's findings must actually reach the fix path
   (verify `result_path` + `steps.<role>.output` wiring), and a reproduced
   finding must become a failing test (a gate), not prose the integrator reads.

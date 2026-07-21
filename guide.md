@@ -13,7 +13,7 @@ Budget real time for step 2 — it is where most of the setup work actually is.
 
 **Which engine?** For governed, production-grade builds, use the durable **v2
 runtime** and start from [`examples/governed-pack/`](./examples/governed-pack/)
-(`development/factory-governed@4`) — §4 covers it. The legacy config-driven
+(`development/factory-governed@1`) — §4 covers it. The legacy config-driven
 engine (`orq-lite factory`, root `flows.json`) is fine for quick per-feature
 batches and the review/issue flows. Steps 0–3 and 5 apply to both; §4 is where
 they diverge.
@@ -62,8 +62,10 @@ orq-lite init          # writes team.json, prompts/, schemas/, .orquestalite/ + 
 unrecognized layout it leaves the command empty rather than guessing wrong —
 treat an empty gate as a TODO, not a feature.
 
-Commit `team.json`, `prompts/`, and `flows.json` (project configuration);
-`.orquestalite/` stays gitignored (runtime state).
+`init` adds `team.json`, `prompts/`, `schemas/`, and `flows.json` to
+`.gitignore` on purpose: `run`'s rollback (`git clean -fd`) only removes
+untracked files it can then regenerate, so keeping them untracked protects
+them. Commit the `.gitignore` change; the config files themselves stay local.
 
 ### 1b. Choose the flow(s) for this repo
 
@@ -73,7 +75,7 @@ repo's needs against the shipped reference configs
 
 | If the goal is… | Use | Keyed by |
 |---|---|---|
-| **Ship features to production, with real review** | `development/factory-governed@4` — the governed v2 pack ([`examples/governed-pack/`](./examples/governed-pack/)) | `features.md` |
+| **Ship features to production, with real review** | `development/factory-governed@1` — the governed v2 pack ([`examples/governed-pack/`](./examples/governed-pack/)) | `features.md` |
 | Build features fast, light review, per-feature batches | `factory_fast` (root `flows.json`, see [`examples/go-hello-api/`](./examples/go-hello-api/)) | `features.md` |
 | Continuously fix incoming GitHub issues | `issue_fix` ([`examples/issue-fix/`](./examples/issue-fix/)) — reproduce with a failing test → fix until green → PR | `issue_number` |
 | Review incoming PRs | `pr_review` ([`examples/pr-review/`](./examples/pr-review/)) — critic + security lenses → one verdict | `pr_number` |
@@ -184,7 +186,7 @@ Both commands must exit 0 from a fresh checkout state before you continue.
 
 For anything you'd ship, don't hand-author a governance loop — start from
 [`examples/governed-pack/`](./examples/governed-pack/), the durable **v2**
-pack (`development/factory-governed@4`). It bakes in the field lessons below so
+pack (`development/factory-governed@1`). It bakes in the field lessons below so
 you don't rediscover them the hard way. Its shape:
 
 ```
@@ -198,7 +200,7 @@ integrated_review:
    → governance_gate       (fail-closed)
 ```
 
-To adopt it: install the pack under `.orquestalite/packs/development/4/`, point
+To adopt it: install the pack under `.orquestalite/packs/development/1/`, point
 your `team.json` roles at its prompts, set real reviewer models (see below),
 and write your `features.md` (§5). The pack's own README has the exact copy/run
 commands.
@@ -215,7 +217,7 @@ decorative reviewer.
 A governed run that converged in one round with unanimous approvals still
 shipped 10 confirmed bugs on its first real project. Later rounds shipped a
 crash and a data race *past* an approving governance. Each countermeasure below
-is now a piece of `factory-governed@4` — the list doubles as "what each stage
+is now a piece of `factory-governed@1` — the list doubles as "what each stage
 is for":
 
 1. **An ungated stage is advisory.** A linear `coder → lint → tester → critic`
@@ -311,15 +313,15 @@ the dashboard. Interrupted or failed queues resume with `orq-lite factory`
 ## Quick checklist
 
 - [ ] git repo, clean tree; `orq-lite`, provider CLIs, `gh` authenticated headless
-- [ ] `orq-lite init`; config committed, `.orquestalite/` ignored
+- [ ] `orq-lite init`; generated config present, `.gitignore` entries committed
 - [ ] toolchain pinned (interpreter version, single lockfile)
 - [ ] full test suite green at HEAD, self-contained (no live infra)
 - [ ] lint at zero: false positives configured away, auto-fixes applied **and
       re-tested**, legacy debt explicitly baselined + queued as a cleanup feature
 - [ ] `team.json`: agent fallback chains, repo-root self-contained gate
       commands, `conventions_file`
-- [ ] (governed) started from `examples/governed-pack/` (v2 `factory-governed@4`);
-      pack installed under `.orquestalite/packs/development/4/`, strong models on
+- [ ] (governed) started from `examples/governed-pack/` (v2 `factory-governed@1`);
+      pack installed under `.orquestalite/packs/development/1/`, strong models on
       the test/gate roles (`ticket_qa`/`qa`/`adversary`/`critic`/`gov_reviewer`),
       each review role's `result_path` + `steps.<role>.output` wiring verified,
       `coder` timeout sized to the heaviest ticket

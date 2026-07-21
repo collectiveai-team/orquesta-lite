@@ -3,12 +3,14 @@
  "kind": "Flow",
  "metadata": {
   "name": "factory-governed",
-  "version": "4"
+  "version": "1"
  },
  "inputs": {
   "features_path": {
    "schema": "schema:path@1"
-  }
+  },
+  "fast": {"schema": "schema:flag@1", "default": false},
+  "create_pr": {"schema": "schema:flag@1", "default": false}
  },
  "steps": [
   {
@@ -24,13 +26,25 @@
      },
      "CURRENT_STATE": "{}",
      "IMPLEMENTATION": "{}",
-     "VERIFICATION": "{}"
+     "VERIFICATION": "{}",
+     "APPEND": "false",
+     "TRIAGE": ""
     }
+   }
+  },
+  {
+   "id": "fast_batch",
+   "uses": "subflow:fast-batch@1",
+   "if": "inputs.fast == true",
+   "with": {
+    "features_path": {"$ref": "inputs.features_path"},
+    "state": {"$ref": "steps.plan_tickets.output"}
    }
   },
   {
    "id": "develop_tickets",
    "uses": "subflow:develop-ticket@1",
+   "if": "inputs.fast != true",
    "while": {
     "condition": "item.state.status == \"active\"",
     "maxIterations": 20,
@@ -52,6 +66,7 @@
   {
    "id": "ticket_plan_complete",
    "uses": "activity:gate.run@1",
+   "if": "inputs.fast != true",
    "with": {
     "argv": [
      "uv",
@@ -65,20 +80,24 @@
   },
   {
    "id": "integrated_review",
-   "uses": "subflow:integrated-review@3",
+   "uses": "subflow:integrated-review@1",
+   "if": "inputs.fast != true",
    "with": {
     "features_path": {
      "$ref": "inputs.features_path"
     }
    }
+  },
+  {
+   "id": "publish_pr",
+   "uses": "activity:command.run@1",
+   "if": "inputs.create_pr == true",
+   "with": {"argv": ["gh", "pr", "create", "--fill"]}
   }
  ],
  "outputs": {
-  "ticket_iterations": {
-   "$ref": "steps.develop_tickets.output"
-  },
-  "governance": {
-   "$ref": "steps.integrated_review.output.governance"
-  }
+  "ticket_iterations": {"$ref": "steps.develop_tickets.output"},
+  "governance": {"$ref": "steps.integrated_review.output"},
+  "batch": {"$ref": "steps.fast_batch.output"}
  }
 }

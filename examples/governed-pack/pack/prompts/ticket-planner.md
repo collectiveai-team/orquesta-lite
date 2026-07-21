@@ -8,6 +8,12 @@ Implementation result for the current ticket:
 {{IMPLEMENTATION}}
 Verification result for the current ticket:
 {{VERIFICATION}}
+Append mode: {{APPEND}}
+Triage: {{TRIAGE}}
+
+If a `TRIAGE` context variable is provided (issue-fix flow), its `plan` field
+is the contract to decompose — treat it as the authoritative scope and use the
+file at FEATURES_PATH only as supporting context.
 
 Read the canonical contract and inspect the repository. Return the complete next
 workflow state. The state is runtime data: you may split, add, reorder, or block
@@ -21,6 +27,11 @@ In `initial` mode:
 - Select exactly one `next_ticket`; put the rest in `pending`.
 - Prefer thin foundations followed by externally observable behavior.
 - Set status `active`, revision 1, and leave completed/blocked empty.
+
+If the context variable `APPEND` is `true`, do not discard existing planning:
+read the previous state from `.orquestalite/results/ticket_planner.json` if it
+exists, keep its completed/pending tickets, and append new tickets derived
+from the contract after them (bump `revision`).
 
 In `advance` mode:
 
