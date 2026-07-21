@@ -41,6 +41,20 @@ the hard way (see `../../benchmark/results/sixway-r1.md` for round 1 and
    asserts wrapped in exception handlers, and sleeps-as-synchronization are
    blocking findings.
 
+## Flows
+
+The pack ships seven flows:
+
+| Flow | Description |
+|------|-------------|
+| `factory-governed@1` | Full governed build; `fast=true` switches to the batch path, `create_pr=true` opens a PR |
+| `review-existing@1` | Audit an existing tree |
+| `plan-tickets@1` | Planning only — `orq-lite plan` alias |
+| `task-list@1` | `orq-lite run` alias |
+| `factory-fast@1` | One-batch fast path |
+| `issue-fix@1` | Triage → plan → develop — `orq-lite intake` alias and `watch --issues` default |
+| `pr-review@1` | Agent-driven PR review — `orq-lite review` alias and `watch --prs` default |
+
 ## Run it
 
 The example ships a **haiku-only** team so a full run is cheap. The governed

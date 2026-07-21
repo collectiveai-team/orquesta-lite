@@ -12,6 +12,13 @@ tags cut as GitHub releases (the binary's `--version` is stamped from the tag).
   `.orquestalite/packs/<name>/<version>/`, replacing the manual `cp -R`.
 - **`benchmark/cutover-evidence.json`** — machine-readable cutover-gate
   evidence; `orq-lite cutover check` output is now the authoritative gap list.
+- **`plan-tickets@1`** — planning-only flow; powers `orq-lite plan` alias.
+- **`task-list@1`** — per-task develop loop; powers `orq-lite run` alias.
+- **`factory-fast@1`** — single-batch fast path; the `fast=true` switch inside `factory-governed@1`.
+- **`issue-fix@1`** — triage → plan → develop; powers `orq-lite intake` alias and `watch --issues` default.
+- **`pr-review@1`** — agent-driven PR review; powers `orq-lite review` alias and `watch --prs` default.
+- **`fast-batch@1`** subflow — shared one-batch develop step extracted from `factory-fast@1` and `factory-governed@1` (when `fast=true`).
+- **`team.json`: three new roles** — `gov_reviewer`, `adversary`, `integrator` — required by `factory-governed@1`'s integrated review and governance stages.
 
 ### Changed
 
@@ -19,6 +26,7 @@ tags cut as GitHub releases (the binary's `--version` is stamped from the tag).
   without the legacy `parser`/`tester`/`reviewer` roles now resolves, with a
   `legacy roles` warn noting that only `plan`/`run`/`factory` need them.
 - **`examples/governed-pack/team.json`** dropped its unused legacy shim roles.
+- **`orq-lite watch`** now fail-fasts on the first flow error in `--issues` and `--prs` mode, stopping the polling loop rather than continuing with unhandled failures.
 
 ## v0.2.3 — Governed pack example + guide overhaul
 

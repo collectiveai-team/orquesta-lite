@@ -173,6 +173,6 @@
     "root": "../examples/governed-pack/pack",
     "name": "development",
     "version": "1",
-    "manifestDigest": "efdb3cec5f5b0e6742e745e5afd7dc1539bc4d54b6cbb1d4fd8ac30446184050"
+    "manifestDigest": "b7b2c144440af94f613557f6b633ff34c23d324e75e3b5f5406bdbf049b1b3a3"
   }
 }
