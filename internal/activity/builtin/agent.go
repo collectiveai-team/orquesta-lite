@@ -56,7 +56,17 @@ func (a *AgentExecutor) Execute(ctx context.Context, request activity.Request) (
 		}
 		vars[key] = string(raw)
 	}
-	raw, err := invoke.Raw(ctx, a.Invoker, input.Role, invoke.RoleCall{Vars: vars, Skills: input.Skills}, invoke.RunContext{TaskID: request.StepID, Attempt: request.Attempt}, func(raw []byte) error { return a.Validate(input.OutputSchema, raw) })
+	// A while-loop's iterations (e.g. one ticket per iteration) all share the
+	// same static StepID. Folding ForeachKey into the session task ID gives
+	// each iteration its own session-resume scope, so ticket 2 doesn't
+	// resume ticket 1's session (and inherit its entire accumulated
+	// conversation) while retries WITHIN the same iteration (same
+	// ForeachKey, different Attempt) still resume correctly.
+	taskID := request.StepID
+	if request.ForeachKey != "" {
+		taskID = request.StepID + "/" + request.ForeachKey
+	}
+	raw, err := invoke.Raw(ctx, a.Invoker, input.Role, invoke.RoleCall{Vars: vars, Skills: input.Skills}, invoke.RunContext{TaskID: taskID, Attempt: request.Attempt}, func(raw []byte) error { return a.Validate(input.OutputSchema, raw) })
 	if err != nil {
 		if len(input.FallbackOutput) > 0 {
 			if validationErr := a.Validate(input.OutputSchema, input.FallbackOutput); validationErr != nil {
