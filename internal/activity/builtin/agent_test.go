@@ -110,11 +110,21 @@ func foreachTestExecutor(t *testing.T, fake *foreachSessionRunner) *AgentExecuto
 	return &AgentExecutor{Invoker: inv, Validate: func(string, []byte) error { return nil }}
 }
 
-func runForeachTicket(t *testing.T, executor *AgentExecutor, foreachKey string) {
+// runForeachTicket mirrors how the scheduler actually invokes a step nested
+// inside a while-loop's subflow (e.g. "implement_ticket" inside
+// develop-ticket@1, called once per while iteration from factory-governed@N):
+// StepID and ForeachKey stay constant for every iteration — the iteration's
+// identity lives only in ScopePath, which the scheduler extends once per
+// subflow instantiation (scheduler.go: child.scope = s.scope + "/" + step.ID +
+// keySuffix(foreachKey)) and which then stays fixed across every step inside
+// that instance. See scheduler.go's executeWhile -> executeInstance (Subflow
+// branch) -> executeActivity chain.
+func runForeachTicket(t *testing.T, executor *AgentExecutor, scopePath string) {
 	t.Helper()
 	req := activity.Request{
 		StepID:     "implement_ticket",
-		ForeachKey: foreachKey,
+		ScopePath:  scopePath,
+		ForeachKey: "",
 		Attempt:    1,
 		Inputs:     []byte(`{"role":"coder","outputSchema":"schema:x@1"}`),
 	}
@@ -124,37 +134,40 @@ func runForeachTicket(t *testing.T, executor *AgentExecutor, foreachKey string) 
 }
 
 // TestAgentInvokeDoesNotResumeSessionAcrossForeachIterations reproduces the
-// bug where every ticket in a while-loop shared the same session-store key
-// (the static StepID, e.g. "implement_ticket") because ForeachKey was never
-// folded into the TaskID passed to invoke.Raw. That made ticket 2's coder
-// resume ticket 1's session, ticket 3 resume ticket 2's (already carrying
-// ticket 1), and so on — accumulating the entire prior conversation into
-// every later ticket's cached input tokens.
+// bug where every ticket in a while-loop shared the same session-store key.
+// A step nested inside a while-loop's subflow keeps a constant StepID
+// ("implement_ticket") and an empty ForeachKey of its own — only ScopePath
+// varies per iteration (root/develop_tickets[while-000000] vs
+// root/develop_tickets[while-000001]). Using StepID alone (or ForeachKey,
+// which is blank here) as the session task key made ticket 2's coder resume
+// ticket 1's session, ticket 3 resume ticket 2's (already carrying ticket 1),
+// and so on — accumulating the entire prior conversation into every later
+// ticket's cached input tokens.
 func TestAgentInvokeDoesNotResumeSessionAcrossForeachIterations(t *testing.T) {
 	fake := &foreachSessionRunner{sid: "sess-ticket-1"}
 	executor := foreachTestExecutor(t, fake)
 
-	runForeachTicket(t, executor, "while-000000") // ticket 1: no prior session, must be fresh
-	runForeachTicket(t, executor, "while-000001") // ticket 2: DIFFERENT foreach iteration, must NOT resume ticket 1's session
+	runForeachTicket(t, executor, "root/develop_tickets[while-000000]") // ticket 1: no prior session, must be fresh
+	runForeachTicket(t, executor, "root/develop_tickets[while-000001]") // ticket 2: DIFFERENT subflow instance, must NOT resume ticket 1's session
 
 	if got := fake.specs[0].ResumeSessionID; got != "" {
 		t.Errorf("first ticket should start a fresh session, got resume=%q", got)
 	}
 	if got := fake.specs[1].ResumeSessionID; got != "" {
-		t.Errorf("a different foreach iteration (a different ticket) must not resume the previous ticket's session, got resume=%q", got)
+		t.Errorf("a different while-iteration (a different ticket) must not resume the previous ticket's session, got resume=%q", got)
 	}
 }
 
 // TestAgentInvokeResumesSessionWithinSameForeachIteration protects the
 // legitimate case this fix must preserve: retrying the SAME ticket (same
-// StepID + same ForeachKey, only Attempt increments) should still resume
+// StepID + same ScopePath, only Attempt increments) should still resume
 // that ticket's own session so verification-feedback retries keep context.
 func TestAgentInvokeResumesSessionWithinSameForeachIteration(t *testing.T) {
 	fake := &foreachSessionRunner{sid: "sess-ticket-1"}
 	executor := foreachTestExecutor(t, fake)
 
-	runForeachTicket(t, executor, "while-000000") // ticket 1, attempt 1: fresh
-	runForeachTicket(t, executor, "while-000000") // ticket 1, retry: same foreach key, must resume
+	runForeachTicket(t, executor, "root/develop_tickets[while-000000]") // ticket 1, attempt 1: fresh
+	runForeachTicket(t, executor, "root/develop_tickets[while-000000]") // ticket 1, retry: same scope, must resume
 
 	if got := fake.specs[0].ResumeSessionID; got != "" {
 		t.Errorf("first attempt should start a fresh session, got resume=%q", got)

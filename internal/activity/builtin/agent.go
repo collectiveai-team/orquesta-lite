@@ -56,15 +56,20 @@ func (a *AgentExecutor) Execute(ctx context.Context, request activity.Request) (
 		}
 		vars[key] = string(raw)
 	}
-	// A while-loop's iterations (e.g. one ticket per iteration) all share the
-	// same static StepID. Folding ForeachKey into the session task ID gives
-	// each iteration its own session-resume scope, so ticket 2 doesn't
-	// resume ticket 1's session (and inherit its entire accumulated
-	// conversation) while retries WITHIN the same iteration (same
-	// ForeachKey, different Attempt) still resume correctly.
+	// A step nested inside a while-loop's subflow (e.g. one ticket per
+	// iteration in factory-governed@N flows) keeps a constant StepID and an
+	// empty ForeachKey of its own — the iteration's identity lives only in
+	// ScopePath, which the scheduler extends once per subflow instantiation
+	// (scheduler.go: child.scope = s.scope + "/" + step.ID + keySuffix(foreachKey))
+	// and which then stays fixed across every step inside that instance.
+	// Folding ScopePath into the session task ID gives each iteration its own
+	// session-resume scope, so ticket 2 doesn't resume ticket 1's session
+	// (and inherit its entire accumulated conversation) while retries WITHIN
+	// the same iteration (same ScopePath, different Attempt) still resume
+	// correctly.
 	taskID := request.StepID
-	if request.ForeachKey != "" {
-		taskID = request.StepID + "/" + request.ForeachKey
+	if request.ScopePath != "" {
+		taskID = request.ScopePath + "/" + request.StepID
 	}
 	raw, err := invoke.Raw(ctx, a.Invoker, input.Role, invoke.RoleCall{Vars: vars, Skills: input.Skills}, invoke.RunContext{TaskID: taskID, Attempt: request.Attempt}, func(raw []byte) error { return a.Validate(input.OutputSchema, raw) })
 	if err != nil {
