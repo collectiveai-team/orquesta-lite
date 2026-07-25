@@ -82,24 +82,36 @@ func Watch(ctx context.Context, opts WatchOptions) error {
 		cfg.FlowRefs = map[watch.ItemType]string{watch.ItemIssue: opts.IssueFlow, watch.ItemPR: opts.PRFlow}
 		// Fail fast: compile every enabled flow ref now so a misconfigured watch
 		// daemon surfaces the error at startup rather than silently hours later on
-		// the first event.
+		// the first event. The compiled IR doubles as the input contract the
+		// trigger below narrows its payload to.
+		declared := map[watch.ItemType]map[string]bool{}
 		for itemType, ref := range cfg.FlowRefs {
 			if !enabled[itemType] {
 				continue
 			}
-			if _, compileErr := compileWorkflowTarget(opts.ProjectDir, ref); compileErr != nil {
+			compiled, compileErr := compileWorkflowTarget(opts.ProjectDir, ref)
+			if compileErr != nil {
 				return fmt.Errorf("watch: flow %s does not compile: %w", ref, compileErr)
 			}
+			names := make(map[string]bool, len(compiled.IR.Inputs))
+			for name := range compiled.IR.Inputs {
+				names[name] = true
+			}
+			declared[itemType] = names
 		}
 		cfg.Trigger = func(ctx context.Context, trigger watch.Trigger) error {
+			inputs, err := watchFlowInputs(opts, trigger, declared[watchItemTypeOf(trigger)])
+			if err != nil {
+				return err
+			}
 			args := []string{"run", trigger.FlowRef, "--source-key=" + trigger.IdempotencyKey}
-			keys := make([]string, 0, len(trigger.Inputs))
-			for key := range trigger.Inputs {
+			keys := make([]string, 0, len(inputs))
+			for key := range inputs {
 				keys = append(keys, key)
 			}
 			sort.Strings(keys)
 			for _, key := range keys {
-				raw, err := json.Marshal(trigger.Inputs[key])
+				raw, err := json.Marshal(inputs[key])
 				if err != nil {
 					return fmt.Errorf("encode watch input %s: %w", key, err)
 				}
@@ -111,6 +123,70 @@ func Watch(ctx context.Context, opts WatchOptions) error {
 	fmt.Fprintf(opts.Out, "watch: %s — enabled: %s — interval %s\n",
 		opts.ProjectDir, summaryOfEnabled(enabled), intervalLabel(cfg.Interval))
 	return watch.Run(ctx, cfg)
+}
+
+// watchItemTypeOf recovers the item type the watch loop stamped into the
+// trigger payload, so the trigger can pick the mapping for that type.
+func watchItemTypeOf(trigger watch.Trigger) watch.ItemType {
+	switch value := trigger.Inputs["type"].(type) {
+	case watch.ItemType:
+		return value
+	case string:
+		return watch.ItemType(value)
+	}
+	return ""
+}
+
+// watchFlowInputs narrows a watch trigger to the inputs its flow actually
+// declares, translating the loop's generic GitHub fields into the domain inputs
+// the shipped pack flows take: issue-fix@1 reads the issue from a file
+// (issue_path), pr-review@1 takes the PR number (pr) plus whether to publish the
+// verdict. Undeclared keys are dropped rather than forwarded — `flow run`
+// rejects unknown inputs, so passing the raw payload fails every trigger.
+func watchFlowInputs(opts WatchOptions, trigger watch.Trigger, declared map[string]bool) (map[string]any, error) {
+	candidates := make(map[string]any, len(trigger.Inputs)+2)
+	for key, value := range trigger.Inputs {
+		candidates[key] = value
+	}
+
+	switch watchItemTypeOf(trigger) {
+	case watch.ItemIssue:
+		if declared["issue_path"] {
+			path, err := writeWatchIssue(opts.ProjectDir, trigger)
+			if err != nil {
+				return nil, err
+			}
+			candidates["issue_path"] = path
+		}
+	case watch.ItemPR:
+		candidates["pr"] = fmt.Sprintf("%v", trigger.Inputs["number"])
+		candidates["publish"] = opts.PublishPRs
+	}
+
+	inputs := make(map[string]any, len(candidates))
+	for key, value := range candidates {
+		if declared[key] {
+			inputs[key] = value
+		}
+	}
+	return inputs, nil
+}
+
+// writeWatchIssue materialises the polled issue as a markdown file inside the
+// project so a flow step can read it, mirroring what the legacy intake trigger
+// does. The returned path is relative to the project dir because that is the
+// working directory flow commands run in.
+func writeWatchIssue(projectDir string, trigger watch.Trigger) (string, error) {
+	dir := filepath.Join(projectDir, ".orquestalite")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	name := fmt.Sprintf("watch-issue-%v.md", trigger.Inputs["number"])
+	body := fmt.Sprintf("# %v\n\n%v\n", trigger.Inputs["title"], trigger.Inputs["body"])
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+		return "", err
+	}
+	return filepath.Join(".orquestalite", name), nil
 }
 
 func summaryOfEnabled(enabled map[watch.ItemType]bool) string {

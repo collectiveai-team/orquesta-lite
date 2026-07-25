@@ -3,6 +3,23 @@
 All notable changes to orq-lite are recorded here. Versions follow the git
 tags cut as GitHub releases (the binary's `--version` is stamped from the tag).
 
+## v0.3.5 — Watch v2 reaches the pack flows
+
+### Fixed
+
+- **`watch --engine=v2` could never trigger a flow.** The watch loop reports a
+  polled item as six generic GitHub fields (`type`, `number`, `title`, `body`,
+  `author`, `updated_at`) and forwarded all of them to the flow, but the pack
+  flows it defaults to declare domain inputs — `issue-fix@1` takes `issue_path`
+  and `run`, `pr-review@1` takes `pr`/`base`/`head`/`publish` — and `flow run`
+  rejects undeclared inputs. Every trigger failed with `unknown input "author"`
+  and the tick aborted. The trigger now narrows its payload to the inputs the
+  compiled flow actually declares (the same IR the startup fail-fast compiles),
+  materialising the issue at `.orquestalite/watch-issue-<n>.md` for `issue_path`
+  and mapping the PR number and `--publish-prs` onto `pr`/`publish`. The
+  narrowing is driven by the flow's IR rather than an allow-list, so a custom
+  watch flow that does declare the generic fields still receives them.
+
 ## Unreleased
 
 ### Added
