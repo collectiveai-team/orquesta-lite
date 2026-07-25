@@ -55,20 +55,17 @@
       }
     },
     {
-      "id": "final_lint",
-      "uses": "activity:gate.run@1",
+      "id": "integrated_review",
+      "uses": "subflow:integrated-review@1",
       "if": "steps.triage.output.actionable == true && inputs.run == true",
-      "with": {"argv": ["uv", "run", "ruff", "check", "."]}
-    },
-    {
-      "id": "final_tests",
-      "uses": "activity:gate.run@1",
-      "if": "steps.triage.output.actionable == true && inputs.run == true",
-      "with": {"argv": ["uv", "run", "pytest", "-q"]}
+      "with": {
+        "features_path": {"$ref": "inputs.issue_path"}
+      }
     }
   ],
   "outputs": {
     "triage": {"$ref": "steps.triage.output"},
-    "state": {"$ref": "steps.develop_tickets.output"}
+    "state": {"$ref": "steps.develop_tickets.output"},
+    "governance": {"$ref": "steps.integrated_review.output"}
   }
 }
