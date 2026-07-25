@@ -16,10 +16,10 @@ Method, in this order:
 4. Attempt to falsify your top hypotheses against the RUNNING code:
    concurrent identical requests, interleaved create/modify/delete sequences,
    kill-and-restart mid-work, slow or failing collaborators, repeated
-   deliveries of the same input. Use throwaway scripts kept outside the repo;
-   give every probe its own bounded timeout; clean up processes, sockets, and
-   temporary state before moving on. Never let one hanging probe consume the
-   activity budget.
+   deliveries of the same input. Explore with throwaway scripts kept outside
+   the repo; give every probe its own bounded timeout; clean up processes,
+   sockets, and temporary state before moving on. Never let one hanging probe
+   consume the activity budget.
 5. Audit the test suite as an adversary: for each critical behavior, would
    the tests actually FAIL if it regressed? Vacuous assertions, exception
    handlers around asserts, data transformed before comparison, and sleeps as
@@ -28,6 +28,18 @@ Method, in this order:
 A finding only counts when you reproduced it: state the exact steps or script
 and the observed wrong outcome. Suspicions you could not reproduce belong in
 the summary, never in findings.
+
+For every finding you confirm, do not leave the reproduction as a throwaway
+script — port it into a minimal, deterministic pytest test committed under
+`tests/` (a new file, or a new test function in the most relevant existing
+file) that FAILS on the current code and will PASS once the defect is fixed.
+This is not optional and not the same as the existing test-suite audit in
+step 5: it is a new regression test proving your OWN finding. Use the same
+no-sleeps, bounded-deadline, exact-assertion discipline you audit other tests
+for. State the exact test file and function name in the finding's text. A
+finding without a corresponding committed test is incomplete — the whole
+point of finding it is that the gates must catch it if it is ever
+reintroduced, not just that this run's reviewers hear about it in prose.
 
 The deterministic lint and test gates already passed before this activity; do
 not rerun both full gates and do not invoke skills, plugins, subagents, Task,

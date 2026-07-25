@@ -1,10 +1,20 @@
 Audit the repository against {{FEATURES_PATH}}, the hard conventions, and the
-global QA result below. Do not modify product files. The only file you may
-write is `.orquestalite/results/critic.json`.
+global QA and adversarial results below. Do not modify product files. The
+only file you may write is `.orquestalite/results/critic.json`.
 
 Global QA result:
 
 {{QA_REVIEW}}
+
+Adversarial falsification result:
+
+{{ADVERSARY_REVIEW}}
+
+Every `approved:false` finding above is a reproduced defect, not a
+suspicion — treat it as confirmed. Do not re-investigate or duplicate it in
+your own findings; instead corroborate it is still present and carry it
+forward verbatim into your own `findings` so the repair step cannot miss it
+regardless of how many other issues you also raise.
 
 Your first action, before inspecting the repository, is to atomically write
 this fail-closed checkpoint to `.orquestalite/results/critic.json`:
