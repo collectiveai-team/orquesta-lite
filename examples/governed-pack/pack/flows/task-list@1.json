@@ -41,6 +41,16 @@
       }
     },
     {
+      "id": "ticket_plan_complete",
+      "uses": "activity:gate.assert@1",
+      "if": "inputs.fast != true && steps.plan_tickets.output.status == \"active\"",
+      "with": {
+        "value": {"$ref": "steps.develop_tickets.output.last.state.status"},
+        "equals": "complete",
+        "message": "the ticket loop ended without the plan reaching status=complete"
+      }
+    },
+    {
       "id": "fast_batch",
       "uses": "subflow:fast-batch@1",
       "if": "inputs.fast == true",

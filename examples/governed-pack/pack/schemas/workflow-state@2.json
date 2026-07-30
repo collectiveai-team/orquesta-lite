@@ -4,7 +4,7 @@
     "status": {"type": "string", "enum": ["active", "complete"]},
     "revision": {"type": "number"},
     "summary": {"type": "string", "minLength": 1},
-    "iteration_budget": {"type": "number", "minimum": 1, "maximum": 200},
+    "iteration_budget": {"type": "integer", "minimum": 1, "maximum": 200},
     "next_ticket": {
       "type": ["object", "null"],
       "properties": {

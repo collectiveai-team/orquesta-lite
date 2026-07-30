@@ -118,6 +118,30 @@ func TestWhileFixedBoundStopsExactlyAtTheBound(t *testing.T) {
 	}
 }
 
+// The case the suite was missing, and the one that truncated real backlogs: a
+// budget that *falls* as work completes.
+//
+// A planner asked for "how many passes are left" naturally answers with a
+// remaining-work count, which shrinks every time a ticket lands, while the pass
+// index rises. The two curves cross mid-backlog and the loop exits normally —
+// success reported over half-implemented code. Modelled here exactly: six
+// tickets, one per pass, and a budget of ceil(1.25 * remaining) recomputed each
+// pass. The old comparison against the freshly resolved bound stopped this at
+// pass 4 of 6; the bound is now a high-water mark, so the loop runs to
+// completion.
+func TestWhileShrinkingBudgetDoesNotTruncateTheBacklog(t *testing.T) {
+	// remaining after pass k is 6-k; budget = ceil(1.25*(6-k)).
+	executor := &planExecutor{budgets: []int{8, 7, 5, 4, 3, 2, 1}, total: 6}
+	run, store := runBudgetedLoop(t, `{"$ref":"item.iteration_budget"}`, executor, nil)
+	defer store.Close()
+	if run.Status != RunSucceeded {
+		t.Fatalf("status=%s error=%s", run.Status, run.Error)
+	}
+	if passes := loopPassCount(t, store); passes != 6 {
+		t.Fatalf("loop ran %d passes, want 6 — a shrinking budget truncated the backlog", passes)
+	}
+}
+
 func TestWhileLiteralBoundIsUnchanged(t *testing.T) {
 	executor := &planExecutor{budgets: []int{999}, total: 99}
 	run, store := runBudgetedLoop(t, "2", executor, nil)

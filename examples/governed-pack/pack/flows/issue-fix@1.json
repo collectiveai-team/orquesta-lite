@@ -55,6 +55,16 @@
       }
     },
     {
+      "id": "ticket_plan_complete",
+      "uses": "activity:gate.assert@1",
+      "if": "steps.triage.output.actionable == true && inputs.run == true && steps.plan_fix.output.status == \"active\"",
+      "with": {
+        "value": {"$ref": "steps.develop_tickets.output.last.state.status"},
+        "equals": "complete",
+        "message": "the ticket loop ended without the plan reaching status=complete"
+      }
+    },
+    {
       "id": "integrated_review",
       "uses": "subflow:integrated-review@1",
       "if": "steps.triage.output.actionable == true && inputs.run == true",

@@ -148,6 +148,30 @@ func Run(ctx context.Context, dir string) []Check {
 		}
 	}
 
+	// lint_argv / test_argv — the argv gates a v2 flow reads through the
+	// read-only `config.` namespace. A flow that references one the project
+	// does not declare is rejected before its run is even created, so doctor
+	// has to say so: it is the command an adopter runs before their first
+	// flow, and reporting "all checks passed" on a project whose next command
+	// cannot start is the failure this check exists to prevent.
+	for _, gate := range []struct {
+		name string
+		argv []string
+	}{{"lint_argv", cfg.LintArgv}, {"test_argv", cfg.TestArgv}} {
+		switch {
+		case len(gate.argv) == 0:
+			add(StatusWarn, gate.name, "not set — flows referencing config."+gate.name+" (the governed pack's gates) refuse to start; set it to an argv array, e.g. [\"go\", \"test\", \"./...\"]")
+		case gate.argv[0] == "":
+			add(StatusError, gate.name, "first element is empty — a gate that runs nothing is worse than one that fails")
+		default:
+			if _, err := exec.LookPath(gate.argv[0]); err != nil {
+				add(StatusError, gate.name, fmt.Sprintf("%q not on PATH (argv: %s)", gate.argv[0], strings.Join(gate.argv, " ")))
+			} else {
+				add(StatusOK, gate.name, strings.Join(gate.argv, " "))
+			}
+		}
+	}
+
 	// optional tooling
 	if _, err := exec.LookPath("agtop"); err != nil {
 		add(StatusWarn, "binary:agtop", "not on PATH — cost tracking disabled")

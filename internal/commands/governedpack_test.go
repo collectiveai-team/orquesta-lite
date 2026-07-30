@@ -3,6 +3,7 @@ package commands
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -66,25 +67,12 @@ func TestGovernedPackFlowsAllDeclareAPolicy(t *testing.T) {
 // Parity gate: no flow, subflow, or prompt in the pack hardcodes the benchmark
 // project's toolchain. Uninstalling a pack cannot remove a gate baked into a
 // subflow, which is why this is checked over the whole pack and not just flows.
+//
+// The rule lives in packtoolchain_test.go, where it is itself tested against
+// both encodings of a legacy gate. It used to be an inlined `strings.Contains(raw, "uv ")`
+// here, which the JSON argv form (`["uv","run",...]`) walks straight past.
 func TestGovernedPackHasNoHardcodedToolchain(t *testing.T) {
-	root := governedPackRoot(t)
-	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil || entry.IsDir() {
-			return walkErr
-		}
-		raw, readErr := os.ReadFile(path)
-		if readErr != nil {
-			return readErr
-		}
-		if strings.Contains(string(raw), "uv ") {
-			relative, _ := filepath.Rel(root, path)
-			t.Errorf("%s still hardcodes a `uv ` invocation; gates come from team.json now", relative)
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	assertPackHasNoHardcodedToolchain(t, governedPackRoot(t))
 }
 
 // The regression test for the round-2 incident and the real 24-ticket run: a
@@ -104,14 +92,22 @@ func TestGovernedFactoryLoadsItsPolicyWithoutTheFlag(t *testing.T) {
 	if resolved.Source != "flow-metadata" || resolved.Ref != "policy:development@3" {
 		t.Fatalf("resolved=%+v", resolved)
 	}
-	if resolved.Policy.MaxAttempts != 0 || resolved.Policy.MaxAgentAttempts != 0 {
-		t.Fatalf("attempt budgets must be unlimited — any cap is a covert ticket cap: %+v", resolved.Policy)
+	// The attempt budgets are backstops, not budgets: high enough that the
+	// ticket loop's own bound always binds first, low enough to stop a genuine
+	// runaway. Zero (unlimited) is not acceptable either — that was the first
+	// answer, and it left maxDurationSeconds as the only working brake because
+	// maxCostUSD prices through a table that has no entry for the models this
+	// pack runs. TestGovernedPackAttemptBackstopExceedsItsOwnLoopCeiling pins
+	// the derivation; this only checks the policy that actually loaded carries
+	// one.
+	if resolved.Policy.MaxAgentAttempts <= 0 || resolved.Policy.MaxAttempts <= 0 {
+		t.Fatalf("a governed run needs a runaway backstop that works today, not an unlimited budget: %+v", resolved.Policy)
 	}
 	if resolved.Policy.MaxAttempts == workflow.DefaultPolicy().MaxAttempts {
 		t.Fatal("the 32-attempt engine default leaked into a governed run again")
 	}
 	if resolved.Policy.MaxDurationSeconds != 28800 || resolved.Policy.MaxCostUSD != 250 || resolved.Policy.MaxParallelism != 1 {
-		t.Fatalf("the economic brakes are the real limits now: %+v", resolved.Policy)
+		t.Fatalf("wall-clock, cost ceiling and serialization must survive policy edits: %+v", resolved.Policy)
 	}
 }
 
@@ -160,6 +156,60 @@ func TestGovernedPackPlanDrivenLoopsDeriveTheirBound(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("%s has no while step %s", name, stepID)
+		}
+	}
+}
+
+// Parity gate: every flow that takes its loop bound from the plan also blocks
+// on the plan having finished.
+//
+// A `while` that stops because it hit its bound returns *normally* — the
+// scheduler breaks out of the loop and the flow carries on to its final gates,
+// reporting success over a backlog that is still half pending. The bound and
+// the gate are therefore one feature, not two, and rolling the bound out to
+// three flows while gating only one is what makes budget exhaustion silent in
+// exactly the flows behind the CLI aliases. That is the round-3 lesson: a
+// reproduced failure needs a blocking gate, not prose.
+func TestGovernedPackPlanDrivenLoopsAreGatedOnCompletion(t *testing.T) {
+	project := t.TempDir()
+	installGovernedPack(t, project)
+	for _, name := range []string{"factory-governed", "task-list", "issue-fix"} {
+		compiled, err := compileWorkflowTarget(project, "development/"+name+"@1")
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		var loops, gated []string
+		for _, step := range compiled.IR.Steps {
+			if step.While != nil {
+				loops = append(loops, step.ID)
+			}
+			if step.Uses.Kind != "activity" || step.Uses.Name != "gate.assert" {
+				continue
+			}
+			value, ok := step.With["value"]
+			if !ok || value.Ref == nil {
+				continue
+			}
+			equals, ok := step.With["equals"]
+			if !ok || equals.Literal != "complete" {
+				continue
+			}
+			// steps.<loop>.output.last.state.status
+			for _, loop := range loops {
+				if strings.HasPrefix(value.Ref.Path, "steps."+loop+".output") && strings.HasSuffix(value.Ref.Path, "status") {
+					gated = append(gated, loop)
+				}
+			}
+		}
+		if len(loops) == 0 {
+			t.Errorf("%s has no while loop", name)
+			continue
+		}
+		for _, loop := range loops {
+			if !slices.Contains(gated, loop) {
+				t.Errorf("%s.%s takes a plan-derived bound but nothing asserts the plan reached complete; exhausting the budget would report success over a pending backlog", name, loop)
+			}
 		}
 	}
 }

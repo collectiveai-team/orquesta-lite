@@ -135,5 +135,7 @@
     }
   },
   "full_test_command": "go test ./...",
-  "lint_command": ""
+  "lint_command": "",
+  "lint_argv": ["go", "vet", "./..."],
+  "test_argv": ["go", "test", "./..."]
 }

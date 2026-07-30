@@ -30,9 +30,12 @@ and the observed wrong outcome. Suspicions you could not reproduce belong in
 the summary, never in findings.
 
 For every finding you confirm, do not leave the reproduction as a throwaway
-script — port it into a minimal, deterministic pytest test committed under
-`tests/` (a new file, or a new test function in the most relevant existing
-file) that FAILS on the current code and will PASS once the defect is fixed.
+script — port it into a minimal, deterministic automated test, written in the
+project's own test framework and placed where that project keeps its tests
+(a new file, or a new test function in the most relevant existing file),
+that FAILS on the current code and will PASS once the defect is fixed. Read
+the existing suite first and follow its conventions; do not assume a language
+or a runner.
 This is not optional and not the same as the existing test-suite audit in
 step 5: it is a new regression test proving your OWN finding. Use the same
 no-sleeps, bounded-deadline, exact-assertion discipline you audit other tests

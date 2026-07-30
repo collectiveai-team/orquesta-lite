@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"reflect"
 	"strings"
 )
@@ -250,19 +251,80 @@ func isNumber(value any) bool {
 }
 
 func isInteger(value any) bool {
+	_, ok := WholeNumber(value)
+	return ok
+}
+
+// WholeNumber reports whether value is a JSON number with no fractional part,
+// and returns it. It is the engine's single "is this an integer" predicate:
+// schema validation of `"type":"integer"` and the while-loop's iteration bound
+// both go through it, so a value cannot be legal to one and fatal to the other.
+//
+// The asymmetry it exists to erase is json.Number's. `json.Number("8.0").Int64()`
+// fails — strconv.ParseInt rejects the decimal point — while `Float64()` returns
+// 8, and a plain `float64(8.0)` from a non-UseNumber decode passes any
+// `typed == float64(int64(typed))` check. A predicate built on Int64 alone
+// therefore accepts or rejects the very same semantic value depending only on
+// how the document happened to be decoded. Durable workflow state is decoded
+// with UseNumber and an LLM writing a whole number with a trailing `.0` is
+// entirely ordinary, so that is a live failure and not a curiosity: it killed
+// governed runs whose planner emitted `"iteration_budget": 8.0`, a value the
+// pinned schema itself accepted.
+func WholeNumber(value any) (int64, bool) {
 	switch typed := value.(type) {
 	case json.Number:
-		_, err := typed.Int64()
-		return err == nil
+		if number, err := typed.Int64(); err == nil {
+			return number, true
+		}
+		// Fall back to the float parse so "8.0" is the integer 8, and reject
+		// anything that is not exactly representable as one.
+		number, err := typed.Float64()
+		if err != nil {
+			return 0, false
+		}
+		return wholeFloat(number)
 	case float64:
-		return typed == float64(int64(typed))
+		return wholeFloat(typed)
 	case float32:
-		return typed == float32(int64(typed))
-	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
-		return true
+		return wholeFloat(float64(typed))
+	case int:
+		return int64(typed), true
+	case int8:
+		return int64(typed), true
+	case int16:
+		return int64(typed), true
+	case int32:
+		return int64(typed), true
+	case int64:
+		return typed, true
+	case uint:
+		return unsignedWhole(uint64(typed))
+	case uint8:
+		return int64(typed), true
+	case uint16:
+		return int64(typed), true
+	case uint32:
+		return int64(typed), true
+	case uint64:
+		return unsignedWhole(typed)
 	default:
-		return false
+		return 0, false
 	}
+}
+
+func wholeFloat(number float64) (int64, bool) {
+	truncated := int64(number)
+	if number != float64(truncated) {
+		return 0, false
+	}
+	return truncated, true
+}
+
+func unsignedWhole(number uint64) (int64, bool) {
+	if number > math.MaxInt64 {
+		return 0, false
+	}
+	return int64(number), true
 }
 
 func valuesEqual(a, b any) bool {

@@ -45,6 +45,31 @@ func TestConfigReferenceCompilesOutsideLoops(t *testing.T) {
 	}
 }
 
+// ReferencePaths has to see through `if` and `while.condition`, not just the
+// value tree. Those are expression strings evaluated against the very same
+// resolver, so a host validating a namespace before a run starts is blind to
+// half of the flow's references without this — which is how a `config.` gate
+// guard used to compile, pass validation, create a run, and only then die.
+func TestReferencePathsCoverConditionExpressions(t *testing.T) {
+	doc, err := Decode(strings.NewReader(`{"apiVersion":"orq.dev/v2","kind":"Flow","metadata":{"name":"gated","version":"1"},"steps":[{"id":"loop","uses":"activity:test.echo@1","if":"config.lint_argv != null","while":{"condition":"item.go == true && config.test_argv != null","maxIterations":2,"initial":{"go":true}}}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ir, diagnostics := Compile(doc, loopCatalog())
+	if diagnostics.HasErrors() {
+		t.Fatalf("%+v", diagnostics)
+	}
+	paths := map[string]bool{}
+	for _, path := range ir.ReferencePaths() {
+		paths[path] = true
+	}
+	for _, want := range []string{"config.lint_argv", "config.test_argv", "item.go"} {
+		if !paths[want] {
+			t.Errorf("%q missing from %v", want, ir.ReferencePaths())
+		}
+	}
+}
+
 func TestNestedConfigReferenceFailsCompilation(t *testing.T) {
 	doc, err := Decode(strings.NewReader(`{"apiVersion":"orq.dev/v2","kind":"Flow","metadata":{"name":"gated","version":"1"},"steps":[{"id":"lint","uses":"activity:test.echo@1","with":{"argv":{"$ref":"config.gates.lint"}}}]}`))
 	if err != nil {

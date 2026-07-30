@@ -115,13 +115,35 @@ orq-lite flow resume <run-id>
   (streaming endpoints, background workers, and lifecycle code are the usual
   culprits) and let the planner split infra concerns into their own tickets.
 - **Policy.** Every flow declares `policy:development@3`, so it loads with no
-  flag. That policy deliberately sets **no attempt budget** (`maxAttempts: 0`,
-  `maxAgentAttempts: 0` = unlimited): with a data-dependent ticket loop, any
-  attempt cap is a covert cap on how many tickets a run can finish. The real
-  brakes are economic — `maxDurationSeconds` (8h) and `maxCostUSD` (250, a
-  runaway guard, not a budget). To budget for real, write your own policy file
-  and pass `--policy`; an explicit flag still wins.
+  flag. Its attempt budgets are **runaway backstops, derived from the loop's own
+  ceiling rather than guessed**: `iteration_budget` maxes at 200 passes and
+  `develop-ticket@1` spends 3 agent invocations per pass, so the worst
+  legitimate run is 1 + 200×3 + 11 = 612 agent invocations and ~1024 attempts.
+  The policy sets `maxAgentAttempts: 1200` and `maxAttempts: 2400` — roughly 2x
+  that, so the cap cannot bind before the loop's declared bound does. Any
+  smaller number is a covert cap on how many tickets a run can finish, which is
+  what `maxAgentAttempts: 48` silently was: it stopped a governed run at ~15
+  tickets. If you lower these, derive the new value the same way.
+
+  `maxDurationSeconds` (8h) is the other brake that works today.
+
+  **`maxCostUSD: 250` does not currently brake anything on the Claude 5 family
+  or gpt-5.5.** It is charged from the token usage each agent invocation
+  reported, priced through `internal/cost/prices.go`, and a model with no price
+  entry contributes 0 rather than a guess — `claude-opus-5`, `claude-sonnet-5`
+  and `gpt-5.5` have no entries, so on those models the accumulated cost reads
+  $0 and the cap can never fire. It does work for priced models. Treat it as
+  inactive until those entries exist; note also that `EstimateUSD` prices cached
+  input at the full rate, so a cache-heavy run would be charged well above real
+  spend once they do. To budget for real, write your own policy file and pass
+  `--policy`; an explicit flag still wins.
 - **Iteration budget.** The ticket loop's bound comes from the planner's own
   `iteration_budget` field, re-read before every pass, so a mid-run replan that
-  discovers new work extends the loop instead of dying at a stale number. The
-  runtime still refuses to run more than 1000 passes for any flow.
+  discovers new work extends the loop instead of dying at a stale number. It is
+  a *cumulative* total (passes spent + work left + margin), not a count of work
+  remaining, and the runtime treats it as a high-water mark: a budget that
+  shrinks as tickets land cannot truncate a backlog the loop was already
+  promised. The runtime still refuses to run more than 1000 passes for any
+  flow, and every plan-driven flow ends its loop with a `gate.assert@1` on the
+  plan reaching `status: complete`, so exhausting the budget fails the run
+  loudly instead of reporting success over a pending backlog.

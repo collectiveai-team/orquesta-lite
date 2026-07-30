@@ -26,7 +26,6 @@ func TestGateAssertPasses(t *testing.T) {
 		"strings": `{"value":"complete","equals":"complete","message":"m"}`,
 		"bools":   `{"value":true,"equals":true,"message":"m"}`,
 		"numbers": `{"value":3,"equals":3,"message":"m"}`,
-		"nulls":   `{"value":null,"equals":null,"message":"m"}`,
 		"arrays":  `{"value":["a","b"],"equals":["a","b"],"message":"m"}`,
 		"objects": `{"value":{"ok":true},"equals":{"ok":true},"message":"m"}`,
 	} {
@@ -62,7 +61,13 @@ func TestGateAssertFailsWithGateFailedAndMessage(t *testing.T) {
 }
 
 // A type mismatch is a clean non-match, not a panic and not a silent pass: a
-// number never equals a string, and a missing value never equals a present one.
+// number never equals a string, and a resolved-to-null value never equals a
+// present one.
+//
+// An *omitted* operand is not in this table: it is a contract error, not a gate
+// failure — see TestGateAssertRejectsAnAssertionWithNothingToAssert. The flow
+// author forgot to say what to assert, which is a defect in the flow rather
+// than a verdict about the code under test.
 func TestGateAssertTypeMismatchIsACleanFailure(t *testing.T) {
 	for name, inputs := range map[string]string{
 		"number vs string": `{"value":3,"equals":"3","message":"m"}`,
@@ -70,7 +75,6 @@ func TestGateAssertTypeMismatchIsACleanFailure(t *testing.T) {
 		"null vs string":   `{"value":null,"equals":"complete","message":"m"}`,
 		"object vs string": `{"value":{"status":"complete"},"equals":"complete","message":"m"}`,
 		"array vs string":  `{"value":["complete"],"equals":"complete","message":"m"}`,
-		"missing value":    `{"equals":"complete","message":"m"}`,
 	} {
 		if _, err := assertGate(t, inputs); err == nil || activity.Classify(err) != activity.ErrorGateFailed {
 			t.Errorf("%s: err=%v class=%s, want a gate failure", name, err, activity.Classify(err))

@@ -50,20 +50,39 @@ In `advance` mode:
 
 ## `iteration_budget`
 
-`iteration_budget` is the number of passes the development loop is allowed to
-make. The runtime re-reads it before **every** pass, so it is an adaptive bound,
-not a one-time guess:
+`iteration_budget` is the **total** number of passes the development loop may
+make, counted from the loop's first pass — not the number of passes remaining.
+The runtime compares it against how many passes have already run, so it is a
+running total that only ever grows. Read that sentence twice: a budget computed
+as "work left to do" shrinks as tickets finish, and a shrinking total collides
+with the rising pass count and stops the loop **early, in the middle of the
+backlog**, with `status` still `active`.
 
-- Budget = the number of tickets still to do (`next_ticket` plus `pending`) plus
-  a margin for tickets you expect to split or discover. A margin of roughly
-  25–50% of the remaining count is reasonable; be generous, since running out of
-  budget kills the run mid-backlog while a slightly high budget costs nothing —
-  the loop stops as soon as `status` is no longer `active`.
-- On every `advance`, recompute it and **raise** it if the replan opened new
-  work. Never lower it below the remaining ticket count, and never leave a stale
-  value from a previous revision.
-- It must be between 1 and 200. If a plan genuinely needs more than 200 passes,
-  the decomposition is wrong: consolidate tickets instead.
+Compute it as:
+
+    iteration_budget = passes already spent + tickets still to do + margin
+
+where *passes already spent* is the number of entries in `completed` plus any
+re-tries of the current ticket (in practice: the length of `history` is a good
+proxy — use whichever is larger), *tickets still to do* is `next_ticket` plus
+`pending`, and *margin* covers tickets you expect to split or discover. A
+margin of roughly 25–50% of the remaining count is reasonable; be generous.
+Running out of budget stops the run mid-backlog and fails the plan-completion
+gate, while a slightly high budget costs nothing — the loop stops as soon as
+`status` is no longer `active`.
+
+- **Never emit a value lower than the one in the previous revision.** If you
+  cannot reconstruct it, take the previous state's `iteration_budget` and add
+  to it; never subtract.
+- On every `advance`, recompute and **raise** it if the replan opened new work.
+  Never leave a stale value from a previous revision.
+- It must be between 1 and 200, and a whole number. If a plan genuinely needs
+  more than 200 passes, the decomposition is wrong: consolidate tickets instead.
+
+Worked example — 6 tickets, one per pass, 25% margin. Initial plan: 0 spent +
+6 to do + 2 margin = **8**. After the third ticket lands: 3 spent + 3 to do +
+1 margin = 7, which is lower than 8, so emit **8**. The loop reaches ticket 6
+on pass 6 and stops on `status: complete`, not on the bound.
 
 ## Result
 
