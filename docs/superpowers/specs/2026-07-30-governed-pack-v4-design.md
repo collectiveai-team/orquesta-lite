@@ -274,27 +274,51 @@ data-dependent: cualquier número elegido es un cap encubierto de tickets.
 Nuevo `policies/development@3.json` (versión nueva, no mutación — el `@2` queda
 para los runs que ya lo pinearon):
 
+**Primera versión, descartada.** El diseño original ponía `maxAttempts: 0` y
+`maxAgentAttempts: 0` (`0` = sin límite, `scheduler.go:704-709` gatea con `> 0`)
+y delegaba el freno a `maxCostUSD: 250`. La revisión adversarial lo rechazó con
+razón: `internal/cost/prices.go` no tiene entradas para `claude-opus-5`,
+`claude-sonnet-5` ni `gpt-5.5`, así que `EstimateUSD` devuelve `!ok`,
+`runSpendUSD` devuelve 0 en silencio y el costo acumulado queda en `$0` para
+siempre. Verificado sobre el store del propio repo: 14 attempts, `SUM(cost_usd)
+= 0.0`. Neto: cambié un freno mal dimensionado por uno que no existe, dejando el
+reloj de 8h como único límite real.
+
+**Como quedó construido.** El backstop de attempts vuelve, pero **derivado del
+techo del propio loop en vez de adivinado** — que es la distinción que faltaba
+la primera vez:
+
 ```json
 {
   "maxDurationSeconds": 28800,
-  "maxAttempts": 0,
-  "maxAgentAttempts": 0,
+  "maxAttempts": 2400,
+  "maxAgentAttempts": 1200,
   "maxCostUSD": 250,
   "maxParallelism": 1,
   "retries": { ... sin cambios ... }
 }
 ```
 
-`0` es "sin límite" (`scheduler.go:704-709` gatea con `> 0`). Los frenos reales
-pasan a ser económicos: `maxDurationSeconds`, que ya estaba, y `maxCostUSD`,
-**que hoy no está en la policy** — el único techo actual además de attempts era
-las 8 horas.
+`iteration_budget` tope 200 pasadas × 3 agentes por pasada en `develop-ticket@1`
+= 600 invocaciones legítimas, más el plan y la revisión integrada: 612 agentes y
+~1024 attempts en el peor caso legítimo. Los caps quedan ~2× por encima, así que
+**no pueden ligar antes que el bound declarado del loop**. Eso es lo que hace la
+diferencia entre un backstop y un cap de tickets encubierto: el `48` histórico
+paraba un run gobernado a los ~15 tickets.
 
-`maxCostUSD: 250` es protección de runaway, no presupuesto: tiene que quedar
-holgadamente por encima de un run grande legítimo, porque un cap económico que
-mata un run a los 20 tickets de 24 reproduce el problema que este spec arregla.
-Para presupuestar de verdad, `--policy` con un archivo propio sigue disponible
-y ahora gana por precedencia explícita.
+`TestGovernedPackAttemptBackstopExceedsItsOwnLoopCeiling` fija la derivación, no
+los números: lee el `maximum` del schema y cuenta los pasos de agente del
+subflow, así que agregar un rol mueve el piso solo. Con el `48` histórico falla
+nombrando el 600.
+
+`maxCostUSD: 250` se queda —funciona para modelos que sí están tarifados— pero el
+README ya no lo vende como freno activo. Dos cosas pendientes para que lo sea:
+las entradas de la familia 5 en `prices.go`, y que `EstimateUSD` deje de cobrar
+input cacheado a precio full (en el run de revisión, 10.612.146 de 10.612.286
+tokens de input fueron cacheados).
+
+Para presupuestar de verdad, `--policy` con un archivo propio sigue disponible y
+gana por precedencia explícita.
 
 `maxParallelism: 1` no se toca. Los tickets declaran dependencias y todos
 escriben sobre el mismo working tree; sin worktrees aislados dos coders se

@@ -32,6 +32,23 @@ tocar. Reporté "tres contradicciones con el tracker" que no existían.
 resultado contradice lo esperado, el primer chequeo es `pwd`, antes de escribir
 una sola conclusión.
 
+## Recompilar antes de medir, y mirar si el árbol se movió bajo el binario
+
+**2026-07-30.** Compilé `.tmp/orq-lite-new`, lancé el run de revisión, y el
+integrator modificó 26 archivos. Después probé un hallazgo con **ese mismo
+binario** y concluí que el agujero seguía abierto. Estaba cerrado: el binario era
+anterior al fix. Recompilé y el probe se dio vuelta.
+
+Peor: en la misma tanda leí `agent.go` con `CostUSD` asignado y "corregí" al
+critic diciendo que se había equivocado. El plumbing era trabajo del integrator
+sin commitear; en el commit auditado había 0 ocurrencias. El critic tenía razón y
+yo le di al usuario el sitio de fix equivocado.
+
+**Regla:** antes de verificar cualquier cosa con un binario, recompilar. Y para
+auditar lo que dice un revisor, comparar contra el **commit que revisó**
+(`git show <sha>:<path>`), no contra el working tree — un run de gobierno cambia
+el árbol mientras corre, así que el árbol y el commit son dos cosas distintas.
+
 ## Un tracker que el agente se escribió a sí mismo no es evidencia
 
 **2026-07-30.** El `batch_coder` dejó `tasks/todo-governed-pack-v4.md` con
