@@ -377,12 +377,16 @@ el error. Sin shell, sin Python, agnóstico de lenguaje. Se registra en
 #### E.4 Los prompts también dejan de nombrar comandos
 
 Los 6 prompts que hoy dicen `uv run ruff check .` / `uv run pytest -q` pasan a
-referirse a los comandos por su rol, no por su texto: "los gates de lint y test
-del proyecto, tal como los declara `team.json`". El `agent.invoke@1` ya inyecta
-`vars` y `context` en el prompt, así que los comandos concretos se pasan como
-variables (`{{LINT_CMD}}`, `{{TEST_CMD}}`) alimentadas desde el mismo
-`config.lint_argv` / `config.test_argv` de E.1 — una sola fuente de verdad para
-el gate que corre el runtime y para el comando que el agente corre a mano.
+referirse a los comandos por su rol, no por su texto.
+
+**Como quedó construido** (deviación deliberada del diseño original): los
+prompts nombran la fuente — "los gates configurados del proyecto (`lint_argv` y
+`test_argv` en `team.json`, los mismos comandos que corren los gate steps de
+este flow)" — en vez de recibir los comandos resueltos como variables
+(`{{LINT_CMD}}`, `{{TEST_CMD}}`) inyectadas desde `config.lint_argv`. Es más
+simple y no toca los flows; el costo es que el agente tiene que leer `team.json`
+por su cuenta en lugar de recibir el comando literal. Si aparece un rol que
+reporta comandos equivocados, la variable inyectada es el siguiente paso.
 
 Sin esto, E.1 arregla el gate pero deja al `coder` y al `integrator` corriendo
 `uv run pytest` por su cuenta y reportando gates que nunca pasaron. Es el mismo
@@ -444,6 +448,15 @@ patrón de round 3: el rol hace su trabajo contra un contrato que nadie conectó
 
 **Gate de paridad**
 `internal/commands/governedpack_test.go` y el gate de development-pack tienen
-que seguir verdes contra el pack v4. Dos greps que tienen que dar cero:
-`grep -rn "uv " examples/governed-pack/` y cualquier flow del pack sin
-`metadata.policy`.
+que seguir verdes contra el pack v4.
+
+Dos greps que tienen que dar cero, y el alcance del primero importa:
+`grep -rn "uv " examples/governed-pack/pack/` — **solo bajo `pack/`** — y
+cualquier flow del pack sin `metadata.policy`.
+
+El gate original decía `examples/governed-pack/` entero, y estaba mal: después
+de E.1 los comandos del lenguaje viven precisamente en el `team.json` del
+proyecto de ejemplo, que es Python. Tres ocurrencias legítimas quedan fuera de
+`pack/` (`team.json` y `features.md` del ejemplo) y un gate que no distingue "el
+pack hardcodea Python" de "el ejemplo declara su toolchain" es un gate que
+obliga a romper el ejemplo para pasar.
