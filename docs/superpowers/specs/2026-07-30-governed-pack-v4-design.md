@@ -70,6 +70,13 @@ comparten:
 Desinstalar el pack v4 no los saca. Mientras tanto `team.json` ya declara
 `lint_command` y `full_test_command`, que el pack ignora.
 
+Y no son solo los gates: **los prompts hardcodean los mismos comandos en las
+instrucciones que le dan a los agentes** — 8 ocurrencias en `coder.md` (2+2),
+`batch-coder.md`, `integrator.md`, `gov-reviewer.md`, `ticket-qa.md`, más una
+referencia a "pytest test" en `adversary.md`. Parchear solo el `argv` de los
+flows deja a cada rol *instruido* para correr `uv run ruff check .` contra el
+repo. Descubierto al preparar el bootstrap para dogfoodear este spec.
+
 ### 5. Los `plan_tickets` repetidos no son un feature faltante
 
 `orq-lite flow resume <run-id>` existe (`workflowcmd.go:384-388`) y el store
@@ -366,6 +373,20 @@ Nuevo builtin en `internal/activity/builtin/`, `EffectPure`:
 Pasa si `value == equals`; si no, falla con `ErrorGateFailed` y el `message` en
 el error. Sin shell, sin Python, agnóstico de lenguaje. Se registra en
 `builtinSpecs()` (`workflowcmd.go:41`).
+
+#### E.4 Los prompts también dejan de nombrar comandos
+
+Los 6 prompts que hoy dicen `uv run ruff check .` / `uv run pytest -q` pasan a
+referirse a los comandos por su rol, no por su texto: "los gates de lint y test
+del proyecto, tal como los declara `team.json`". El `agent.invoke@1` ya inyecta
+`vars` y `context` en el prompt, así que los comandos concretos se pasan como
+variables (`{{LINT_CMD}}`, `{{TEST_CMD}}`) alimentadas desde el mismo
+`config.lint_argv` / `config.test_argv` de E.1 — una sola fuente de verdad para
+el gate que corre el runtime y para el comando que el agente corre a mano.
+
+Sin esto, E.1 arregla el gate pero deja al `coder` y al `integrator` corriendo
+`uv run pytest` por su cuenta y reportando gates que nunca pasaron. Es el mismo
+patrón de round 3: el rol hace su trabajo contra un contrato que nadie conectó.
 
 ### F. Ergonomía para un agente que orquesta
 
