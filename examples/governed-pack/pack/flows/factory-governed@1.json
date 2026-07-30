@@ -3,7 +3,8 @@
  "kind": "Flow",
  "metadata": {
   "name": "factory-governed",
-  "version": "1"
+  "version": "1",
+  "policy": "policy:development@3"
  },
  "inputs": {
   "features_path": {
@@ -18,7 +19,7 @@
    "uses": "activity:agent.invoke@1",
    "with": {
     "role": "ticket_planner",
-    "outputSchema": "schema:workflow-state@1",
+    "outputSchema": "schema:workflow-state@2",
     "vars": {
      "MODE": "initial",
      "FEATURES_PATH": {
@@ -47,7 +48,7 @@
    "if": "inputs.fast != true",
    "while": {
     "condition": "item.state.status == \"active\"",
-    "maxIterations": 20,
+    "maxIterations": {"$ref": "item.state.iteration_budget"},
     "initial": {
      "state": {
       "$ref": "steps.plan_tickets.output"
@@ -65,17 +66,12 @@
   },
   {
    "id": "ticket_plan_complete",
-   "uses": "activity:gate.run@1",
-   "if": "inputs.fast != true",
+   "uses": "activity:gate.assert@1",
+   "if": "inputs.fast != true && steps.plan_tickets.output.status == \"active\"",
    "with": {
-    "argv": [
-     "uv",
-     "run",
-     "python",
-     "-c",
-     "import json,sys; data=json.load(open(sys.argv[1])); raise SystemExit(0 if data.get('status') == 'complete' and not data.get('pending') and data.get('next_ticket') is None else 1)",
-     ".orquestalite/results/ticket_planner.json"
-    ]
+    "value": {"$ref": "steps.develop_tickets.output.last.state.status"},
+    "equals": "complete",
+    "message": "the ticket loop ended without the plan reaching status=complete"
    }
   },
   {

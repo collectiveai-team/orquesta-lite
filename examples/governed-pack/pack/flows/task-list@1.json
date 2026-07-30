@@ -1,7 +1,7 @@
 {
   "apiVersion": "orq.dev/v2",
   "kind": "Flow",
-  "metadata": {"name": "task-list", "version": "1"},
+  "metadata": {"name": "task-list", "version": "1", "policy": "policy:development@3"},
   "inputs": {
     "features_path": {"schema": "schema:path@1", "default": "features.md"},
     "fast": {"schema": "schema:flag@1", "default": false}
@@ -12,7 +12,7 @@
       "uses": "activity:agent.invoke@1",
       "with": {
         "role": "ticket_planner",
-        "outputSchema": "schema:workflow-state@1",
+        "outputSchema": "schema:workflow-state@2",
         "vars": {
           "MODE": "initial",
           "FEATURES_PATH": {"$ref": "inputs.features_path"},
@@ -30,7 +30,7 @@
       "if": "inputs.fast != true",
       "while": {
         "condition": "item.state.status == \"active\"",
-        "maxIterations": 20,
+        "maxIterations": {"$ref": "item.state.iteration_budget"},
         "initial": {
           "state": {"$ref": "steps.plan_tickets.output"}
         }
@@ -52,12 +52,12 @@
     {
       "id": "final_lint",
       "uses": "activity:gate.run@1",
-      "with": {"argv": ["uv", "run", "ruff", "check", "."]}
+      "with": {"argv": {"$ref": "config.lint_argv"}}
     },
     {
       "id": "final_tests",
       "uses": "activity:gate.run@1",
-      "with": {"argv": ["uv", "run", "pytest", "-q"]}
+      "with": {"argv": {"$ref": "config.test_argv"}}
     }
   ],
   "outputs": {

@@ -200,7 +200,7 @@ integrated_review:
    → governance_gate       (fail-closed)
 ```
 
-To adopt it: install the pack under `.orquestalite/packs/development/1/`, point
+To adopt it: install the pack under `.orquestalite/packs/development/4/`, point
 your `team.json` roles at its prompts, set real reviewer models (see below),
 and write your `features.md` (§5). The pack's own README has the exact copy/run
 commands.
@@ -321,7 +321,7 @@ the dashboard. Interrupted or failed queues resume with `orq-lite factory`
 - [ ] `team.json`: agent fallback chains, repo-root self-contained gate
       commands, `conventions_file`
 - [ ] (governed) started from `examples/governed-pack/` (v2 `factory-governed@1`);
-      pack installed under `.orquestalite/packs/development/1/`, strong models on
+      pack installed under `.orquestalite/packs/development/4/`, strong models on
       the test/gate roles (`ticket_qa`/`qa`/`adversary`/`critic`/`gov_reviewer`),
       each review role's `result_path` + `steps.<role>.output` wiring verified,
       `coder` timeout sized to the heaviest ticket

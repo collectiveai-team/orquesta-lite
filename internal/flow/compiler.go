@@ -35,6 +35,21 @@ func compileDocument(doc *Document, catalog Catalog, stack map[string]bool) (*IR
 	knownSteps := map[string]bool{}
 	stepSchemas := map[string]*Schema{}
 	var diagnostics Diagnostics
+	// A flow-declared policy is resolved and pinned exactly like a step's retry
+	// policy, so the budget a run executed under is inside the definition digest
+	// instead of depending on what the operator typed. Failing here means
+	// `flow validate` and `flow run` reject the flow before any step runs.
+	if doc.Metadata.Policy != "" {
+		ref, err := ParseResourceRef(doc.Metadata.Policy)
+		if err != nil || ref.Kind != "policy" {
+			diagnostics = append(diagnostics, Diagnostic{"error", "metadata.policy", "metadata.policy must reference policy:name@version"})
+		} else if rawPolicy, digest, resolveErr := catalog.ResolvePolicy(ref); resolveErr != nil {
+			diagnostics = append(diagnostics, Diagnostic{"error", "metadata.policy", resolveErr.Error()})
+		} else {
+			ir.Resources[ref.String()] = digest
+			ir.Policies[ref.String()] = append(json.RawMessage(nil), rawPolicy...)
+		}
+	}
 	for name, input := range doc.Inputs {
 		ref, err := ParseResourceRef(input.Schema)
 		if err != nil || ref.Kind != "schema" {
@@ -153,6 +168,10 @@ func compileDocument(doc *Document, catalog Catalog, stack map[string]bool) (*IR
 		}
 		if step.While != nil {
 			validateValue(path+".while.initial", step.While.Initial, false)
+			// allowItem is true here, unlike while.initial: the bound is
+			// re-resolved on every pass with `item` already set, so it may
+			// legitimately be derived from the loop's own carried value.
+			validateValue(path+".while.maxIterations", step.While.MaxIterations, true)
 		}
 		for name, value := range step.With {
 			validateValue(path+".with."+name, value, step.Foreach != nil || step.While != nil)
@@ -289,6 +308,13 @@ func validateReference(ref string, inputs map[string]InputSpec, steps map[string
 				if schema == nil {
 					break
 				}
+				// An index or `last` descends into an array's element schema, so
+				// a path through a foreach/while aggregate keeps being checked
+				// against the pinned contract rather than silently going untyped.
+				if isArraySegment(segment) && schema.Items != nil {
+					schema = schema.Items
+					continue
+				}
 				child, ok := schema.Properties[segment]
 				if !ok {
 					if schema.AdditionalProperties != nil && !*schema.AdditionalProperties {
@@ -305,10 +331,34 @@ func validateReference(ref string, inputs map[string]InputSpec, steps map[string
 		}
 	case "attempt", "run":
 		// Runtime-owned read-only values.
+	case "config":
+		// Read-only project configuration. The namespace is deliberately flat —
+		// exactly one key segment — so validating a reference against the host's
+		// whitelist stays a two-segment comparison.
+		if len(parts) != 2 {
+			return fmt.Errorf("reference %q must name exactly one config key (config.<key>)", ref)
+		}
 	default:
 		return fmt.Errorf("reference %q has unknown root", ref)
 	}
 	return nil
+}
+
+// isArraySegment reports whether a reference segment addresses an array
+// element: a decimal index, or `last` for the final one.
+func isArraySegment(segment string) bool {
+	if segment == "last" {
+		return true
+	}
+	if segment == "" {
+		return false
+	}
+	for _, char := range segment {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func digestBytes(raw []byte) Digest {

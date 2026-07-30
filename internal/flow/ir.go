@@ -2,6 +2,7 @@ package flow
 
 import (
 	"encoding/json"
+	"sort"
 
 	"github.com/lionelchamorro/orquestalite/internal/activity"
 )
@@ -40,4 +41,59 @@ type IRHandler struct {
 	With     map[string]Value `json:"with,omitempty"`
 	Activity *activity.Spec   `json:"activity,omitempty"`
 	Subflow  *IR              `json:"subflow,omitempty"`
+}
+
+// ReferencePaths returns every structured reference path the compiled IR uses,
+// including nested subflows and handlers. It exists so a host can validate a
+// whole namespace (for example `config.*`) before a run starts instead of
+// discovering a broken reference mid-flight.
+func (ir *IR) ReferencePaths() []string {
+	seen := map[string]bool{}
+	var paths []string
+	visit := func(value Value) {
+		_ = walkRefs(value, func(ref string) error {
+			if !seen[ref] {
+				seen[ref] = true
+				paths = append(paths, ref)
+			}
+			return nil
+		})
+	}
+	var walk func(*IR)
+	walk = func(current *IR) {
+		if current == nil {
+			return
+		}
+		for _, step := range current.Steps {
+			for _, value := range step.With {
+				visit(value)
+			}
+			if step.Foreach != nil {
+				visit(step.Foreach.Items)
+				if step.Foreach.IsolationKey != nil {
+					visit(*step.Foreach.IsolationKey)
+				}
+			}
+			if step.While != nil {
+				visit(step.While.Initial)
+				visit(step.While.MaxIterations)
+			}
+			for _, handler := range []*IRHandler{step.OnError, step.OnCancel, step.Compensate} {
+				if handler == nil {
+					continue
+				}
+				for _, value := range handler.With {
+					visit(value)
+				}
+				walk(handler.Subflow)
+			}
+			walk(step.Subflow)
+		}
+		for _, value := range current.Outputs {
+			visit(value)
+		}
+	}
+	walk(ir)
+	sort.Strings(paths)
+	return paths
 }

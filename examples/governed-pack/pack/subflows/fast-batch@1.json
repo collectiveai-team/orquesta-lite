@@ -10,7 +10,7 @@
    "schema": "schema:path@1"
   },
   "state": {
-   "schema": "schema:workflow-state@1"
+   "schema": "schema:workflow-state@2"
   }
  },
  "steps": [
@@ -36,25 +36,14 @@
    "id": "batch_lint",
    "uses": "activity:gate.run@1",
    "with": {
-    "argv": [
-     "uv",
-     "run",
-     "ruff",
-     "check",
-     "."
-    ]
+    "argv": {"$ref": "config.lint_argv"}
    }
   },
   {
    "id": "batch_tests",
    "uses": "activity:gate.run@1",
    "with": {
-    "argv": [
-     "uv",
-     "run",
-     "pytest",
-     "-q"
-    ]
+    "argv": {"$ref": "config.test_argv"}
    }
   },
   {
@@ -125,25 +114,14 @@
    "id": "final_lint",
    "uses": "activity:gate.run@1",
    "with": {
-    "argv": [
-     "uv",
-     "run",
-     "ruff",
-     "check",
-     "."
-    ]
+    "argv": {"$ref": "config.lint_argv"}
    }
   },
   {
    "id": "final_tests",
    "uses": "activity:gate.run@1",
    "with": {
-    "argv": [
-     "uv",
-     "run",
-     "pytest",
-     "-q"
-    ]
+    "argv": {"$ref": "config.test_argv"}
    }
   }
  ],

@@ -1,6 +1,9 @@
 package flow
 
-import "fmt"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 type Resolver func(path string) (any, bool)
 
@@ -36,6 +39,24 @@ func ResolveValue(value Value, resolve Resolver) (any, error) {
 	default:
 		return literal, nil
 	}
+}
+
+// LiteralInt reports the value's literal integer when it is one. It returns
+// false for a `$ref` or any non-integer literal, so callers that want the
+// statically-known bound of a loop can ask without resolving anything.
+func (v Value) LiteralInt() (int, bool) {
+	if v.Ref != nil {
+		return 0, false
+	}
+	number, ok := v.Literal.(json.Number)
+	if !ok {
+		return 0, false
+	}
+	parsed, err := number.Int64()
+	if err != nil {
+		return 0, false
+	}
+	return int(parsed), true
 }
 
 func walkRefs(value Value, visit func(string) error) error {

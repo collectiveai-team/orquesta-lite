@@ -1,7 +1,7 @@
 {
   "apiVersion": "orq.dev/v2",
   "kind": "Flow",
-  "metadata": {"name": "issue-fix", "version": "1"},
+  "metadata": {"name": "issue-fix", "version": "1", "policy": "policy:development@3"},
   "inputs": {
     "issue_path": {"schema": "schema:path@1"},
     "run": {"schema": "schema:flag@1", "default": true}
@@ -37,7 +37,7 @@
           "APPEND": "false"
         },
         "context": {"TRIAGE": {"$ref": "steps.triage.output"}},
-        "outputSchema": "schema:workflow-state@1"
+        "outputSchema": "schema:workflow-state@2"
       }
     },
     {
@@ -46,7 +46,7 @@
       "if": "steps.triage.output.actionable == true && inputs.run == true",
       "while": {
         "condition": "item.state.status == \"active\"",
-        "maxIterations": 10,
+        "maxIterations": {"$ref": "item.state.iteration_budget"},
         "initial": {"state": {"$ref": "steps.plan_fix.output"}}
       },
       "with": {

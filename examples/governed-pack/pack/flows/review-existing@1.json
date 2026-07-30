@@ -3,7 +3,8 @@
  "kind": "Flow",
  "metadata": {
   "name": "review-existing",
-  "version": "1"
+  "version": "1",
+  "policy": "policy:development@3"
  },
  "inputs": {
   "features_path": {

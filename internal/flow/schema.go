@@ -39,6 +39,8 @@ type Schema struct {
 	Enum                 []any              `json:"enum,omitempty"`
 	MinItems             *int               `json:"minItems,omitempty"`
 	MinLength            *int               `json:"minLength,omitempty"`
+	Minimum              *float64           `json:"minimum,omitempty"`
+	Maximum              *float64           `json:"maximum,omitempty"`
 }
 
 func DecodeSchema(r io.Reader) (*Schema, error) {
@@ -110,6 +112,18 @@ func (s *Schema) validateValue(path string, value any) error {
 		}
 		if !found {
 			return fmt.Errorf("%s: value is not in enum", path)
+		}
+	}
+	if s.Minimum != nil || s.Maximum != nil {
+		number, ok := numericValue(value)
+		if !ok {
+			return fmt.Errorf("%s: expected a number to compare against minimum/maximum, got %T", path, value)
+		}
+		if s.Minimum != nil && number < *s.Minimum {
+			return fmt.Errorf("%s: requires value >= %v", path, *s.Minimum)
+		}
+		if s.Maximum != nil && number > *s.Maximum {
+			return fmt.Errorf("%s: requires value <= %v", path, *s.Maximum)
 		}
 	}
 	switch typed := value.(type) {
@@ -188,6 +202,42 @@ func matchesAnyType(types Types, value any) bool {
 		}
 	}
 	return false
+}
+
+// numericValue widens any JSON-decoded number (json.Number under UseNumber, or
+// a plain Go number) to float64 for range comparison.
+func numericValue(value any) (float64, bool) {
+	switch typed := value.(type) {
+	case json.Number:
+		number, err := typed.Float64()
+		return number, err == nil
+	case float64:
+		return typed, true
+	case float32:
+		return float64(typed), true
+	case int:
+		return float64(typed), true
+	case int8:
+		return float64(typed), true
+	case int16:
+		return float64(typed), true
+	case int32:
+		return float64(typed), true
+	case int64:
+		return float64(typed), true
+	case uint:
+		return float64(typed), true
+	case uint8:
+		return float64(typed), true
+	case uint16:
+		return float64(typed), true
+	case uint32:
+		return float64(typed), true
+	case uint64:
+		return float64(typed), true
+	default:
+		return 0, false
+	}
 }
 
 func isNumber(value any) bool {
