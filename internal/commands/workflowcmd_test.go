@@ -98,11 +98,14 @@ func TestFlowCLIExecutesInstalledPinnedPack(t *testing.T) {
 	}
 }
 
+// An unpinned pack ref no longer looks for a directory named after the flow's
+// version, so the error names the pack without inventing a version it never
+// searched for.
 func TestFlowCLIMissingPackHasActionableError(t *testing.T) {
 	dir := t.TempDir()
 	var out bytes.Buffer
 	err := FlowCLI(context.Background(), dir, []string{"run", "development/pr-review@1"}, &out)
-	if err == nil || !strings.Contains(err.Error(), "installed pack development@1 is required") {
+	if err == nil || !strings.Contains(err.Error(), "installed pack development is required for flow pr-review") {
 		t.Fatalf("err=%v", err)
 	}
 }

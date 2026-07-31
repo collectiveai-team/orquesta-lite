@@ -205,27 +205,58 @@ func detectLanguage(dir string) string {
 	return ""
 }
 
-// applyTestCommand substitutes the embedded default "go test ./..." in the
-// team.json template with a language-appropriate command. Uses a literal
-// string replace to preserve JSON layout/comments (encoding/json reorders keys).
+// applyTestCommand substitutes the embedded Go defaults in the team.json
+// template with language-appropriate gates. Uses literal string replaces to
+// preserve JSON layout/comments (encoding/json reorders keys).
+//
+// It rewrites the argv forms alongside the shell string. They are not
+// decoration: `lint_argv` and `test_argv` are the only team.json keys a v2
+// flow can read, and a flow that references one the project does not declare
+// is rejected before the run starts. Scaffolding the string command alone —
+// which is what this used to do — produced a project where `init`, `pack
+// install` and `doctor` all reported success and the very first `flow run`
+// failed on a missing key.
 func applyTestCommand(team []byte, lang string) []byte {
-	defaultLine := []byte(`"full_test_command": "go test ./..."`)
-	var newCmd string
+	var testCmd string
+	var testArgv, lintArgv []string
 	switch lang {
 	case "python":
-		newCmd = "uv run pytest -q"
+		testCmd = "uv run pytest -q"
+		testArgv = []string{"uv", "run", "pytest", "-q"}
+		lintArgv = []string{"uv", "run", "ruff", "check", "."}
 	case "node":
-		newCmd = "npm test --silent"
+		testCmd = "npm test --silent"
+		testArgv = []string{"npm", "test", "--silent"}
+		lintArgv = []string{"npm", "run", "lint"}
 	case "go":
 		return team
 	default:
-		// Ambiguous language: clear the command rather than keep the Go default,
-		// which would fail every full-suite gate in a non-Go repo. Empty is a
-		// no-op (see config.Validate); the run-time detector fills it in later.
-		newCmd = ""
+		// Ambiguous language: clear the commands rather than keep the Go
+		// defaults, which would fail every gate in a non-Go repo. Empty is a
+		// no-op for the string form (see config.Validate); for the argv form
+		// it is a deliberate, loud hole — doctor reports it and a flow that
+		// needs the gate refuses to start rather than silently running
+		// nothing. The run-time detector and the operator fill these in.
+		testCmd = ""
 	}
-	replacement := []byte(fmt.Sprintf(`"full_test_command": %q`, newCmd))
-	return bytes.Replace(team, defaultLine, replacement, 1)
+	team = bytes.Replace(team, []byte(`"full_test_command": "go test ./..."`),
+		[]byte(fmt.Sprintf(`"full_test_command": %q`, testCmd)), 1)
+	team = bytes.Replace(team, []byte(`"lint_argv": ["go", "vet", "./..."]`),
+		[]byte(`"lint_argv": `+encodeArgv(lintArgv)), 1)
+	team = bytes.Replace(team, []byte(`"test_argv": ["go", "test", "./..."]`),
+		[]byte(`"test_argv": `+encodeArgv(testArgv)), 1)
+	return team
+}
+
+func encodeArgv(argv []string) string {
+	if len(argv) == 0 {
+		return "[]"
+	}
+	quoted := make([]string, len(argv))
+	for index, word := range argv {
+		quoted[index] = fmt.Sprintf("%q", word)
+	}
+	return "[" + strings.Join(quoted, ", ") + "]"
 }
 
 // writeGitignore ensures .gitignore covers .orquestalite/ plus any

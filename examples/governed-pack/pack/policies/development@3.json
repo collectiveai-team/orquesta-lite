@@ -1,0 +1,21 @@
+{
+  "maxDurationSeconds": 28800,
+  "maxAttempts": 2400,
+  "maxAgentAttempts": 1200,
+  "maxCostUSD": 250,
+  "maxParallelism": 1,
+  "retries": {
+    "transient": {
+      "maxAttempts": 3,
+      "delayMs": 1000
+    },
+    "rate_limited": {
+      "maxAttempts": 3,
+      "delayMs": 30000
+    },
+    "timeout": {
+      "maxAttempts": 2,
+      "delayMs": 1000
+    }
+  }
+}

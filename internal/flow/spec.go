@@ -21,6 +21,12 @@ const (
 type Metadata struct {
 	Name    string `json:"name"`
 	Version string `json:"version"`
+	// Policy optionally names the run policy this flow was designed for
+	// (`policy:name@version`). The compiler resolves and pins it exactly like a
+	// step's retry policy, and `flow run` applies it when no explicit --policy
+	// is given, so a pack's declared budget no longer depends on the operator
+	// remembering to name it.
+	Policy string `json:"policy,omitempty"`
 }
 
 type InputSpec struct {
@@ -44,9 +50,12 @@ type ForeachSpec struct {
 	IsolationKey   *Value `json:"isolationKey,omitempty"`
 }
 
+// WhileSpec bounds a durable loop. MaxIterations is a Value — symmetric with
+// Initial — so a literal `20` keeps compiling unchanged while a `$ref` lets the
+// bound come from the loop's own data (the scheduler re-resolves it per pass).
 type WhileSpec struct {
 	Condition     string `json:"condition"`
-	MaxIterations int    `json:"maxIterations"`
+	MaxIterations Value  `json:"maxIterations"`
 	Initial       Value  `json:"initial"`
 }
 
@@ -168,7 +177,7 @@ func validateRefSyntax(path string) error {
 		return fmt.Errorf("invalid empty reference")
 	}
 	switch parts[0] {
-	case "inputs", "steps", "item", "index", "attempt", "run":
+	case "inputs", "steps", "item", "index", "attempt", "run", "config":
 	default:
 		return fmt.Errorf("reference %q has unknown root %q", path, parts[0])
 	}

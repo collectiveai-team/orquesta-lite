@@ -203,6 +203,15 @@ func scanRun(row rowScanner) (*Run, error) {
 	return &run, nil
 }
 
+// LatestUnfinishedRun returns the most recent run of flowRef that has not
+// reached a terminal status, or sql.ErrNoRows when there is none. It exists so
+// `flow run` can point an operator at the resume that already exists instead
+// of silently starting a second run of work already in flight.
+func (s *Store) LatestUnfinishedRun(ctx context.Context, flowRef string) (*Run, error) {
+	row := s.db.QueryRowContext(ctx, runSelect+` WHERE flow_ref=? AND status IN (?,?,?) ORDER BY started_at DESC, id DESC LIMIT 1`, flowRef, RunPending, RunRunning, RunNeedsHuman)
+	return scanRun(row)
+}
+
 func (s *Store) ListRuns(ctx context.Context, limit int) ([]Run, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 50

@@ -3,7 +3,8 @@
  "kind": "Flow",
  "metadata": {
   "name": "factory-fast",
-  "version": "1"
+  "version": "1",
+  "policy": "policy:development@3"
  },
  "inputs": {
   "features_path": {
@@ -21,7 +22,7 @@
    "uses": "activity:agent.invoke@1",
    "with": {
     "role": "ticket_planner",
-    "outputSchema": "schema:workflow-state@1",
+    "outputSchema": "schema:workflow-state@2",
     "vars": {
      "MODE": "initial",
      "FEATURES_PATH": {

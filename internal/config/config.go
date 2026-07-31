@@ -196,6 +196,20 @@ type Config struct {
 	// lint binary is treated as a skip, not a failure, so an unconfigured tool
 	// never blocks every task.
 	LintCommand string `json:"lint_command,omitempty"`
+	// LintArgv and TestArgv are the argv forms of the same two gates, and the
+	// only team.json keys a v2 flow can read (through the read-only `config.`
+	// namespace). Flows get argv rather than the shell strings above because
+	// `allowShell` is false by policy: a gate the engine runs directly cannot
+	// smuggle in a pipeline or a redirect.
+	//
+	// A project that ships flows using `config.lint_argv` / `config.test_argv`
+	// and does not declare these cannot start a run at all — the pre-run
+	// validator rejects it. That is why `orq-lite init` scaffolds both and
+	// `doctor` reports on them: the failure has to be visible from the
+	// commands an adopter runs before their first flow, not only from the run
+	// itself.
+	LintArgv []string `json:"lint_argv,omitempty"`
+	TestArgv []string `json:"test_argv,omitempty"`
 	// ConventionsFile is a project-relative path to a house-style document
 	// (coding conventions, structure, idioms). When set and present, its
 	// contents are injected into the coder/tester/critic/reviewer/verifier

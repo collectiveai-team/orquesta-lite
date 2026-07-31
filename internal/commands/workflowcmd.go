@@ -38,7 +38,7 @@ type compiledWorkflow struct {
 }
 
 func builtinSpecs() []activity.Spec {
-	return []activity.Spec{(&builtin.AgentExecutor{}).Spec(), (&builtin.CommandExecutor{}).Spec(), (&builtin.GateExecutor{}).Spec(), (&builtin.ArtifactExecutor{}).Spec(), (builtin.ApprovalExecutor{}).Spec()}
+	return []activity.Spec{(&builtin.AgentExecutor{}).Spec(), (&builtin.CommandExecutor{}).Spec(), (&builtin.GateExecutor{}).Spec(), (builtin.GateAssertExecutor{}).Spec(), (&builtin.ArtifactExecutor{}).Spec(), (builtin.ApprovalExecutor{}).Spec()}
 }
 
 func compileWorkflowTarget(projectDir, target string) (*compiledWorkflow, error) {
@@ -52,21 +52,11 @@ func compileWorkflowTarget(projectDir, target string) (*compiledWorkflow, error)
 		catalog = flow.NewDirectoryCatalog(root, builtinSpecs())
 	} else {
 		if !strings.Contains(target, ":") && strings.Contains(target, "/") {
-			packName, flowPart, _ := strings.Cut(target, "/")
-			flowName, version, ok := strings.Cut(flowPart, "@")
-			if !ok {
-				return nil, fmt.Errorf("pack flow ref must be pack/flow@version")
+			resolvedRoot, flowRef, resolveErr := resolvePackFlowRef(projectDir, target)
+			if resolveErr != nil {
+				return nil, resolveErr
 			}
-			for _, candidate := range []string{filepath.Join(projectDir, ".orquestalite", "packs", packName, version), filepath.Join(projectDir, ".orquestalite", "packs", packName+"@"+version)} {
-				if _, err := os.Stat(candidate); err == nil {
-					root = candidate
-					target = "flow:" + flowName + "@" + version
-					break
-				}
-			}
-			if root == "" {
-				return nil, fmt.Errorf("installed pack %s@%s is required for flow %s but was not found under %s", packName, version, flowName, filepath.Join(projectDir, ".orquestalite", "packs"))
-			}
+			root, target = resolvedRoot, flowRef
 		}
 		ref, parseErr := flow.ParseResourceRef(target)
 		if parseErr != nil || ref.Kind != "flow" {
@@ -155,7 +145,7 @@ func newWorkflowDeps(projectDir, teamPath, runID string, compiled *compiledWorkf
 		runtimeConfig = partial.Runtime
 	}
 	artifactExecutor := &builtin.ArtifactExecutor{Root: filepath.Join(stateDir, "runs", runID), MaxBytes: runtimeConfig.ArtifactLimit(), AllowedReadRoots: []string{projectDir}}
-	for _, executor := range []activity.Executor{command, gate, artifactExecutor, builtin.ApprovalExecutor{}} {
+	for _, executor := range []activity.Executor{command, gate, builtin.GateAssertExecutor{}, artifactExecutor, builtin.ApprovalExecutor{}} {
 		if err = registry.Register(executor); err != nil {
 			logger.Close()
 			store.Close()
@@ -212,7 +202,7 @@ func newWorkflowDeps(projectDir, teamPath, runID string, compiled *compiledWorkf
 		store.Close()
 		return nil, err
 	}
-	return &workflowDeps{runtime: &workflow.Runtime{Store: store, Activities: registry, Catalog: compiled.Catalog}, store: store, logger: logger, registry: registry}, nil
+	return &workflowDeps{runtime: &workflow.Runtime{Store: store, Activities: registry, Catalog: compiled.Catalog, Config: loadGateConfig(teamPath)}, store: store, logger: logger, registry: registry}, nil
 }
 
 func durationSeconds(value int) time.Duration { return time.Duration(value) * time.Second }
@@ -439,23 +429,41 @@ func flowCLIRun(ctx context.Context, projectDir string, args []string, out io.Wr
 	if err != nil {
 		return err
 	}
+	teamPath := filepath.Join(projectDir, "team.json")
+	// Fail before the run exists, not twenty minutes into it: every config.*
+	// reference must name a whitelisted key whose value is a non-empty argv.
+	if err = validateConfigReferences(compiled.IR, loadGateConfig(teamPath)); err != nil {
+		return err
+	}
 	id := runid.New()
-	deps, err := newWorkflowDeps(projectDir, filepath.Join(projectDir, "team.json"), id, compiled, eventlog.Format("auto"))
+	deps, err := newWorkflowDeps(projectDir, teamPath, id, compiled, eventlog.Format("auto"))
 	if err != nil {
 		return err
 	}
 	defer deps.close(context.Background())
-	run, runErr := deps.runtime.Start(ctx, compiled.IR, workflow.StartOptions{RunID: id, SourceKey: sourceKey, FlowRef: compiled.Ref, Inputs: inputs, Policy: policy})
+	reportUnfinishedRun(ctx, deps.store, compiled.Ref, out)
+	run, runErr := deps.runtime.Start(ctx, compiled.IR, workflow.StartOptions{RunID: id, SourceKey: sourceKey, FlowRef: compiled.Ref, Inputs: inputs, Policy: policy.Policy})
 	if run != nil {
-		policyRaw, _ := json.Marshal(policy)
+		policyRaw, _ := json.Marshal(policy.Policy)
 		policyHash := sha256.Sum256(policyRaw)
 		pack := "none"
 		if compiled.IR.Pack != nil {
 			pack = compiled.IR.Pack.Name + "@" + compiled.IR.Pack.Version + ":" + string(compiled.IR.Pack.Digest)
 		}
-		fmt.Fprintf(out, "run_id=%s status=%s flow=%s hash=%s policy_hash=%x pack=%s artifacts=%s\n", run.ID, run.Status, run.FlowRef, run.DefinitionHash, policyHash, pack, filepath.Join(projectDir, ".orquestalite", "runs", run.ID))
+		fmt.Fprintf(out, "run_id=%s status=%s flow=%s hash=%s policy=%s policy_source=%s policy_hash=%x pack=%s artifacts=%s\n", run.ID, run.Status, run.FlowRef, run.DefinitionHash, policy.Ref, policy.Source, policyHash, pack, filepath.Join(projectDir, ".orquestalite", "runs", run.ID))
 	}
 	return runErr
+}
+
+// reportUnfinishedRun makes an already-existing resume discoverable. It does
+// not change semantics — the new run still starts — it just stops an operator
+// (human or agent) from launching a duplicate without knowing one is in flight.
+func reportUnfinishedRun(ctx context.Context, store *workflow.Store, flowRef string, out io.Writer) {
+	existing, err := store.LatestUnfinishedRun(ctx, flowRef)
+	if err != nil || existing == nil {
+		return
+	}
+	fmt.Fprintf(out, "notice: %s already has an unfinished run %s (status=%s); resume it with: orq-lite flow resume %s\n", flowRef, existing.ID, existing.Status, existing.ID)
 }
 
 func splitRunOptions(args []string) (sourceKey, policyTarget string, inputs []string, err error) {
@@ -480,10 +488,52 @@ func splitRunOptions(args []string) (sourceKey, policyTarget string, inputs []st
 	return sourceKey, policyTarget, inputs, nil
 }
 
-func loadWorkflowPolicy(compiled *compiledWorkflow, target string) (workflow.Policy, error) {
-	if target == "" {
-		return workflow.DefaultPolicy(), nil
+// resolvedPolicy records which precedence branch produced the run policy, so
+// `flow run` can print it and an operator never has to infer which budget
+// actually applied.
+type resolvedPolicy struct {
+	Policy workflow.Policy
+	Source string // "flag", "flow-metadata", or "default"
+	Ref    string
+}
+
+// loadWorkflowPolicy applies the policy precedence:
+//
+//  1. an explicit --policy=<ref|path>, which always wins;
+//  2. the flow's own metadata.policy, already resolved and pinned into the IR
+//     at compile time;
+//  3. DefaultPolicy(), for ad-hoc flows that declare nothing.
+//
+// Branch 2 is the point of the whole thing: a pack that ships a policy used to
+// have it ignored unless the operator named it by hand, which silently capped
+// governed runs at the engine default's attempt budget.
+func loadWorkflowPolicy(compiled *compiledWorkflow, target string) (resolvedPolicy, error) {
+	if target != "" {
+		policy, err := decodePolicyTarget(compiled, target)
+		if err != nil {
+			return resolvedPolicy{}, err
+		}
+		return resolvedPolicy{Policy: policy, Source: "flag", Ref: target}, nil
 	}
+	if declared := compiled.IR.Metadata.Policy; declared != "" {
+		ref, err := flow.ParseResourceRef(declared)
+		if err != nil || ref.Kind != "policy" {
+			return resolvedPolicy{}, fmt.Errorf("invalid metadata.policy ref %q", declared)
+		}
+		raw, ok := compiled.IR.Policies[ref.String()]
+		if !ok {
+			return resolvedPolicy{}, fmt.Errorf("metadata.policy %s is not pinned in the compiled IR", declared)
+		}
+		policy, err := workflow.DecodePolicy(raw)
+		if err != nil {
+			return resolvedPolicy{}, err
+		}
+		return resolvedPolicy{Policy: policy, Source: "flow-metadata", Ref: declared}, nil
+	}
+	return resolvedPolicy{Policy: workflow.DefaultPolicy(), Source: "default", Ref: "default"}, nil
+}
+
+func decodePolicyTarget(compiled *compiledWorkflow, target string) (workflow.Policy, error) {
 	var raw []byte
 	if strings.HasPrefix(target, "policy:") {
 		ref, err := flow.ParseResourceRef(target)
@@ -546,7 +596,13 @@ func resumeWorkflow(ctx context.Context, projectDir, runID string, out io.Writer
 		}
 	}
 	compiled := &compiledWorkflow{IR: &ir, Catalog: flow.NewDirectoryCatalog(root, builtinSpecs()), Root: root}
-	deps, err := newWorkflowDeps(projectDir, filepath.Join(projectDir, "team.json"), runID, compiled, eventlog.Format("auto"))
+	teamPath := filepath.Join(projectDir, "team.json")
+	// A resume re-reads team.json live, so config.* must be re-validated here
+	// too — the project may have changed since the run started.
+	if err = validateConfigReferences(&ir, loadGateConfig(teamPath)); err != nil {
+		return err
+	}
+	deps, err := newWorkflowDeps(projectDir, teamPath, runID, compiled, eventlog.Format("auto"))
 	if err != nil {
 		return err
 	}

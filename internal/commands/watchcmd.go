@@ -93,6 +93,11 @@ func Watch(ctx context.Context, opts WatchOptions) error {
 			if compileErr != nil {
 				return fmt.Errorf("watch: flow %s does not compile: %w", ref, compileErr)
 			}
+			// Same reasoning as the compile check: a gate whose argv is missing
+			// from team.json must surface now, not on the first event hours later.
+			if configErr := validateConfigReferences(compiled.IR, loadGateConfig(filepath.Join(opts.ProjectDir, "team.json"))); configErr != nil {
+				return fmt.Errorf("watch: flow %s: %w", ref, configErr)
+			}
 			names := make(map[string]bool, len(compiled.IR.Inputs))
 			for name := range compiled.IR.Inputs {
 				names[name] = true

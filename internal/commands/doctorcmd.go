@@ -21,15 +21,27 @@ func Doctor(projectDir string, out io.Writer) error {
 		doctor.StatusWarn:  "WARN",
 		doctor.StatusError: "FAIL",
 	}
-	failed := 0
+	failed, warned := 0, 0
 	for _, c := range checks {
 		fmt.Fprintf(out, "[%s] %-22s %s\n", label[c.Status], c.Name, c.Detail)
-		if c.Status == doctor.StatusError {
+		switch c.Status {
+		case doctor.StatusError:
 			failed++
+		case doctor.StatusWarn:
+			warned++
 		}
 	}
 	if failed > 0 {
 		return fmt.Errorf("doctor: %d check(s) failed", failed)
+	}
+	// Warnings are not failures — plenty of them are genuinely optional — but
+	// the summary must not read as a clean bill of health when some of them
+	// name a setting the very next command needs. "all checks passed" over two
+	// warnings about unset gates is how a project reaches `flow run` believing
+	// it is configured.
+	if warned > 0 {
+		fmt.Fprintf(out, "\nno failures, %d warning(s) — read them before your first run\n", warned)
+		return nil
 	}
 	fmt.Fprintln(out, "\nall checks passed")
 	return nil

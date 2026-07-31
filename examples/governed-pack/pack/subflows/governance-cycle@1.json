@@ -55,25 +55,14 @@
    "id": "lint",
    "uses": "activity:gate.run@1",
    "with": {
-    "argv": [
-     "uv",
-     "run",
-     "ruff",
-     "check",
-     "."
-    ]
+    "argv": {"$ref": "config.lint_argv"}
    }
   },
   {
    "id": "tests",
    "uses": "activity:gate.run@1",
    "with": {
-    "argv": [
-     "uv",
-     "run",
-     "pytest",
-     "-q"
-    ]
+    "argv": {"$ref": "config.test_argv"}
    }
   },
   {

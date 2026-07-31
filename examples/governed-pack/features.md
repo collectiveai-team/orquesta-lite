@@ -10,7 +10,8 @@ business logic in route handlers. Every acceptance bullet below is a literal
 check reviewers walk one by one.
 
 **Gates:** `uv run ruff check .` and `uv run pytest -q` must exit 0 after every
-feature.
+feature. These are this demo project's commands; the pack runs whatever
+`lint_argv` / `test_argv` declare in `team.json`.
 
 ## Application skeleton
 
