@@ -71,13 +71,19 @@ func (a *AgentExecutor) Execute(ctx context.Context, request activity.Request) (
 	if request.ScopePath != "" {
 		taskID = request.ScopePath + "/" + request.StepID
 	}
-	raw, err := invoke.Raw(ctx, a.Invoker, input.Role, invoke.RoleCall{Vars: vars, Skills: input.Skills}, invoke.RunContext{TaskID: taskID, Attempt: request.Attempt}, func(raw []byte) error { return a.Validate(input.OutputSchema, raw) })
+	// The spend is attached to the Result on *every* return path below. The
+	// runtime sums attempts.cost_usd into RunUsage.CostUSD, which is what a
+	// policy's maxCostUSD is checked against — so an invocation that failed,
+	// or that fell back to a canned output, still has to report what its agent
+	// chain burned. Dropping it on the failure paths would leave the only
+	// spend-shaped brake blind to precisely the runs that need braking.
+	outcome, err := invoke.Raw(ctx, a.Invoker, input.Role, invoke.RoleCall{Vars: vars, Skills: input.Skills}, invoke.RunContext{TaskID: taskID, Attempt: request.Attempt}, func(raw []byte) error { return a.Validate(input.OutputSchema, raw) })
 	if err != nil {
 		if len(input.FallbackOutput) > 0 {
 			if validationErr := a.Validate(input.OutputSchema, input.FallbackOutput); validationErr != nil {
-				return activity.Result{}, contractError("agent.invoke fallbackOutput", validationErr)
+				return activity.Result{CostUSD: outcome.CostUSD}, contractError("agent.invoke fallbackOutput", validationErr)
 			}
-			return activity.Result{Output: input.FallbackOutput}, nil
+			return activity.Result{Output: input.FallbackOutput, CostUSD: outcome.CostUSD}, nil
 		}
 		class := activity.ErrorPermanent
 		switch {
@@ -86,7 +92,7 @@ func (a *AgentExecutor) Execute(ctx context.Context, request activity.Request) (
 		case errors.Is(err, invoke.ErrAgentTimeout):
 			class = activity.ErrorTimeout
 		}
-		return activity.Result{}, &activity.Error{Class: class, Op: "agent.invoke", Err: err}
+		return activity.Result{CostUSD: outcome.CostUSD}, &activity.Error{Class: class, Op: "agent.invoke", Err: err}
 	}
-	return activity.Result{Output: json.RawMessage(raw)}, nil
+	return activity.Result{Output: json.RawMessage(outcome.Output), CostUSD: outcome.CostUSD}, nil
 }

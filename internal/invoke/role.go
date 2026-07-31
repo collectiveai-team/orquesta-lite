@@ -12,6 +12,7 @@ import (
 	"github.com/lionelchamorro/orquestalite/internal/agenthealth"
 	"github.com/lionelchamorro/orquestalite/internal/artifacts"
 	"github.com/lionelchamorro/orquestalite/internal/config"
+	"github.com/lionelchamorro/orquestalite/internal/cost"
 	"github.com/lionelchamorro/orquestalite/internal/eventlog"
 	"github.com/lionelchamorro/orquestalite/internal/fallback"
 	"github.com/lionelchamorro/orquestalite/internal/gitx"
@@ -161,7 +162,7 @@ func Role[T MemoryNoting](
 		}
 		return parseErr
 	}
-	if err := inv.runValidated(ctx, roleName, spec, call.AgentOverride, prompt, resultPath, resultAbs, rc, validate); err != nil {
+	if _, err := inv.runValidated(ctx, roleName, spec, call.AgentOverride, prompt, resultPath, resultAbs, rc, validate); err != nil {
 		return nil, err
 	}
 
@@ -262,7 +263,8 @@ func (call RoleCall) templateVars() map[string]string {
 }
 
 func (inv *RoleInvoker) run(ctx context.Context, roleName string, role config.RoleSpec, agentOverride, prompt, relResultPath, absResultPath string, rc RunContext) error {
-	return inv.runValidated(ctx, roleName, role, agentOverride, prompt, relResultPath, absResultPath, rc, nil)
+	_, err := inv.runValidated(ctx, roleName, role, agentOverride, prompt, relResultPath, absResultPath, rc, nil)
+	return err
 }
 
 // contractRetryBudget bounds the extra same-agent attempts runValidated makes
@@ -297,10 +299,18 @@ func correctivePrompt(roleName, absResultPath, reason string, validationErr erro
 // runValidated runs the fallback chain and considers a result successful only
 // after validate accepts it. This keeps invalid_contract inside the same
 // per-agent fallback loop as missing results and provider failures.
-func (inv *RoleInvoker) runValidated(ctx context.Context, roleName string, role config.RoleSpec, agentOverride, prompt, relResultPath, absResultPath string, rc RunContext, validate func(path string) error) error {
+//
+// runValidated drives the fallback chain for one role invocation and reports
+// the total spend it incurred. The spend covers *every* agent the chain
+// touched, not just the one that finally succeeded: a fallback that burned two
+// providers before landing cost real money, and a chain that failed outright
+// cost the most of all. Callers hand that number to the runtime so a policy's
+// maxCostUSD is a brake on what was actually spent.
+func (inv *RoleInvoker) runValidated(ctx context.Context, roleName string, role config.RoleSpec, agentOverride, prompt, relResultPath, absResultPath string, rc RunContext, validate func(path string) error) (float64, error) {
+	var spend float64
 	agents, err := selectAgents(role, agentOverride)
 	if err != nil {
-		return err
+		return spend, err
 	}
 	agentByName := make(map[string]config.AgentSpec, len(agents))
 	chain := make([]string, 0, len(agents))
@@ -312,7 +322,7 @@ func (inv *RoleInvoker) runValidated(ctx context.Context, roleName string, role 
 	if inv.Health != nil {
 		chain = inv.Health.Filter(chain)
 		if len(chain) == 0 {
-			return fmt.Errorf("all agents for role %q are marked skipped: %v", roleName, inv.Health.SkippedAgents())
+			return spend, fmt.Errorf("all agents for role %q are marked skipped: %v", roleName, inv.Health.SkippedAgents())
 		}
 	}
 
@@ -369,6 +379,7 @@ func (inv *RoleInvoker) runValidated(ctx context.Context, roleName string, role 
 		}
 		lastResult = r
 		triedAgents = append(triedAgents, agentName)
+		spend += runSpendUSD(ag.Model, r)
 
 		shouldFallback, fallbackReason := Classify(r)
 		if !shouldFallback && validate != nil {
@@ -483,14 +494,32 @@ func (inv *RoleInvoker) runValidated(ctx context.Context, roleName string, role 
 		}
 		message := fmt.Sprintf("all agents failed for role %q: tried [%s]; last error: %s", roleName, tried, lastErrStr)
 		if lastFallbackReason == "invalid_contract" {
-			return fmt.Errorf("%w: %s", ErrInvalidContract, message)
+			return spend, fmt.Errorf("%w: %s", ErrInvalidContract, message)
 		}
 		if lastFallbackReason == "timeout" {
-			return fmt.Errorf("%w: %s", ErrAgentTimeout, message)
+			return spend, fmt.Errorf("%w: %s", ErrAgentTimeout, message)
 		}
-		return fmt.Errorf("%s", message)
+		return spend, fmt.Errorf("%s", message)
 	}
-	return err
+	return spend, err
+}
+
+// runSpendUSD prices one agent invocation from the token usage its provider
+// adapter reported. An unpriced or unknown model contributes 0 rather than a
+// guess — the number feeds a hard budget check, so it must never be inflated.
+func runSpendUSD(model string, result *runner.Result) float64 {
+	if result == nil {
+		return 0
+	}
+	usage := usageTotals(result)
+	if usage.Input == 0 && usage.Output == 0 {
+		return 0
+	}
+	usd, ok := cost.EstimateUSD(model, usage.Input, usage.Output)
+	if !ok {
+		return 0
+	}
+	return usd
 }
 
 func (inv *RoleInvoker) runner() AgentRunner {

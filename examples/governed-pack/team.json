@@ -9,21 +9,23 @@
     }
   },
   "roles": {
-    "ticket_planner": {"agents": ["haiku"], "prompt": ".orquestalite/packs/development/1/prompts/ticket-planner.md", "result_path": ".orquestalite/results/ticket_planner.json", "timeout_seconds": 900},
-    "coder": {"agents": ["haiku"], "prompt": ".orquestalite/packs/development/1/prompts/coder.md", "result_path": ".orquestalite/results/coder.json", "timeout_seconds": 1800},
-    "ticket_qa": {"agents": ["haiku"], "prompt": ".orquestalite/packs/development/1/prompts/ticket-qa.md", "result_path": ".orquestalite/results/ticket_qa.json", "timeout_seconds": 900},
-    "qa": {"agents": ["haiku"], "prompt": ".orquestalite/packs/development/1/prompts/qa.md", "result_path": ".orquestalite/results/qa.json", "timeout_seconds": 1200},
-    "adversary": {"agents": ["haiku"], "prompt": ".orquestalite/packs/development/1/prompts/adversary.md", "result_path": ".orquestalite/results/adversary.json", "timeout_seconds": 1500},
-    "critic": {"agents": ["haiku"], "prompt": ".orquestalite/packs/development/1/prompts/critic.md", "result_path": ".orquestalite/results/critic.json", "timeout_seconds": 900},
-    "integrator": {"agents": ["haiku"], "prompt": ".orquestalite/packs/development/1/prompts/integrator.md", "result_path": ".orquestalite/results/integrator.json", "timeout_seconds": 1200},
-    "gov_reviewer": {"agents": ["haiku"], "prompt": ".orquestalite/packs/development/1/prompts/gov-reviewer.md", "result_path": ".orquestalite/results/gov_reviewer.json", "timeout_seconds": 1200},
-    "batch_coder": {"agents": ["haiku"], "prompt": ".orquestalite/packs/development/1/prompts/batch-coder.md", "result_path": ".orquestalite/results/batch_coder.json", "timeout_seconds": 2400},
-    "intake": {"agents": ["haiku"], "prompt": ".orquestalite/packs/development/1/prompts/intake.md", "result_path": ".orquestalite/results/intake.json", "timeout_seconds": 900},
-    "pr_reviewer": {"agents": ["haiku"], "prompt": ".orquestalite/packs/development/1/prompts/pr-reviewer.md", "result_path": ".orquestalite/results/pr_reviewer.json", "timeout_seconds": 1200}
+    "ticket_planner": {"agents": ["haiku"], "prompt": ".orquestalite/packs/development/4/prompts/ticket-planner.md", "result_path": ".orquestalite/results/ticket_planner.json", "timeout_seconds": 900},
+    "coder": {"agents": ["haiku"], "prompt": ".orquestalite/packs/development/4/prompts/coder.md", "result_path": ".orquestalite/results/coder.json", "timeout_seconds": 1800},
+    "ticket_qa": {"agents": ["haiku"], "prompt": ".orquestalite/packs/development/4/prompts/ticket-qa.md", "result_path": ".orquestalite/results/ticket_qa.json", "timeout_seconds": 900},
+    "qa": {"agents": ["haiku"], "prompt": ".orquestalite/packs/development/4/prompts/qa.md", "result_path": ".orquestalite/results/qa.json", "timeout_seconds": 1200},
+    "adversary": {"agents": ["haiku"], "prompt": ".orquestalite/packs/development/4/prompts/adversary.md", "result_path": ".orquestalite/results/adversary.json", "timeout_seconds": 1500},
+    "critic": {"agents": ["haiku"], "prompt": ".orquestalite/packs/development/4/prompts/critic.md", "result_path": ".orquestalite/results/critic.json", "timeout_seconds": 900},
+    "integrator": {"agents": ["haiku"], "prompt": ".orquestalite/packs/development/4/prompts/integrator.md", "result_path": ".orquestalite/results/integrator.json", "timeout_seconds": 1200},
+    "gov_reviewer": {"agents": ["haiku"], "prompt": ".orquestalite/packs/development/4/prompts/gov-reviewer.md", "result_path": ".orquestalite/results/gov_reviewer.json", "timeout_seconds": 1200},
+    "batch_coder": {"agents": ["haiku"], "prompt": ".orquestalite/packs/development/4/prompts/batch-coder.md", "result_path": ".orquestalite/results/batch_coder.json", "timeout_seconds": 2400},
+    "intake": {"agents": ["haiku"], "prompt": ".orquestalite/packs/development/4/prompts/intake.md", "result_path": ".orquestalite/results/intake.json", "timeout_seconds": 900},
+    "pr_reviewer": {"agents": ["haiku"], "prompt": ".orquestalite/packs/development/4/prompts/pr-reviewer.md", "result_path": ".orquestalite/results/pr_reviewer.json", "timeout_seconds": 1200}
   },
   "limits": {"max_review_cycles": 3, "max_fix_iterations": 5, "verify_tester_command": true},
   "rate_limit_backoff": {"initial_seconds": 30, "factor": 2, "max_seconds": 1800, "default_pattern": "(?i)(rate_?limit|429|quota|too many requests|session limit|usage limit)"},
   "conventions_file": "CONVENTIONS.md",
   "full_test_command": "uv run pytest -q",
-  "lint_command": "uv run ruff check ."
+  "lint_command": "uv run ruff check .",
+  "lint_argv": ["uv", "run", "ruff", "check", "."],
+  "test_argv": ["uv", "run", "pytest", "-q"]
 }

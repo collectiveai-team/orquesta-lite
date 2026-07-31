@@ -97,8 +97,13 @@ func validateDocument(doc *Document) error {
 		if step.Foreach != nil && step.Foreach.MaxConcurrency > 1 && step.Foreach.IsolationKey == nil {
 			return fmt.Errorf("flow: step %q: parallel foreach requires isolationKey", step.ID)
 		}
-		if step.While != nil && (step.While.Condition == "" || step.While.MaxIterations < 1) {
-			return fmt.Errorf("flow: step %q: while requires condition and maxIterations > 0", step.ID)
+		if step.While != nil {
+			if step.While.Condition == "" {
+				return fmt.Errorf("flow: step %q: while requires condition and maxIterations > 0", step.ID)
+			}
+			if err := validateWhileBound(step.ID, step.While.MaxIterations); err != nil {
+				return err
+			}
 		}
 		for name, handler := range map[string]*HandlerSpec{"onError": step.OnError, "onCancel": step.OnCancel, "compensate": step.Compensate} {
 			if handler != nil && handler.Uses == "" {
@@ -131,12 +136,33 @@ func validateDocument(doc *Document) error {
 			if err := checkValue(fmt.Sprintf("steps[%d].while.initial", i), step.While.Initial); err != nil {
 				return err
 			}
+			if err := checkValue(fmt.Sprintf("steps[%d].while.maxIterations", i), step.While.MaxIterations); err != nil {
+				return err
+			}
 		}
 	}
 	for name, value := range doc.Outputs {
 		if err := checkValue("outputs."+name, value); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// validateWhileBound enforces `maxIterations > 0` for the literal form only. A
+// `$ref` bound cannot be checked here — nothing is resolved at decode time — so
+// the scheduler validates it per pass against whileIterationCeiling instead.
+func validateWhileBound(stepID string, bound Value) error {
+	if bound.Ref != nil {
+		return nil
+	}
+	number, ok := bound.Literal.(json.Number)
+	if !ok {
+		return fmt.Errorf("flow: step %q: while requires condition and maxIterations > 0", stepID)
+	}
+	iterations, err := number.Int64()
+	if err != nil || iterations < 1 {
+		return fmt.Errorf("flow: step %q: while requires condition and maxIterations > 0", stepID)
 	}
 	return nil
 }

@@ -8,37 +8,106 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/lionelchamorro/orquestalite/internal/flow"
 )
 
-const packUsage = "usage: orq-lite pack install <pack-dir> [--force]"
+const packUsage = "usage: orq-lite pack <install <pack-dir> [--force] | list>"
 
 // PackCLI implements `orq-lite pack <command>`. `install` verifies a pack
 // directory against its pack.json manifest (every file digest, no unlisted
 // files, no symlinks) and copies it to .orquestalite/packs/<name>/<version>/,
-// the layout `orq-lite flow run <name>/<flow>@<version>` resolves.
+// the layout `orq-lite flow run <name>/<flow>@<version>` resolves. `list`
+// reports what is installed, so an agent orchestrating packs can ask instead
+// of guessing.
 func PackCLI(_ context.Context, projectDir string, args []string, out io.Writer) error {
-	if len(args) == 0 || args[0] != "install" {
+	if len(args) == 0 {
 		return fmt.Errorf("%s", packUsage)
 	}
-	force := false
-	source := ""
-	for _, arg := range args[1:] {
-		switch {
-		case arg == "--force" || arg == "-force":
-			force = true
-		case source == "":
-			source = arg
-		default:
+	switch args[0] {
+	case "list":
+		if len(args) != 1 {
 			return fmt.Errorf("%s", packUsage)
 		}
-	}
-	if source == "" {
+		return packList(projectDir, out)
+	case "install":
+		force := false
+		source := ""
+		for _, arg := range args[1:] {
+			switch {
+			case arg == "--force" || arg == "-force":
+				force = true
+			case source == "":
+				source = arg
+			default:
+				return fmt.Errorf("%s", packUsage)
+			}
+		}
+		if source == "" {
+			return fmt.Errorf("%s", packUsage)
+		}
+		return packInstall(projectDir, source, force, out)
+	default:
 		return fmt.Errorf("%s", packUsage)
 	}
-	return packInstall(projectDir, source, force, out)
+}
+
+// packList prints every installed pack in ascending version order, marking the
+// version an unpinned `<pack>/<flow>@<v>` ref resolves to.
+func packList(projectDir string, out io.Writer) error {
+	packsRoot := filepath.Join(projectDir, ".orquestalite", "packs")
+	names := map[string]bool{}
+	for _, entry := range readDirNames(packsRoot) {
+		name, _, hasVersion := strings.Cut(entry, "@")
+		if hasVersion {
+			names[name] = true
+			continue
+		}
+		names[entry] = true
+	}
+	sorted := make([]string, 0, len(names))
+	for name := range names {
+		sorted = append(sorted, name)
+	}
+	sort.Strings(sorted)
+	listed := 0
+	for _, name := range sorted {
+		versions := installedPackVersions(packsRoot, name)
+		for index, version := range versions {
+			root := packDirectory(packsRoot, name, version)
+			if root == "" {
+				continue
+			}
+			pack, err := flow.LoadPack(root)
+			if err != nil {
+				fmt.Fprintf(out, "%s@%s error=%v\n", name, version, err)
+				listed++
+				continue
+			}
+			marker := ""
+			if index == len(versions)-1 {
+				marker = " (default)"
+			}
+			// pack.json itself is not in Files but is part of the pack.
+			fmt.Fprintf(out, "%s@%s digest=%s files=%d%s\n", pack.Name, pack.Version, pack.Snapshot().Digest, len(pack.Files)+1, marker)
+			listed++
+		}
+	}
+	if listed == 0 {
+		fmt.Fprintf(out, "no packs installed under %s\n", packsRoot)
+	}
+	return nil
+}
+
+func packDirectory(packsRoot, name, version string) string {
+	for _, candidate := range []string{filepath.Join(packsRoot, name, version), filepath.Join(packsRoot, name+"@"+version)} {
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			return candidate
+		}
+	}
+	return ""
 }
 
 func packInstall(projectDir, source string, force bool, out io.Writer) error {
@@ -146,6 +215,8 @@ func packInstall(projectDir, source string, force bool, out io.Writer) error {
 	}
 
 	fmt.Fprintf(out, "installed %s@%s (%d files) at %s\n", pack.Name, pack.Version, len(pack.Files)+1, dest)
-	fmt.Fprintf(out, "run flows with: orq-lite flow run %s/<flow>@%s\n", pack.Name, pack.Version)
+	// The pack version and the flow version are independent, so the hint must
+	// not suggest the flow carries the pack's number.
+	fmt.Fprintf(out, "run flows with: orq-lite flow run %s/<flow>@<flow-version>  (pin this pack with %s@%s/<flow>@<flow-version>)\n", pack.Name, pack.Name, pack.Version)
 	return nil
 }

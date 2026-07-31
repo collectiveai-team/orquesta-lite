@@ -109,7 +109,8 @@ func TestTicketedBenchmarkPackCompilesToDurableDynamicLoop(t *testing.T) {
 	if loop == nil || loop.While == nil || loop.Subflow == nil {
 		t.Fatalf("develop_tickets must be a while over a pinned subflow: %+v", loop)
 	}
-	if loop.While.Condition != `item.state.status == "active"` || loop.While.MaxIterations != 20 {
+	bound, literal := loop.While.MaxIterations.LiteralInt()
+	if loop.While.Condition != `item.state.status == "active"` || !literal || bound != 20 {
 		t.Fatalf("unexpected durable loop contract: %+v", loop.While)
 	}
 	if len(loop.Subflow.Steps) != 5 || loop.Subflow.Steps[0].ID != "implement_ticket" || loop.Subflow.Steps[1].ID != "verify_ticket" || loop.Subflow.Steps[4].ID != "update_ticket_plan" {

@@ -354,6 +354,7 @@ Commands:
   reset                 remove .orquestalite state
   update [--check]      download and install the latest release from GitHub
   pack install <dir>    verify a v2 pack and install it into .orquestalite/packs/
+  pack list             list installed packs (name, version, digest, file count)
   flow validate|inspect <ref|path> compile a strict v2 flow without executing it
   flow list             list legacy flows and locally installed versioned pack flows
   flow run <ref|path>   execute v2 flow data (--policy=<ref|path>, --source-key=<stable-key>, key=value...)

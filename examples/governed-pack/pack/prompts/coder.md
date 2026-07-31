@@ -13,8 +13,7 @@ shape is obvious. A minimal shared prerequisite is allowed only when the current
 ticket cannot work without it; report it explicitly in `files_changed` and do
 not add future endpoint behavior.
 
-Preserve completed tickets. Add focused tests for this ticket. Run
-`uv run ruff check .` and `uv run pytest -q`; fix regressions caused by your
+Preserve completed tickets. Add focused tests for this ticket. Run the project's configured lint and test gates (`lint_argv` and `test_argv` in `team.json` — the same commands this flow's gate steps run); fix regressions caused by your
 work. If the ticket was returned after failed verification, address every
 finding embedded in the current state.
 
@@ -22,7 +21,7 @@ Before finishing, write JSON only to `.orquestalite/results/coder.json` with
 exactly this shape:
 
 ```json
-{"ticket_id":"the exact current ticket id","complete":true,"summary":"what changed","files_changed":["path"],"gates":["uv run ruff check .: exit 0","uv run pytest -q: exit 0"],"remaining":[]}
+{"ticket_id":"the exact current ticket id","complete":true,"summary":"what changed","files_changed":["path"],"gates":["<lint command>: exit 0","<test command>: exit 0"],"remaining":[]}
 ```
 
 Do not write a `by-task` result and do not merely print the JSON in your final

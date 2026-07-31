@@ -15,25 +15,14 @@
    "id": "lint",
    "uses": "activity:gate.run@1",
    "with": {
-    "argv": [
-     "uv",
-     "run",
-     "ruff",
-     "check",
-     "."
-    ]
+    "argv": {"$ref": "config.lint_argv"}
    }
   },
   {
    "id": "tests",
    "uses": "activity:gate.run@1",
    "with": {
-    "argv": [
-     "uv",
-     "run",
-     "pytest",
-     "-q"
-    ]
+    "argv": {"$ref": "config.test_argv"}
    }
   },
   {
@@ -148,25 +137,14 @@
    "id": "final_lint",
    "uses": "activity:gate.run@1",
    "with": {
-    "argv": [
-     "uv",
-     "run",
-     "ruff",
-     "check",
-     "."
-    ]
+    "argv": {"$ref": "config.lint_argv"}
    }
   },
   {
    "id": "final_tests",
    "uses": "activity:gate.run@1",
    "with": {
-    "argv": [
-     "uv",
-     "run",
-     "pytest",
-     "-q"
-    ]
+    "argv": {"$ref": "config.test_argv"}
    }
   },
   {
@@ -228,16 +206,12 @@
   },
   {
    "id": "governance_gate",
-   "uses": "activity:gate.run@1",
+   "uses": "activity:gate.assert@1",
+   "if": "steps.governance.output.approved != true",
    "with": {
-    "argv": [
-     "uv",
-     "run",
-     "python",
-     "-c",
-     "import json,sys; data=json.load(open(sys.argv[1])); raise SystemExit(0 if data.get('approved') is True else 1)",
-     ".orquestalite/results/gov_reviewer.json"
-    ]
+    "value": {"$ref": "steps.governance_repair.output.last.approved"},
+    "equals": true,
+    "message": "governance did not approve after the repair cycles"
    }
   }
  ],

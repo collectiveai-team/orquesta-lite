@@ -36,6 +36,31 @@ func EvalBool(expression string, resolve Resolver) (bool, error) {
 	return result, nil
 }
 
+// ExprReferences returns every runtime reference path an expression reads, in
+// order of appearance. An expression that does not lex yields no paths: the
+// compiler reports that as its own diagnostic, and a validator built on this
+// must not invent references out of a broken string.
+//
+// `if` and `while.condition` are raw expression strings, not Values, so
+// IR.ReferencePaths() structurally cannot see through them by walking the
+// value tree. Without this, a whole class of reference — `config.<key>` in a
+// gate's guard being the one that bit — compiled, passed `flow validate`,
+// passed the pre-run namespace check, created the run, and only then died on
+// an unresolvable path partway through the flow.
+func ExprReferences(expression string) []string {
+	tokens, err := lexExpr(expression)
+	if err != nil {
+		return nil
+	}
+	var paths []string
+	for _, token := range tokens {
+		if token.kind == "ref" {
+			paths = append(paths, token.text)
+		}
+	}
+	return paths
+}
+
 func lexExpr(input string) ([]exprToken, error) {
 	var tokens []exprToken
 	for index := 0; index < len(input); {

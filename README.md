@@ -210,6 +210,7 @@ orq-lite factory               resume an interrupted queue (--status, --force, -
 orq-lite factory --resume      retry failed features, reusing their persisted task lists
 orq-lite factory --replan      force a fresh task decomposition for every feature
 orq-lite pack install <dir>    verify a v2 pack and install it into .orquestalite/packs/
+orq-lite pack list             list installed packs and the version unpinned refs resolve to
 orq-lite flow run <ref> [k=v]  run a v2 flow, e.g. development/factory-governed@1 features_path=features.md
 orq-lite flow list             list local v1/v2 flows
 orq-lite serve [--addr A]      web dashboard with live SSE event stream
@@ -387,13 +388,20 @@ pinned IR rather than recompiling changed files.
 
 ```bash
 orq-lite pack install examples/governed-pack/pack
+orq-lite pack list                        # name, version, digest; marks the default version
 orq-lite flow validate development/factory-governed@1
 orq-lite flow inspect development/factory-governed@1
-orq-lite flow run development/factory-governed@1 features_path=features.md \
-  --policy=.orquestalite/packs/development/1/policies/development@2.json  # @2 is the policy file's own revision; the pack version is 1
+orq-lite flow run development/factory-governed@1 features_path=features.md
 orq-lite flow status <run-id>
 orq-lite flow resume <run-id>
 ```
+
+A flow can name its own run policy in `metadata.policy`; the compiler pins it
+into the IR and `flow run` applies it automatically, reporting which one it used
+(`policy=policy:development@3 policy_source=flow-metadata`). `--policy=<ref|path>`
+still wins when you pass it. In `development/factory-governed@1` the pack version
+and the flow version are independent: `development` resolves to the highest
+installed pack, and `development@4/factory-governed@1` pins it explicitly.
 
 `orq-lite flow run` (above) is the recommended path today and is not gated. The governed pack ships all six flows the cutover gate requires (`plan-tickets`, `task-list`, `factory-fast`, `factory-governed`, `issue-fix`, `pr-review`) — five back the CLI aliases and `watch` defaults; `factory-fast` runs standalone or via `factory-governed`'s `fast=true`.
 Separately, the historical commands (`plan`, `run`, `factory`, `review`,

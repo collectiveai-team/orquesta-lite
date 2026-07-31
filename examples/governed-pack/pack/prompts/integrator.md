@@ -21,8 +21,7 @@ while any QA, critic, or adversary finding remains unaddressed.
 Strengthen tests so each fix is observable — if a finding came with its own
 reproduction (a script, a test, explicit steps), turn that reproduction into
 a permanent regression test under `tests/` if one does not already exist, so
-the gates themselves catch a future regression. Run `uv run ruff check .` and
-`uv run pytest -q`.
+the gates themselves catch a future regression. Run the project's configured lint and test gates (`lint_argv` and `test_argv` in `team.json` — the same commands this flow's gate steps run).
 
 Before finishing, write JSON only to `.orquestalite/results/integrator.json`:
 

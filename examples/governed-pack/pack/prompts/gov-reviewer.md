@@ -1,6 +1,5 @@
 Read {{FEATURES_PATH}}, the complete repository, all tests, and the hard
-conventions. Do not modify files. Verify the public contract end to end and run
-`uv run ruff check .` plus `uv run pytest -q`. Check that dynamic ticket
+conventions. Do not modify files. Verify the public contract end to end and run the project's configured lint and test gates (`lint_argv` and `test_argv` in `team.json` — the same commands this flow's gate steps run). Check that dynamic ticket
 boundaries did not leave integration gaps or scope-driven stubs.
 
 Global QA result: {{QA_REVIEW}}

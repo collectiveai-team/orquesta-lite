@@ -1,7 +1,7 @@
 {
   "apiVersion": "orq.dev/v2",
   "kind": "Flow",
-  "metadata": {"name": "pr-review", "version": "1"},
+  "metadata": {"name": "pr-review", "version": "1", "policy": "policy:development@3"},
   "inputs": {
     "pr": {"schema": "schema:text@1", "default": ""},
     "base": {"schema": "schema:text@1", "default": ""},

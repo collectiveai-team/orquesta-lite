@@ -70,12 +70,12 @@ func TestRawInvalidContractRecoversOnSameAgent(t *testing.T) {
 		}
 		return nil
 	}
-	raw, err := Raw(context.Background(), inv, "custom", RoleCall{}, RunContext{TaskID: "T"}, validate)
+	outcome, err := Raw(context.Background(), inv, "custom", RoleCall{}, RunContext{TaskID: "T"}, validate)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if runner.calls != 2 || string(raw) != `{"status":"ok"}` {
-		t.Fatalf("calls=%d raw=%s", runner.calls, raw)
+	if runner.calls != 2 || string(outcome.Output) != `{"status":"ok"}` {
+		t.Fatalf("calls=%d raw=%s", runner.calls, outcome.Output)
 	}
 }
 

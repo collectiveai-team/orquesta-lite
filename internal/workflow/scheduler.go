@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,13 +22,29 @@ var ErrNeedsHuman = errors.New("workflow needs human input")
 
 const maxWorkflowValueBytes = 8 << 20
 
+// whileIterationCeiling is the runtime's hard backstop for a durable loop. A
+// `while` bound may now be data-derived and can extend itself between passes,
+// so a flow whose data says "keep going" forever must still stop. This is not
+// redundant with a pack's own schema bound: a schema protects one pack, this
+// protects the runtime from every flow.
+const whileIterationCeiling = 1000
+
+// whileOutputCapacityHint pre-sizes the aggregate slice. The bound is no longer
+// known as a plain int before the loop starts, and over-allocating from an
+// attacker- or agent-supplied number would be worse than growing the slice.
+const whileOutputCapacityHint = 8
+
 type Runtime struct {
 	Store      *Store
 	Activities *activity.Registry
 	Catalog    flow.Catalog
-	Now        func() time.Time
-	Sleep      func(context.Context, time.Duration) error
-	Jitter     func(time.Duration, int, string) time.Duration
+	// Config is the read-only project configuration exposed to flows through
+	// the `config.<key>` reference namespace. The host populates it from an
+	// explicit whitelist; the runtime never writes to it.
+	Config map[string]any
+	Now    func() time.Time
+	Sleep  func(context.Context, time.Duration) error
+	Jitter func(time.Duration, int, string) time.Duration
 }
 
 type StartOptions struct {
@@ -339,7 +356,10 @@ func (s *executionState) executeForeach(ctx context.Context, step flow.IRStep) (
 		}
 		outputs[result.index] = result.output
 	}
-	raw, _ := json.Marshal(outputs)
+	raw, err := marshalAggregate(step.ID, outputs)
+	if err != nil {
+		return nil, err
+	}
 	aggregate, err := s.runtime.Store.EnsureStep(ctx, s.run.ID, s.scope, step.ID, "", step.Uses.String(), raw)
 	if err != nil {
 		return nil, err
@@ -357,8 +377,24 @@ func (s *executionState) executeWhile(ctx context.Context, step flow.IRStep) (an
 	if err != nil {
 		return nil, err
 	}
-	outputs := make([]any, 0, step.While.MaxIterations)
-	for index := 0; index < step.While.MaxIterations; index++ {
+	outputs := make([]any, 0, whileOutputCapacityHint)
+	// granted is the high-water mark of every bound this loop has resolved.
+	// The bound is re-read each pass so a replan can *raise* it; letting it
+	// fall is what turns a plan-derived budget into a backlog truncator.
+	//
+	// A planner naturally computes "work still to do", which shrinks with every
+	// ticket it finishes, while `index` counts passes and rises. Those two
+	// curves cross well before the backlog is done — 24 tickets at one per pass
+	// with a 25% margin stop at pass 14 with 10 tickets still pending — and the
+	// loop exits normally, so the run reports success over half-built work.
+	// That is the exact ~6-tickets-per-run truncation this feature was written
+	// to eliminate. The prompt now specifies a cumulative total, but a prompt
+	// is guidance and this is arithmetic: a bound that never falls cannot
+	// truncate work the loop was already promised, no matter what the planner
+	// emits. Runaway is still capped by whileIterationCeiling and by the
+	// condition itself.
+	granted := 0
+	for index := 0; ; index++ {
 		child := *s
 		child.item = current
 		child.index = index
@@ -368,6 +404,25 @@ func (s *executionState) executeWhile(ctx context.Context, step flow.IRStep) (an
 			return nil, fmt.Errorf("step %s while: %w", step.ID, evalErr)
 		}
 		if !condition {
+			break
+		}
+		// The bound is resolved inside the loop, against the resolver that
+		// already carries `item` for this pass. On iteration 0 `item` is the
+		// resolved `initial` value, so a data-derived bound works uniformly
+		// from the first pass — and a mid-run replan that raises the budget
+		// actually extends the loop instead of dying at a stale number.
+		//
+		// It is resolved *after* the condition on purpose: a loop that is
+		// already finishing must not be failed by a bound that its final
+		// carried value no longer carries.
+		bound, boundErr := child.whileBound(step)
+		if boundErr != nil {
+			return nil, boundErr
+		}
+		if bound > granted {
+			granted = bound
+		}
+		if index >= granted {
 			break
 		}
 		current, err = child.executeInstance(ctx, step, fmt.Sprintf("while-%06d", index))
@@ -387,7 +442,10 @@ func (s *executionState) executeWhile(ctx context.Context, step flow.IRStep) (an
 		}
 		outputs = append(outputs, current)
 	}
-	raw, _ := json.Marshal(outputs)
+	raw, err := marshalAggregate(step.ID, outputs)
+	if err != nil {
+		return nil, err
+	}
 	aggregate, err := s.runtime.Store.EnsureStep(ctx, s.run.ID, s.scope, step.ID, "", step.Uses.String(), raw)
 	if err != nil {
 		return nil, err
@@ -398,6 +456,62 @@ func (s *executionState) executeWhile(ctx context.Context, step flow.IRStep) (an
 		}
 	}
 	return outputs, nil
+}
+
+// marshalAggregate encodes a loop's or subflow's collected outputs for durable
+// storage, surfacing both ways the encoding can go wrong.
+//
+// The marshal error used to be discarded, and the size was checked only for
+// per-step inputs and per-activity outputs — never for the aggregate that
+// accumulates one entry per pass. Both matter more now that a plan-derived
+// bound admits up to 200 passes rather than 20: a truncated or unwritten
+// aggregate is not a cosmetic loss, because `steps.<loop>.output.last...` is
+// exactly what the plan-completion gate asserts on. A gate reading a mangled
+// aggregate is the silently-wrong verdict the gate exists to prevent.
+func marshalAggregate(stepID string, outputs any) ([]byte, error) {
+	raw, err := json.Marshal(outputs)
+	if err != nil {
+		return nil, fmt.Errorf("step %s: encode aggregate: %w", stepID, err)
+	}
+	if len(raw) > maxWorkflowValueBytes {
+		return nil, fmt.Errorf("step %s aggregate is %d bytes, over the %d limit", stepID, len(raw), maxWorkflowValueBytes)
+	}
+	return raw, nil
+}
+
+// whileBound resolves this pass's iteration bound and rejects anything the
+// loop cannot safely run: a non-numeric or non-integer value, a value below 1,
+// or one above whileIterationCeiling.
+func (s *executionState) whileBound(step flow.IRStep) (int, error) {
+	resolved, err := flow.ResolveValue(step.While.MaxIterations, s.resolve)
+	if err != nil {
+		return 0, fmt.Errorf("step %s while maxIterations: %w", step.ID, err)
+	}
+	bound, ok := integerValue(resolved)
+	if !ok {
+		return 0, fmt.Errorf("step %s while maxIterations must resolve to an integer, got %v", step.ID, resolved)
+	}
+	if bound < 1 || bound > whileIterationCeiling {
+		return 0, fmt.Errorf("step %s while maxIterations resolved to %d, which is outside 1..%d", step.ID, bound, whileIterationCeiling)
+	}
+	return bound, nil
+}
+
+// integerValue accepts the numeric forms a resolved reference can carry —
+// json.Number from durable state, or a plain Go number from a literal — and
+// reports false for anything that is not a whole number.
+//
+// It delegates to flow.WholeNumber so the loop bound and `"type":"integer"`
+// schema validation agree on what an integer is. They used to disagree: both
+// routed json.Number through Int64(), so a planner emitting the schema-valid
+// `"iteration_budget": 8.0` failed the bound check and killed the run. Fixing
+// one side alone would only have moved the crash to the other.
+func integerValue(value any) (int, bool) {
+	number, ok := flow.WholeNumber(value)
+	if !ok {
+		return 0, false
+	}
+	return int(number), true
 }
 
 func (s *executionState) executeInstance(ctx context.Context, step flow.IRStep, foreachKey string) (any, error) {
@@ -442,7 +556,10 @@ func (s *executionState) executeInstance(ctx context.Context, step flow.IRStep, 
 		if err != nil {
 			return nil, err
 		}
-		raw, _ := json.Marshal(outputs)
+		raw, marshalErr := marshalAggregate(step.ID, outputs)
+		if marshalErr != nil {
+			return nil, marshalErr
+		}
 		if err = s.runtime.Store.CompleteVirtualStep(ctx, stored, raw); err != nil {
 			return nil, err
 		}
@@ -813,6 +930,12 @@ func (s *executionState) resolve(path string) (any, bool) {
 		}
 		current = s.index
 		parts = parts[1:]
+	case "config":
+		if len(parts) != 2 {
+			return nil, false
+		}
+		value, ok := s.runtime.Config[parts[1]]
+		return value, ok
 	case "attempt":
 		return 0, true
 	case "run":
@@ -822,16 +945,43 @@ func (s *executionState) resolve(path string) (any, bool) {
 		return nil, false
 	}
 	for _, part := range parts {
-		object, ok := current.(map[string]any)
-		if !ok {
-			return nil, false
-		}
-		current, ok = object[part]
-		if !ok {
+		switch container := current.(type) {
+		case map[string]any:
+			value, ok := container[part]
+			if !ok {
+				return nil, false
+			}
+			current = value
+		case []any:
+			index, ok := arrayIndex(part, len(container))
+			if !ok {
+				return nil, false
+			}
+			current = container[index]
+		default:
 			return nil, false
 		}
 	}
 	return current, true
+}
+
+// arrayIndex resolves one path segment against an array: a decimal index, or
+// `last` for the final element. A `while` step aggregates every pass into an
+// array, and `last` is what lets a flow assert on the value the loop actually
+// ended with instead of shelling out to a JSON parser. An empty array has no
+// last element, so the reference simply does not resolve.
+func arrayIndex(part string, length int) (int, bool) {
+	if part == "last" {
+		if length == 0 {
+			return 0, false
+		}
+		return length - 1, true
+	}
+	index, err := strconv.Atoi(part)
+	if err != nil || index < 0 || index >= length {
+		return 0, false
+	}
+	return index, true
 }
 
 func validateInputs(specs map[string]flow.InputSpec, inputs map[string]any, schemas map[string]*flow.Schema) error {

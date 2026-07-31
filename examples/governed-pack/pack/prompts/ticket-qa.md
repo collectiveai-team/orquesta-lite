@@ -10,9 +10,7 @@ Coder report:
 
 Inspect the actual diff and repository. Treat the coder report as an untrusted
 claim. Exercise every acceptance criterion for the current ticket, including
-sad paths and lifecycle behavior that can be tested at this stage. Run
-`uv run ruff check .` and `uv run pytest -q` and record the exact commands in
-`gates`.
+sad paths and lifecycle behavior that can be tested at this stage. Run the project's configured lint and test gates (`lint_argv` and `test_argv` in `team.json` — the same commands this flow's gate steps run) and record the exact commands you ran in `gates`.
 
 Do not fail the ticket merely because pending tickets are not implemented. Do
 fail it for regressions to completed tickets, scope leakage into pending

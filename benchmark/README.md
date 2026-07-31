@@ -137,6 +137,13 @@ orq-lite flow run development/factory-governed@2 \
   --source-key=taskflow-ticketed-r1
 ```
 
+`--policy` is explicit here on purpose: this benchmark pack is a frozen
+artifact whose flows predate `metadata.policy`, so without the flag they fall
+back to the engine default's 32-attempt budget — the exact failure this
+benchmark round recorded as operator error. Current packs (the `development@4`
+shipped in `examples/governed-pack/`) declare their policy in each flow's
+metadata and load it with no flag; pass `--policy` there only to override it.
+
 The durable unit is now `develop_tickets/while-N/develop-ticket`, not one coder
 session over the complete contract. The final integrated QA, critic, repair,
 gates, and governance stages remain as defense in depth.
