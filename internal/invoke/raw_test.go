@@ -39,7 +39,13 @@ func (r *timeoutResultRunner) Run(_ context.Context, _ runner.Spec) (*runner.Res
 	return &runner.Result{TimedOut: true, ResultExists: false, ExitCode: -1}, nil
 }
 
-func TestRawInvalidContractFallsBack(t *testing.T) {
+// TestRawInvalidContractRecoversOnSameAgent covers the corrective-retry path:
+// agent "a"'s first attempt fails validation, and its own corrective retry
+// (same agent, resumed session) succeeds — agent "b" is never invoked. This
+// used to demonstrate fallback to a different agent before runValidated grew
+// a same-agent corrective retry for invalid_contract/result_missing; the
+// call count (2) is now "a" tried twice, not "a" once then "b" once.
+func TestRawInvalidContractRecoversOnSameAgent(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0o755); err != nil {
 		t.Fatal(err)
@@ -85,8 +91,12 @@ func TestRawAllInvalidReturnsStableContractError(t *testing.T) {
 		Dir:   dir, Runner: runner, Fallback: fallback.NewCaller(fallback.Config{MaxAttempts: 2}),
 	}
 	_, err := Raw(context.Background(), inv, "custom", RoleCall{}, RunContext{TaskID: "T"}, func([]byte) error { return fmt.Errorf("always invalid") })
-	if !errors.Is(err, ErrInvalidContract) || runner.calls != 2 {
-		t.Fatalf("err=%v calls=%d", err, runner.calls)
+	// Every attempt fails validation, so each agent now exhausts its own
+	// corrective-retry budget (1 initial + contractRetryBudget corrective) before
+	// fc.Call falls through to the next agent: (1+2)*2 agents = 6 calls total.
+	wantCalls := (1 + contractRetryBudget) * 2
+	if !errors.Is(err, ErrInvalidContract) || runner.calls != wantCalls {
+		t.Fatalf("err=%v calls=%d want=%d", err, runner.calls, wantCalls)
 	}
 }
 

@@ -42,3 +42,24 @@ Las Tasks 12–21 originales fueron reemplazadas por el plan ejecutable
 - [ ] Task 23: Batch correctness bugs
 - [ ] Task 24: Refresh documentación
 - [ ] Task 25: Verificación de release
+- [x] Task 26: `invalid_contract`/`result_missing` en `agent.invoke@1` eran
+      terminales sin retry real cuando el rol tiene un solo agente en su chain
+      (sin fallback). Hallazgo (2026-07-28/31, ronda 4, 6 intentos fallidos
+      entre qwen/minimax/luna, 3 firmas de error): la policy-level retry nunca
+      puede aplicar porque `agent.invoke@1` es `EffectAtMostOnce`
+      (scheduler.go gatea `mayRetryEffect` a Pure/Idempotent/Reconcilable).
+      **Fix implementado (2026-07-31)** en `internal/invoke/role.go`
+      `runValidated`: dentro del closure que se le pasa a `fallback.Caller`,
+      cuando `fallbackReason` es `invalid_contract` o `result_missing` (nunca
+      `rate_limit`/`timeout`/`auth_failed`, y nunca para roles
+      `BestEffortRoles`), hasta `contractRetryBudget = 2` reintentos extra del
+      MISMO agente, resumiendo su `SessionID` efímero (capturado en variable
+      local, sin tocar el `SessionStore` persistente hasta que un intento
+      correctivo realmente tenga éxito) con un prompt correctivo
+      (`correctivePrompt`) que cita el error real en vez de repetir el prompt
+      original. El fallback multi-agente existente queda intacto (agente
+      agota su propio presupuesto antes de que `fc.Call` avance al
+      siguiente). 9 tests nuevos en `internal/invoke/role_contract_retry_test.go`
+      + 2 tests existentes actualizados (`raw_test.go`,
+      `commands/runcmd_test.go`) que asumían "un intento por agente". Suite
+      completa (`go build`, `go vet`, `go test ./...`) verde.

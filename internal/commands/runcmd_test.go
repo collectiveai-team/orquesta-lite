@@ -863,7 +863,10 @@ func TestCallRole_AgentRunEventFields(t *testing.T) {
 // TestCallRole_FallsBackOnResultMissing verifies that when the first agent in a
 // two-agent chain does not write a result file, callRole falls back to the second
 // agent (which does write the file) and returns nil.
-// It also asserts that two agent_run events appear in the log, in order.
+// agent_a never writes a result no matter how many times it runs, so it
+// exhausts its own corrective-retry budget (1 initial + contractRetryBudget)
+// before fc.Call moves on to agent_b, which succeeds on its first try. It also
+// asserts the resulting agent_run events appear in the log, in order.
 func TestCallRole_FallsBackOnResultMissing(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("posix shell script test, skipping on windows")
@@ -960,11 +963,17 @@ exit 0
 		}
 	}
 
-	if len(agentNames) != 2 {
-		t.Fatalf("expected 2 agent_run events, got %d: %v", len(agentNames), agentNames)
+	// agent_a: 1 initial + 2 corrective retries (internal/invoke's
+	// contractRetryBudget) before fc.Call falls through; agent_b: 1 (succeeds).
+	want := []string{"agent_a", "agent_a", "agent_a", "agent_b"}
+	if len(agentNames) != len(want) {
+		t.Fatalf("expected %d agent_run events, got %d: %v", len(want), len(agentNames), agentNames)
 	}
-	if agentNames[0] != "agent_a" || agentNames[1] != "agent_b" {
-		t.Errorf("agent_run order = %v, want [agent_a, agent_b]", agentNames)
+	for i, name := range want {
+		if agentNames[i] != name {
+			t.Errorf("agent_run order = %v, want %v", agentNames, want)
+			break
+		}
 	}
 }
 

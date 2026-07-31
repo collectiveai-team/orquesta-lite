@@ -265,6 +265,35 @@ func (inv *RoleInvoker) run(ctx context.Context, roleName string, role config.Ro
 	return inv.runValidated(ctx, roleName, role, agentOverride, prompt, relResultPath, absResultPath, rc, nil)
 }
 
+// contractRetryBudget bounds the extra same-agent attempts runValidated makes
+// after a result is missing entirely or fails schema validation. Each
+// corrective attempt resumes the agent's own just-failed session with a
+// targeted prompt ("write the JSON to <path>") instead of re-running the
+// whole task from scratch — the agent typically already did the real work
+// and only skipped emitting the artifact. Intentionally a constant, not a
+// per-role config field: it is a cost-guard against a genuinely broken
+// agent/prompt looping forever, not a knob any team.json needs to tune.
+const contractRetryBudget = 2
+
+// correctivePrompt builds the retry prompt for a same-agent corrective
+// attempt. reason is "invalid_contract" or "result_missing" — the only two
+// fallback reasons that route through this retry (see runValidated).
+func correctivePrompt(roleName, absResultPath, reason string, validationErr error) string {
+	if reason == "invalid_contract" {
+		return fmt.Sprintf(
+			"Your previous attempt wrote a result file to %s but it failed schema validation.\n"+
+				"Validation error: %v\n\n"+
+				"Do NOT redo any completed work. Fix the JSON at %s so it satisfies the "+
+				"required schema for role %q, then write the corrected JSON to exactly that path.",
+			absResultPath, validationErr, absResultPath, roleName)
+	}
+	return fmt.Sprintf(
+		"Your previous attempt for role %q appears to have completed the required work but "+
+			"did not write the result file.\n\n"+
+			"Do NOT redo any completed work. Write your result as valid JSON to exactly: %s",
+		roleName, absResultPath)
+}
+
 // runValidated runs the fallback chain and considers a result successful only
 // after validate accepts it. This keeps invalid_contract inside the same
 // per-agent fallback loop as missing results and provider failures.
@@ -289,6 +318,7 @@ func (inv *RoleInvoker) runValidated(ctx context.Context, roleName string, role 
 
 	var lastResult *runner.Result
 	var lastErr error
+	var lastValidationErr error
 	var lastFallbackReason string
 	var triedAgents []string
 	fc := inv.Fallback
@@ -345,6 +375,7 @@ func (inv *RoleInvoker) runValidated(ctx context.Context, roleName string, role 
 			if validationErr := validate(absResultPath); validationErr != nil {
 				shouldFallback = true
 				fallbackReason = "invalid_contract"
+				lastValidationErr = validationErr
 				lastErr = fmt.Errorf("agent %q (role %q) wrote invalid contract to %s: %w", agentName, roleName, relResultPath, validationErr)
 			}
 		}
@@ -354,6 +385,56 @@ func (inv *RoleInvoker) runValidated(ctx context.Context, roleName string, role 
 				lastErr = fmt.Errorf("agent %q (role %q) did not write %s: exit=%d; detail: %s",
 					agentName, roleName, relResultPath, r.ExitCode, errorDetail(r))
 			}
+		}
+
+		artifactsDir := inv.saveArtifacts(roleName, agentName, ag, spec, prompt, r, rc)
+		inv.logAgentRun(roleName, agentName, ag, spec, r, fallbackReason, rc, artifactsDir)
+
+		// A missing/invalid result is often a cheap-to-fix slip, not a genuine
+		// failure: the benchmark evidence motivating this loop showed agents
+		// that had already done the real work (tests passing) but skipped
+		// emitting the artifact, or wrote a result one field short of the
+		// schema. Give the SAME agent a bounded number of extra, corrective
+		// shots — resuming its own just-failed session with a targeted prompt
+		// — before accepting the failure and letting fc.Call fall through to
+		// the next agent (or terminate). rate_limit/timeout/auth_failed never
+		// enter this loop; they already have correct handling below/in
+		// fallback.Caller and must not be retried this way.
+		isBestEffort := inv.BestEffortRoles[roleName]
+		for attempt := 0; attempt < contractRetryBudget && !isBestEffort && shouldFallback &&
+			(fallbackReason == "invalid_contract" || fallbackReason == "result_missing"); attempt++ {
+			cSpec := spec
+			cSpec.Prompt = correctivePrompt(roleName, absResultPath, fallbackReason, lastValidationErr)
+			cSpec.ResumeSessionID = r.SessionID // ephemeral: the attempt that just failed
+
+			cr, cErr := inv.runner().Run(ctx, cSpec)
+			if cErr != nil {
+				return fallback.Outcome{}, cErr
+			}
+			r = cr
+			lastResult = cr
+
+			shouldFallback, fallbackReason = Classify(cr)
+			if !shouldFallback && validate != nil {
+				if validationErr := validate(absResultPath); validationErr != nil {
+					shouldFallback = true
+					fallbackReason = "invalid_contract"
+					lastValidationErr = validationErr
+					lastErr = fmt.Errorf("agent %q (role %q) wrote invalid contract to %s: %w", agentName, roleName, relResultPath, validationErr)
+				}
+			}
+			if shouldFallback {
+				lastFallbackReason = fallbackReason
+				if fallbackReason != "invalid_contract" {
+					lastErr = fmt.Errorf("agent %q (role %q) did not write %s: exit=%d; detail: %s",
+						agentName, roleName, relResultPath, cr.ExitCode, errorDetail(cr))
+				}
+			}
+
+			crc := rc
+			crc.Attempt = rc.Attempt + attempt + 1
+			cArtifactsDir := inv.saveArtifacts(roleName, agentName, ag, cSpec, cSpec.Prompt, cr, crc)
+			inv.logAgentRun(roleName, agentName, ag, cSpec, cr, fallbackReason, crc, cArtifactsDir)
 		}
 
 		inv.recordHealth(roleName, agentName, shouldFallback, fallbackReason)
@@ -373,8 +454,6 @@ func (inv *RoleInvoker) runValidated(ctx context.Context, roleName string, role 
 				_ = inv.Sessions.Delete(key, roleName, agentName)
 			}
 		}
-		artifactsDir := inv.saveArtifacts(roleName, agentName, ag, spec, prompt, r, rc)
-		inv.logAgentRun(roleName, agentName, ag, spec, r, fallbackReason, rc, artifactsDir)
 
 		out := fallback.Outcome{
 			RateLimited:    r.RateLimited,
