@@ -88,6 +88,18 @@ Use the lighter flows for throwaway work, internal tooling, or when a human
 reviews every diff anyway. The review/issue flows (`pr_review`, `issue_fix`)
 are orthogonal — wire them alongside whatever build flow you choose.
 
+**Do not reach for `fast=true` to get "the governed loop, but quicker".** It is a
+different flow: `factory-governed@1` with `fast=true` replaces the per-ticket
+loop with a *single* `batch_coder` invocation for the whole plan, and the
+integrated review is gated on `inputs.fast != true` — so `adversary`, `critic`,
+`gov_reviewer`, the governance repair cycle and the fail-closed
+`governance_gate` never run. What survives is one `qa` verdict and up to three
+integrator repairs inside `fast-batch`. One flag turns off the stage that
+justifies the pack, and the run still reports `succeeded`. If you need the speed, run `fast=true` and then
+audit the result with a second run of `review-existing@1` over the tree, which
+carries the adversarial pass. Anything you would ship: leave `fast` at its
+default.
+
 What to add per choice: the governed pack needs its own install + strong
 reviewer models (§4); the legacy flows need their `flows.json` + role prompts
 copied from the matching example and adapted to your tree. Either way, §2–§3
@@ -149,18 +161,54 @@ Triage in this order:
    is "ignore list removed, linter green on the full rule set". The loop is
    good at exactly this kind of mechanical, verifiable work.
 
-### 2d. Re-verify
+### 2d. Re-verify from a clean checkout, not from your working tree
 
-Both commands must exit 0 from a fresh checkout state before you continue.
+Both commands must exit 0 — and you have to prove it somewhere other than the
+directory you have been working in:
+
+```bash
+git worktree add ../green-probe HEAD && cd ../green-probe
+<your lint_argv>  &&  <your test_argv>
+```
+
+This is not ceremony. §1 told you to gitignore `team.json`, `prompts/`,
+`schemas/` and `flows.json`, and those two instructions interact: a suite that
+reads local untracked config is green for you and red for every agent. In this
+repo, two tests read `../../flows.json`; the suite passed in the author's tree
+and failed in a fresh worktree, which would have killed the first governed run
+at its first gate for a reason that does not exist on the author's machine.
+
+**Then prove the gate can fail.** A gate that cannot go red is worse than no
+gate, because everything downstream reads its green as evidence. Break something
+on purpose — a deliberate lint violation, a test asserting `1 == 2` — and confirm
+a non-zero exit before you delete it. Gates written from memory of the right
+incantation are exactly the ones that pass on the file they exist to reject.
 
 ## 3. Configure `team.json`
 
 - **Agents**: one entry per provider/model, `dangerously_skip_permissions: true`
   (agents must edit files unattended), a `rate_limit_pattern` per provider.
-- **Roles**: bind each role to an ordered agent chain (primary + fallbacks on
-  different providers, so a rate limit routes around instead of waiting).
-  Spend the strongest model on `parser`, `critic`, `reviewer` (judgment);
-  mid-tier is usually fine for `coder`/`tester` (volume).
+- **Roles**: bind each role to an ordered agent chain — **at least two agents,
+  on different providers**. Spend the strongest model on `parser`, `critic`,
+  `reviewer` (judgment); mid-tier is usually fine for `coder`/`tester` (volume).
+
+  The second agent is not only a rate-limit escape hatch; it is the **only**
+  retry a role gets. With the production wiring, each agent in a chain receives
+  exactly one attempt (`fallback.Config.MaxAttempts` is unset, so it defaults to
+  the chain length and `perAgent` works out to 1). So a single-agent role turns
+  any `invalid_contract` or missing result into a terminal failure of the whole
+  run, and the policy's `retries` block does **not** cover it: `agent.invoke@1`
+  is `EffectAtMostOnce`, and the scheduler only retries `Pure`/`Idempotent`
+  effects. Seeing `retries: {transient: {maxAttempts: 3}}` in a policy and
+  assuming agent invocations retry is the trap — they never do.
+
+  This cost one project six full relaunches, 30–80 minutes each, across three
+  different error signatures before anyone looked at the chain length. Note also
+  that the retry you get is a *provider switch*, not a corrective re-prompt: on
+  any fallback the resumed session is dropped, so the next agent starts fresh
+  without the validation error that killed the first. A same-agent corrective
+  retry is tracked as Task 26 in `tasks/todo.md` and is not implemented yet —
+  until it is, chain length is your only protection.
 - **Gates** — the commands you just proved green:
   - Must be runnable via `sh -c` from the **repo root**. In a monorepo, prefix
     with the subdir: `cd backend && uv run --extra dev pytest -q`.
@@ -191,7 +239,8 @@ you don't rediscover them the hard way. Its shape:
 
 ```
 plan_tickets (budget-sized)
-└─ develop_tickets  [per ticket: coder → ticket_qa → replan]
+└─ develop_tickets  [per ticket: coder → ticket_qa → lint+tests → replan]
+                     ^ the gates run only when ticket_qa approves
 integrated_review:
    lint → tests → qa → adversary → critic
    → integration_repair   [loop: reconcile findings]
@@ -221,14 +270,52 @@ redirects:
 references it refuses to start — before the run is created, rather than
 twenty minutes in.
 
+**Confirm which policy actually loaded.** Every pack flow declares
+`metadata.policy`, so `flow run` needs no `--policy`; the run line prints what
+resolved:
+
+```
+policy=policy:development@3 policy_source=flow-metadata
+```
+
+`policy_source=default` on a governed run means you are running on the engine
+default's 32 run-wide attempts, which stops a governed run at about six tickets.
+Check that token on your first run: a governed build that dies early with a
+budget error is almost always this, not the planner's model. (Precedence is
+`--policy` > `metadata.policy` > engine default; an explicit flag still wins.)
+
+If you write your own policy, **derive the attempt budgets from the loop's
+ceiling instead of picking a round number**: `iteration_budget`'s schema maximum
+times the agent invocations per pass (3, in `develop-ticket@1`). Any value below
+that product is a covert cap on how many tickets a run can finish, and it fails
+in the most confusing way possible — the error names attempts while the casualty
+is your backlog. `maxAgentAttempts: 48` looked generous and was a 15-ticket cap.
+And `maxCostUSD` only brakes if your model has an entry in
+`internal/cost/prices.go`; without one, spend accumulates as 0 and the cap never
+fires, leaving `maxDurationSeconds` as your only real limit.
+
 **Model placement is the whole game.** The review roles are where bugs get
 caught — across three benchmark rounds they were ~78% of a governed run's cost,
 and that spend *is* the product, not overhead. Put a strong coder on
 `coder`/`integrator` and **Opus (or your best model) on the test/gate roles**:
 `ticket_qa`, `qa`, `adversary`, `critic`, `gov_reviewer`. A cheap reviewer is a
-decorative reviewer.
+decorative reviewer — and not only because its judgment is worse. Every one of
+those roles is bound to an `outputSchema`, and contract compliance is what
+degrades first on a smaller model: what you get is not a cheaper verdict but a
+step that failed validation and returned its `fallbackOutput`.
+
+**If you put a non-Claude model on `adversary`, watch the prompt's vocabulary.**
+Asking for "race conditions" or "duplicate attempts" can trip a provider's
+content filter and kill a legitimate review task. Phrasing the same request as
+an idempotency and correctness review gets the work done without the block.
 
 ### Why the flow is shaped this way (field lessons — earned, not theorized)
+
+*Verified against the `development@4` pack and the engine in this repo. Every
+claim below was true of a specific run; some are statements about code that
+moves. If you are on a different version, re-check before trusting a line —
+during this section's last revision, two observations from a v0.3.5 tree turned
+out not to apply here, and one of ours did not apply there.*
 
 A governed run that converged in one round with unanimous approvals still
 shipped 10 confirmed bugs on its first real project. Later rounds shipped a
@@ -267,8 +354,13 @@ is for":
    The durable fix is the `issue-fix` pattern: turn each reproduction into a
    **failing test** in `tests/`, and let the standard gates hold the line —
    red until the real fix lands, and governance can't approve past a red suite.
-   (This is the round-4 hardening; wire it in as a step that materializes
-   reproductions into tests before the repair loop.)
+
+   **This one is not in the pack yet** — do not assume it ships. `adversary`
+   findings still reach the integrator as text. Until a step materializes each
+   reproduction into a test under `tests/` before the repair loop, treat a
+   governance approval over an adversary finding as unverified and read the
+   integrator's diff yourself: check it touched every file the findings name,
+   not just the easy ones.
 6. **QA must exercise old flows black-box, not read new tests.** A build's own
    tests pass by construction. The `qa` role starts the app and runs
    pre-existing happy paths against every touched surface.
@@ -326,21 +418,46 @@ Then launch (`orq-lite factory features.md`, or
 the dashboard. Interrupted or failed queues resume with `orq-lite factory`
 (`--resume` to retry failures, `--replan` to re-decompose).
 
+A v2 `flow run` resumes differently, and getting this wrong is expensive: pass
+`--source-key` so a repeat launch cannot start a second run of the same work,
+and retake an interrupted run with `orq-lite flow resume <run-id>`, which does
+not re-execute completed steps. **Never set a shell timeout on a governed run in
+the background** — it lasts hours, and the timeout kills it. Before relaunching
+anything, look at what is already done:
+
+```bash
+sqlite3 .orquestalite/workflows.db "select step_id,status from step_runs;"
+```
+
+There is usually more than it looks: the run that prompted this paragraph had
+already finished planning, implementation and both gates. Starting fresh instead
+of resuming re-pays the planner every time — six relaunches on one project burned
+about 30 minutes of Opus that produced no code. Two states behave differently: a
+run in terminal `failed` re-executes but its failed step fails again, while one
+killed mid-step asks for `orq-lite flow approve` first, because `agent.invoke@1`
+is `EffectAtMostOnce` and the runtime cannot know whether the interrupted call
+had already taken effect.
+
 ## Quick checklist
 
 - [ ] git repo, clean tree; `orq-lite`, provider CLIs, `gh` authenticated headless
 - [ ] `orq-lite init`; generated config present, `.gitignore` entries committed
 - [ ] toolchain pinned (interpreter version, single lockfile)
-- [ ] full test suite green at HEAD, self-contained (no live infra)
+- [ ] full test suite green at HEAD, self-contained (no live infra), **proved
+      green from a fresh worktree or clone**, not only from your working tree
+- [ ] each gate proved able to fail (break something on purpose, confirm non-zero)
 - [ ] lint at zero: false positives configured away, auto-fixes applied **and
       re-tested**, legacy debt explicitly baselined + queued as a cleanup feature
-- [ ] `team.json`: agent fallback chains, repo-root self-contained gate
+- [ ] `team.json`: **every role has ≥2 agents on different providers** (a
+      single-agent role has no retry at all), repo-root self-contained gate
       commands, `conventions_file`
 - [ ] (governed) started from `examples/governed-pack/` (v2 `factory-governed@1`);
-      pack installed under `.orquestalite/packs/development/4/`, strong models on
-      the test/gate roles (`ticket_qa`/`qa`/`adversary`/`critic`/`gov_reviewer`),
-      each review role's `result_path` + `steps.<role>.output` wiring verified,
-      `coder` timeout sized to the heaviest ticket
+      pack installed under `.orquestalite/packs/development/4/`, `lint_argv` +
+      `test_argv` declared, strong models on the test/gate roles
+      (`ticket_qa`/`qa`/`adversary`/`critic`/`gov_reviewer`), each review role's
+      `result_path` + `steps.<role>.output` wiring verified, `coder` timeout
+      sized to the heaviest ticket, `fast` left at its default
+- [ ] (governed) first run prints `policy_source=flow-metadata`, not `=default`
 - [ ] `features.md`: preamble contract, one `## ` per vertical slice, checkable
       acceptance criteria, dependency order, 3–5 per batch
 - [ ] `orq-lite doctor` all green, everything committed, then run
