@@ -192,23 +192,31 @@ incantation are exactly the ones that pass on the file they exist to reject.
   on different providers**. Spend the strongest model on `parser`, `critic`,
   `reviewer` (judgment); mid-tier is usually fine for `coder`/`tester` (volume).
 
-  The second agent is not only a rate-limit escape hatch; it is the **only**
-  retry a role gets. With the production wiring, each agent in a chain receives
-  exactly one attempt (`fallback.Config.MaxAttempts` is unset, so it defaults to
-  the chain length and `perAgent` works out to 1). So a single-agent role turns
-  any `invalid_contract` or missing result into a terminal failure of the whole
-  run, and the policy's `retries` block does **not** cover it: `agent.invoke@1`
-  is `EffectAtMostOnce`, and the scheduler only retries `Pure`/`Idempotent`
-  effects. Seeing `retries: {transient: {maxAttempts: 3}}` in a policy and
-  assuming agent invocations retry is the trap — they never do.
+  The second agent is not only a rate-limit escape hatch. With the production
+  wiring each agent in a chain gets exactly one *fallback* attempt
+  (`fallback.Config.MaxAttempts` is unset, so it defaults to the chain length and
+  `perAgent` works out to 1), and the policy's `retries` block does **not** add
+  any: `agent.invoke@1` is `EffectAtMostOnce`, and the scheduler only retries
+  `Pure`/`Idempotent` effects. Seeing `retries: {transient: {maxAttempts: 3}}` in
+  a policy and assuming agent invocations retry is the trap — they never do.
 
-  This cost one project six full relaunches, 30–80 minutes each, across three
-  different error signatures before anyone looked at the chain length. Note also
-  that the retry you get is a *provider switch*, not a corrective re-prompt: on
-  any fallback the resumed session is dropped, so the next agent starts fresh
-  without the validation error that killed the first. A same-agent corrective
-  retry is tracked as Task 26 in `tasks/todo.md` and is not implemented yet —
-  until it is, chain length is your only protection.
+  Two failure classes get different treatment, and the difference decides how
+  much chain length matters:
+
+  - **Contract failures** (`invalid_contract`, `result_missing`) get up to two
+    same-agent corrective retries before any fallback: the runtime reopens the
+    session of the attempt that just failed and re-prompts it with the actual
+    validation error, telling it not to redo completed work
+    (`contractRetryBudget` in `internal/invoke/role.go`). Roles marked
+    best-effort are excluded. Before this existed, a single-agent role turned any
+    schema violation into a terminal failure of the whole run — it cost one
+    project six relaunches, 30–80 minutes each, across three different error
+    signatures before anyone looked at the chain length.
+  - **Everything else** — timeouts, non-zero exits, rate limits, a model that
+    simply cannot do the task — has no same-agent retry. The next agent in the
+    chain is the entire recovery path, and it starts from a fresh session. That
+    is what the second agent buys you, and why it should be a different
+    provider.
 - **Gates** — the commands you just proved green:
   - Must be runnable via `sh -c` from the **repo root**. In a monorepo, prefix
     with the subdir: `cd backend && uv run --extra dev pytest -q`.
