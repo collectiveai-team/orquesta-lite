@@ -50,8 +50,8 @@ func newConfig(dir string, enabled map[ItemType]bool, l lister) (Config, *State)
 		Interval:   time.Hour, // unused; tests call Tick directly
 		Enabled:    enabled,
 		Lister:     l,
-		Intake:     func(context.Context, string) error { return nil },
-		Review:     func(context.Context, string) error { return nil },
+		Trigger:    func(context.Context, Trigger) error { return nil },
+		FlowRefs:   map[ItemType]string{ItemIssue: "development/issue-fix@1", ItemPR: "development/pr-review@1"},
 	}, state
 }
 
@@ -59,6 +59,11 @@ type lister = interface {
 	WhoAmI(context.Context) (string, error)
 	ListIssues(context.Context, time.Time) ([]Item, error)
 	ListPRs(context.Context, time.Time) ([]Item, error)
+}
+
+func Tick(ctx context.Context, cfg Config, state *State) error {
+	ownUser, _ := cfg.Lister.WhoAmI(ctx)
+	return tick(ctx, cfg, state, ownUser)
 }
 
 func at(t time.Time, n, title, author string) Item {
@@ -80,8 +85,8 @@ func TestTick_AdvancesCursorAndDoesNotReprocess(t *testing.T) {
 	var called []string
 	enabled := map[ItemType]bool{ItemIssue: true}
 	cfg, state := newConfig(dir, enabled, l)
-	cfg.Intake = func(_ context.Context, body string) error {
-		called = append(called, body)
+	cfg.Trigger = func(_ context.Context, trigger Trigger) error {
+		called = append(called, trigger.Inputs["body"].(string))
 		return nil
 	}
 	// Supply issue bodies.
@@ -141,7 +146,7 @@ func TestTick_OnlyIssuesEnabledDoesNotPollPRs(t *testing.T) {
 	}
 }
 
-func TestTick_NewIssueTriggersIntake_NewPRTriggersReview(t *testing.T) {
+func TestTick_NewIssueAndPRTriggerTheirFlows(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	l := &fakeLister{
@@ -156,12 +161,13 @@ func TestTick_NewIssueTriggersIntake_NewPRTriggersReview(t *testing.T) {
 	var intakes, reviews []string
 	enabled := map[ItemType]bool{ItemIssue: true, ItemPR: true}
 	cfg, state := newConfig(dir, enabled, l)
-	cfg.Intake = func(_ context.Context, body string) error {
-		intakes = append(intakes, body)
-		return nil
-	}
-	cfg.Review = func(_ context.Context, pr string) error {
-		reviews = append(reviews, pr)
+	cfg.Trigger = func(_ context.Context, trigger Trigger) error {
+		switch trigger.Inputs["type"] {
+		case ItemIssue:
+			intakes = append(intakes, trigger.Inputs["body"].(string))
+		case ItemPR:
+			reviews = append(reviews, trigger.Inputs["number"].(string))
+		}
 		return nil
 	}
 	if err := Tick(context.Background(), cfg, state); err != nil {
@@ -221,7 +227,7 @@ func TestTick_ExactProviderUpdateIsDeduplicated(t *testing.T) {
 	var intakes int
 	enabled := map[ItemType]bool{ItemIssue: true}
 	cfg, state := newConfig(dir, enabled, l)
-	cfg.Intake = func(context.Context, string) error { intakes++; return nil }
+	cfg.Trigger = func(context.Context, Trigger) error { intakes++; return nil }
 	if err := Tick(context.Background(), cfg, state); err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +255,10 @@ func TestTick_NewUpdateOfSameItemTriggersAgain(t *testing.T) {
 	}}
 	cfg, state := newConfig(dir, map[ItemType]bool{ItemIssue: true}, l)
 	var bodies []string
-	cfg.Intake = func(_ context.Context, body string) error { bodies = append(bodies, body); return nil }
+	cfg.Trigger = func(_ context.Context, trigger Trigger) error {
+		bodies = append(bodies, trigger.Inputs["body"].(string))
+		return nil
+	}
 	if err := Tick(context.Background(), cfg, state); err != nil {
 		t.Fatal(err)
 	}
@@ -275,8 +284,8 @@ func TestTick_SkipsOwnPRsUnlessReviewOwnPRs(t *testing.T) {
 	var reviews []string
 	enabled := map[ItemType]bool{ItemPR: true}
 	cfg, state := newConfig(dir, enabled, l)
-	cfg.Review = func(_ context.Context, pr string) error {
-		reviews = append(reviews, pr)
+	cfg.Trigger = func(_ context.Context, trigger Trigger) error {
+		reviews = append(reviews, trigger.Inputs["number"].(string))
 		return nil
 	}
 	cfg.ReviewOwnPRs = false
@@ -298,8 +307,8 @@ func TestTick_SkipsOwnPRsUnlessReviewOwnPRs(t *testing.T) {
 	reviews = nil
 	cfg2, state2 := newConfig(dir, enabled, l2)
 	cfg2.ReviewOwnPRs = true
-	cfg2.Review = func(_ context.Context, pr string) error {
-		reviews = append(reviews, pr)
+	cfg2.Trigger = func(_ context.Context, trigger Trigger) error {
+		reviews = append(reviews, trigger.Inputs["number"].(string))
 		return nil
 	}
 	if err := Tick(context.Background(), cfg2, state2); err != nil {
@@ -337,7 +346,7 @@ func TestRun_AbortsAfterConsecutiveTickErrors(t *testing.T) {
 		Interval:             time.Millisecond,
 		Enabled:              map[ItemType]bool{ItemIssue: true},
 		Lister:               &errorLister{own: "me"},
-		Intake:               func(context.Context, string) error { return nil },
+		Trigger:              func(context.Context, Trigger) error { return nil },
 		Log:                  logger,
 		MaxConsecutiveErrors: 3,
 	}
@@ -367,7 +376,7 @@ func TestRun_RecoversFromTransientErrors(t *testing.T) {
 		Interval:             time.Millisecond,
 		Enabled:              map[ItemType]bool{ItemIssue: true},
 		Lister:               l,
-		Intake:               func(context.Context, string) error { return nil },
+		Trigger:              func(context.Context, Trigger) error { return nil },
 		Log:                  logger,
 		MaxConsecutiveErrors: 5,
 	}

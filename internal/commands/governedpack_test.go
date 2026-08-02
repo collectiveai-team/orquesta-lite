@@ -20,8 +20,8 @@ func governedPackRoot(t *testing.T) string {
 	return root
 }
 
-// The governed-pack example must always satisfy the cutover gate's required
-// development flows: they must exist, verify against pack.json, and compile.
+// The governed pack's required development flows must exist, verify against
+// pack.json, and compile.
 func TestGovernedPackRequiredFlowsCompile(t *testing.T) {
 	root := governedPackRoot(t)
 	if _, err := flow.LoadPack(root); err != nil {

@@ -19,7 +19,6 @@ import (
 	"github.com/lionelchamorro/orquestalite/internal/memory"
 	"github.com/lionelchamorro/orquestalite/internal/prompts"
 	"github.com/lionelchamorro/orquestalite/internal/providers"
-	"github.com/lionelchamorro/orquestalite/internal/results"
 	"github.com/lionelchamorro/orquestalite/internal/runner"
 	"github.com/lionelchamorro/orquestalite/internal/skills"
 )
@@ -106,90 +105,6 @@ type RoleCall struct {
 	// skills were requested and a placeholder is injected. A name absent from
 	// the skills/ directory is a clear, immediate error.
 	Skills []string
-}
-
-func Role[T MemoryNoting](
-	ctx context.Context,
-	inv *RoleInvoker,
-	roleName string,
-	call RoleCall,
-	rc RunContext,
-	parse func(path string) (*T, error),
-) (*T, error) {
-	if inv == nil {
-		return nil, fmt.Errorf("role invoker is nil")
-	}
-	spec, ok := inv.Specs[roleName]
-	if !ok {
-		return nil, fmt.Errorf("role %q is not configured", roleName)
-	}
-
-	roleVars := call.templateVars()
-	promptPath := call.PromptPath
-	if promptPath == "" {
-		promptPath = spec.PromptPath
-	}
-	resultPath := call.ResultPath
-	if resultPath == "" {
-		resultPath = spec.ResultPath
-	}
-	archiveRole := call.ArchiveRole
-	if archiveRole == "" {
-		archiveRole = roleName
-	}
-
-	mem, _ := memory.ReadAll(inv.MemPath)
-	roleVars["MEMORY"] = mem
-	roleVars["CONVENTIONS"] = inv.readConventions()
-	skillsText, err := inv.skillsFor(call.Skills)
-	if err != nil {
-		return nil, err
-	}
-	roleVars["SKILLS"] = skillsText
-
-	tmpl, err := prompts.Load(absPath(inv.Dir, promptPath))
-	if err != nil {
-		return nil, err
-	}
-	prompt := prompts.Interpolate(tmpl, roleVars)
-	resultAbs := absPath(inv.Dir, resultPath)
-
-	var parsed *T
-	validate := func(path string) error {
-		value, parseErr := parse(path)
-		if parseErr == nil {
-			parsed = value
-		}
-		return parseErr
-	}
-	if _, err := inv.runValidated(ctx, roleName, spec, call.AgentOverride, prompt, resultPath, resultAbs, rc, validate); err != nil {
-		return nil, err
-	}
-
-	raw, err := os.ReadFile(resultAbs)
-	if err != nil {
-		return nil, fmt.Errorf("read role result %s: %w", resultAbs, err)
-	}
-	if err := results.Archive(inv.Dir, archiveRole, rc.TaskID, rc.Cycle, rc.Attempt, raw); err != nil {
-		return nil, err
-	}
-
-	if parsed == nil {
-		return nil, fmt.Errorf("role %q returned no parsed result", roleName)
-	}
-	if note := (*parsed).MemoryNote(); note != nil {
-		taskID := rc.TaskID
-		if taskID == "" {
-			taskID = "-"
-		}
-		_ = memory.Append(inv.MemPath, memory.Entry{
-			Cycle:  rc.Cycle,
-			TaskID: taskID,
-			Role:   roleName,
-			Body:   *note,
-		})
-	}
-	return parsed, nil
 }
 
 // RunOnce invokes a role exactly once, building the prompt from the spec and the

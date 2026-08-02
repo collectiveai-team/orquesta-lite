@@ -1,86 +1,134 @@
 package web
 
 import (
-	"errors"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 
+	"github.com/lionelchamorro/orquestalite/internal/activity"
+	"github.com/lionelchamorro/orquestalite/internal/activity/builtin"
 	"github.com/lionelchamorro/orquestalite/internal/config"
-	"github.com/lionelchamorro/orquestalite/internal/engine"
+	"github.com/lionelchamorro/orquestalite/internal/flow"
 )
 
 type flowInput struct {
-	Type     string `json:"type"`
+	Schema   string `json:"schema"`
 	Default  any    `json:"default"`
 	Required bool   `json:"required"`
 }
 
 type flowEntry struct {
-	Name        string               `json:"name"`
-	Description string               `json:"description"`
-	Inputs      map[string]flowInput `json:"inputs"`
-	Roles       []string             `json:"roles"`
-	Preflight   map[string]string    `json:"preflight"`
+	Name       string               `json:"name"`
+	Pack       string               `json:"pack,omitempty"`
+	PackDigest string               `json:"pack_digest,omitempty"`
+	Inputs     map[string]flowInput `json:"inputs"`
+	Roles      []string             `json:"roles"`
+	Preflight  map[string]string    `json:"preflight"`
 }
 
-// handleFlows serves the workspace's flows.json parsed with the same loader
-// `orq-lite flow run` uses, so a companion app can build a launch form
-// without filesystem access. Anything the parser rejects degrades to an
-// empty catalog with a log line — never an error response.
+func webBuiltinSpecs() []activity.Spec {
+	return []activity.Spec{
+		(&builtin.AgentExecutor{}).Spec(), (&builtin.CommandExecutor{}).Spec(),
+		(&builtin.GateExecutor{}).Spec(), (builtin.GateAssertExecutor{}).Spec(),
+		(&builtin.ArtifactExecutor{}).Spec(), (builtin.ApprovalExecutor{}).Spec(),
+	}
+}
+
+// handleFlows serves only strict v2 flows discovered in local catalogs and
+// verified installed packs. Invalid documents are omitted from the launch
+// catalog; validation details remain available through `orq-lite flow validate`.
 func (s *Server) handleFlows(w http.ResponseWriter, r *http.Request) {
 	entries := []flowEntry{}
-	flows, err := engine.LoadFlows(filepath.Join(s.Dir, "flows.json"))
-	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			log.Printf("web: flows.json unreadable, serving empty catalog: %v", err)
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"flows": entries})
-		return
-	}
-	cfg, cfgErr := config.Load(filepath.Join(s.Dir, "team.json"))
-
-	names := make([]string, 0, len(flows.Flows))
-	for name := range flows.Flows {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		flow := flows.Flows[name]
-		inputs := map[string]flowInput{}
-		for in, spec := range flow.Inputs {
-			inputs[in] = flowInput{Type: spec.Type, Default: spec.Default, Required: !spec.HasDefault}
-		}
-		roles := flow.ReferencedRoles()
-		preflight := map[string]string{}
-		for _, role := range roles {
-			preflight[role] = rolePreflight(s.Dir, cfg, cfgErr, role)
-		}
-		entries = append(entries, flowEntry{
-			Name:        name,
-			Description: flow.Description,
-			Inputs:      inputs,
-			Roles:       roles,
-			Preflight:   preflight,
+	cfg, cfgErr := config.LoadDynamic(filepath.Join(s.Dir, "team.json"))
+	seen := map[string]bool{}
+	roots := []string{s.Dir, filepath.Join(s.Dir, ".orquestalite", "packs")}
+	for _, searchRoot := range roots {
+		_ = filepath.WalkDir(searchRoot, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil || entry.IsDir() || filepath.Ext(path) != ".json" || filepath.Base(filepath.Dir(path)) != "flows" {
+				return nil
+			}
+			document, loadErr := flow.Load(path)
+			if loadErr != nil || document.Kind != flow.KindFlow {
+				return nil
+			}
+			root := flow.PackRootForPath(path)
+			catalog := flow.NewDirectoryCatalog(root, webBuiltinSpecs())
+			ir, diagnostics := flow.Compile(document, catalog)
+			if diagnostics.HasErrors() {
+				return nil
+			}
+			name := "flow:" + document.Metadata.Name + "@" + document.Metadata.Version
+			packLabel, packDigest := "", ""
+			if pack, packErr := flow.LoadPack(root); packErr == nil {
+				if pinErr := flow.PinPack(ir, pack); pinErr != nil {
+					return nil
+				}
+				name = pack.Name + "/" + document.Metadata.Name + "@" + document.Metadata.Version
+				packLabel = pack.Name + "@" + pack.Version
+				packDigest = string(pack.Snapshot().Digest)
+			}
+			if seen[name+"|"+packLabel] {
+				return nil
+			}
+			seen[name+"|"+packLabel] = true
+			inputs := make(map[string]flowInput, len(document.Inputs))
+			for inputName, spec := range document.Inputs {
+				var defaultValue any
+				if spec.Default != nil {
+					defaultValue = spec.Default.Literal
+				}
+				inputs[inputName] = flowInput{Schema: spec.Schema, Default: defaultValue, Required: spec.Default == nil}
+			}
+			roles := referencedAgentRoles(ir)
+			preflight := map[string]string{}
+			for _, role := range roles {
+				preflight[role] = rolePreflight(s.Dir, cfg, cfgErr, role)
+			}
+			entries = append(entries, flowEntry{Name: name, Pack: packLabel, PackDigest: packDigest, Inputs: inputs, Roles: roles, Preflight: preflight})
+			return nil
 		})
 	}
+	sort.Slice(entries, func(left, right int) bool { return entries[left].Name < entries[right].Name })
 	writeJSON(w, http.StatusOK, map[string]any{"flows": entries})
 }
 
-// rolePreflight classifies launch readiness for one referenced role. An
-// unloadable team.json means no role can be resolved, so every role reports
-// missing_role.
+func referencedAgentRoles(ir *flow.IR) []string {
+	seen := map[string]bool{}
+	var walk func(*flow.IR)
+	walk = func(current *flow.IR) {
+		if current == nil {
+			return
+		}
+		for _, step := range current.Steps {
+			if step.Activity != nil && step.Activity.Name == "agent.invoke" {
+				if role, ok := step.With["role"].Literal.(string); ok && role != "" {
+					seen[role] = true
+				}
+			}
+			if step.Subflow != nil {
+				walk(step.Subflow)
+			}
+		}
+	}
+	walk(ir)
+	roles := make([]string, 0, len(seen))
+	for role := range seen {
+		roles = append(roles, role)
+	}
+	sort.Strings(roles)
+	return roles
+}
+
 func rolePreflight(dir string, cfg *config.Config, cfgErr error, role string) string {
 	if cfgErr != nil {
 		return "missing_role"
 	}
-	r, ok := cfg.Roles[role]
+	roleSpec, ok := cfg.Roles[role]
 	if !ok {
 		return "missing_role"
 	}
-	if _, err := os.Stat(filepath.Join(dir, r.Prompt)); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, roleSpec.Prompt)); err != nil {
 		return "missing_prompt"
 	}
 	return "ok"

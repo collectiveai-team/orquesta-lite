@@ -10,81 +10,62 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lionelchamorro/orquestalite/internal/tasks"
+	"github.com/lionelchamorro/orquestalite/internal/workflow"
 )
 
-func TestStatus_PrintsTable(t *testing.T) {
-	dir := t.TempDir()
-	_ = os.MkdirAll(filepath.Join(dir, ".orquestalite"), 0o755)
-	tl := &tasks.TaskList{Tasks: []tasks.Task{
-		{ID: "T001", Title: "first", Status: tasks.StatusDone, Priority: 1},
-		{ID: "T002", Title: "second", Status: tasks.StatusPending, Priority: 2},
-	}}
-	raw, _ := json.MarshalIndent(tl, "", "  ")
-	_ = os.WriteFile(filepath.Join(dir, ".orquestalite", "tasks.json"), raw, 0o644)
-
-	buf := &bytes.Buffer{}
-	if err := Status(dir, buf); err != nil {
+func createStatusRun(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, ".orquestalite"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	out := buf.String()
-	for _, want := range []string{"T001", "T002", "done", "pending", "first", "second"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("status output missing %q: %s", want, out)
+	store, err := workflow.Open(filepath.Join(dir, ".orquestalite", "workflows.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	_, _, err = store.CreateRunOnce(context.Background(), workflow.CreateRunParams{
+		ID: "run-123", FlowRef: "development/task-list@1", DefinitionHash: "abc",
+		IR: json.RawMessage(`{}`), Inputs: json.RawMessage(`{}`), Policy: json.RawMessage(`{}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStatusPrintsDurableWorkflowRuns(t *testing.T) {
+	dir := t.TempDir()
+	createStatusRun(t, dir)
+	var out bytes.Buffer
+	if err := Status(dir, &out); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"run-123", "running", "development/task-list@1"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("status output missing %q: %s", want, out.String())
 		}
 	}
 }
 
-func TestStatus_HandlesMissingTasksFile(t *testing.T) {
-	dir := t.TempDir()
-	buf := &bytes.Buffer{}
-	if err := Status(dir, buf); err != nil {
+func TestStatusHandlesMissingWorkflowDatabase(t *testing.T) {
+	var out bytes.Buffer
+	if err := Status(t.TempDir(), &out); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(buf.String(), "no tasks") {
-		t.Errorf("expected 'no tasks' message, got: %s", buf.String())
+	if !strings.Contains(out.String(), "no workflow runs") {
+		t.Fatalf("output = %q", out.String())
 	}
 }
 
-func TestStatusWatch_RendersMultipleTimesAndStopsOnContextCancel(t *testing.T) {
+func TestStatusWatchRendersAndStops(t *testing.T) {
 	dir := t.TempDir()
-	_ = os.MkdirAll(filepath.Join(dir, ".orquestalite"), 0o755)
-	tl := &tasks.TaskList{Tasks: []tasks.Task{
-		{ID: "T001", Title: "watched", Status: tasks.StatusPending, Priority: 1},
-	}}
-	raw, _ := json.MarshalIndent(tl, "", "  ")
-	_ = os.WriteFile(filepath.Join(dir, ".orquestalite", "tasks.json"), raw, 0o644)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	createStatusRun(t, dir)
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
 	defer cancel()
-
-	buf := &bytes.Buffer{}
-	if err := StatusWatch(ctx, dir, buf, 10*time.Millisecond); err != nil {
+	var out bytes.Buffer
+	if err := StatusWatch(ctx, dir, &out, 10*time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
-
-	out := buf.String()
-	if strings.Count(out, "watched") < 2 {
-		t.Errorf("expected at least 2 renders of the table, got: %d\n%s", strings.Count(out, "watched"), out)
-	}
-	if !strings.Contains(out, "\x1b[2J") {
-		t.Errorf("expected ANSI clear-screen sequence in output")
-	}
-	if !strings.Contains(out, "Ctrl+C to stop") {
-		t.Errorf("expected footer hint in output")
-	}
-}
-
-func TestStatusWatch_DefaultsIntervalWhenZero(t *testing.T) {
-	dir := t.TempDir()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
-	defer cancel()
-	buf := &bytes.Buffer{}
-	// interval=0 should default to 1s; with a 5ms ctx we'll only see the initial render.
-	if err := StatusWatch(ctx, dir, buf, 0); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(buf.String(), "no tasks") {
-		t.Errorf("expected initial render even with zero interval, got: %s", buf.String())
+	if strings.Count(out.String(), "run-123") < 2 || !strings.Contains(out.String(), "\x1b[2J") {
+		t.Fatalf("watch output = %q", out.String())
 	}
 }

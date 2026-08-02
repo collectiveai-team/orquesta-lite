@@ -15,7 +15,7 @@ import (
 	"strings"
 
 	"github.com/lionelchamorro/orquestalite/internal/config"
-	"github.com/lionelchamorro/orquestalite/internal/eventdb"
+	"github.com/lionelchamorro/orquestalite/internal/flow"
 	"github.com/lionelchamorro/orquestalite/internal/gitx"
 )
 
@@ -70,17 +70,6 @@ func Run(ctx context.Context, dir string) []Check {
 		add(StatusOK, "git", "repository present, tree clean")
 	}
 
-	// eventdb: the sqlite read-model behind the query API
-	dbPath := filepath.Join(dir, ".orquestalite", "orq.db")
-	if _, err := os.Stat(dbPath); errors.Is(err, os.ErrNotExist) {
-		add(StatusWarn, "eventdb", "orq.db not found — run `orq-lite index` or `orq-lite serve` to build it")
-	} else if db, err := eventdb.Open(dbPath); err != nil {
-		add(StatusError, "eventdb", err.Error())
-	} else {
-		_ = db.Close()
-		add(StatusOK, "eventdb", dbPath)
-	}
-
 	// team.json
 	cfg, err := config.Load(filepath.Join(dir, "team.json"))
 	if err != nil {
@@ -92,8 +81,12 @@ func Run(ctx context.Context, dir string) []Check {
 		return checks
 	}
 	add(StatusOK, "team.json", "loads and resolves")
-	if missing := cfg.MissingOrchestratedRoles(); len(missing) > 0 {
-		add(StatusWarn, "legacy roles", "missing "+strings.Join(missing, ", ")+" — BLOCKING for plan/run/factory; safe to ignore if you only use `flow run`")
+
+	packRoot := filepath.Join(dir, ".orquestalite", "packs", "development", "4")
+	if pack, packErr := flow.LoadPack(packRoot); packErr != nil {
+		add(StatusError, "pack:development", packErr.Error())
+	} else {
+		add(StatusOK, "pack:development", pack.Name+"@"+pack.Version+" verified")
 	}
 
 	// prompts referenced by roles
@@ -133,18 +126,6 @@ func Run(ctx context.Context, dir string) []Check {
 			add(StatusWarn, "conventions_file", cfg.ConventionsFile+" not found — agents will infer style from the codebase instead")
 		} else {
 			add(StatusOK, "conventions_file", cfg.ConventionsFile)
-		}
-	}
-
-	// full_test_command
-	if cfg.FullTestCommand == "" {
-		add(StatusWarn, "full_test_command", "empty — no full-suite gate before commits")
-	} else {
-		bin := strings.Fields(cfg.FullTestCommand)[0]
-		if _, err := exec.LookPath(bin); err != nil {
-			add(StatusError, "full_test_command", fmt.Sprintf("%q not on PATH (command: %s)", bin, cfg.FullTestCommand))
-		} else {
-			add(StatusOK, "full_test_command", cfg.FullTestCommand)
 		}
 	}
 
@@ -206,8 +187,6 @@ func missingPromptFiles(dir string, cfg *config.Config) []string {
 	}
 	for _, role := range cfg.Roles {
 		checkFile(role.Prompt)
-		checkFile(role.DecomposePrompt)
-		checkFile(role.CyclePrompt)
 	}
 	sort.Strings(missing)
 	return missing

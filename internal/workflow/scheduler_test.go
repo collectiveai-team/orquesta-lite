@@ -75,7 +75,7 @@ func TestSchedulerBoundedWhile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	catalog := flow.NewMemoryCatalog()
+	catalog := newMemoryCatalog()
 	catalog.Activities["activity:test.increment@1"] = activity.Spec{Name: "test.increment", Version: "1", Effect: activity.EffectIdempotent}
 	ir, diags := flow.Compile(doc, catalog)
 	if diags.HasErrors() {
@@ -110,7 +110,7 @@ func TestSchedulerParallelForeachHonorsIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	catalog := flow.NewMemoryCatalog()
+	catalog := newMemoryCatalog()
 	catalog.Schemas["schema:any@1"] = &flow.Schema{}
 	catalog.Activities["activity:test.increment@1"] = activity.Spec{Name: "test.increment", Version: "1", Effect: activity.EffectIdempotent}
 	ir, diags := flow.Compile(doc, catalog)
@@ -143,7 +143,7 @@ func TestSchedulerRunsAndResumesWithoutRepeatingSucceededStep(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	catalog := flow.NewMemoryCatalog()
+	catalog := newMemoryCatalog()
 	catalog.Activities["activity:test.echo@1"] = activity.Spec{Name: "test.echo", Version: "1", Effect: activity.EffectIdempotent}
 	catalog.Schemas["schema:any@1"] = &flow.Schema{}
 	ir, diagnostics := flow.Compile(doc, catalog)
@@ -168,7 +168,7 @@ func TestSchedulerRunsAndResumesWithoutRepeatingSucceededStep(t *testing.T) {
 	if run.Status != RunSucceeded || echo.calls != 1 {
 		t.Fatalf("run=%s calls=%d", run.Status, echo.calls)
 	}
-	run, err = runtime.Resume(context.Background(), "r1")
+	_, err = runtime.Resume(context.Background(), "r1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func TestSchedulerRunsErrorHandlerAndCompensatesInReverse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	catalog := flow.NewMemoryCatalog()
+	catalog := newMemoryCatalog()
 	catalog.Activities["activity:test.record@1"] = activity.Spec{Name: "test.record", Version: "1", Effect: activity.EffectIdempotent}
 	ir, diagnostics := flow.Compile(doc, catalog)
 	if diagnostics.HasErrors() {
@@ -212,7 +212,7 @@ func TestSchedulerRunsErrorHandlerAndCompensatesInReverse(t *testing.T) {
 
 func TestSchedulerEnforcesRunAttemptBudget(t *testing.T) {
 	doc, _ := flow.Decode(strings.NewReader(`{"apiVersion":"orq.dev/v2","kind":"Flow","metadata":{"name":"budget","version":"1"},"steps":[{"id":"one","uses":"activity:test.echo@1"},{"id":"two","uses":"activity:test.echo@1"}]}`))
-	catalog := flow.NewMemoryCatalog()
+	catalog := newMemoryCatalog()
 	catalog.Activities["activity:test.echo@1"] = activity.Spec{Name: "test.echo", Version: "1", Effect: activity.EffectIdempotent}
 	ir, _ := flow.Compile(doc, catalog)
 	store, _ := Open(filepath.Join(t.TempDir(), "workflows.db"))
@@ -230,7 +230,7 @@ func TestSchedulerEnforcesRunAttemptBudget(t *testing.T) {
 
 func TestSchedulerUnsafeActivityRequiresApproval(t *testing.T) {
 	doc, _ := flow.Decode(strings.NewReader(`{"apiVersion":"orq.dev/v2","kind":"Flow","metadata":{"name":"approval","version":"1"},"steps":[{"id":"publish","uses":"activity:test.echo@1"}]}`))
-	catalog := flow.NewMemoryCatalog()
+	catalog := newMemoryCatalog()
 	catalog.Activities["activity:test.echo@1"] = activity.Spec{Name: "test.echo", Version: "1", Effect: activity.EffectUnsafe}
 	ir, _ := flow.Compile(doc, catalog)
 	store, _ := Open(filepath.Join(t.TempDir(), "workflows.db"))
@@ -261,7 +261,7 @@ func TestSchedulerForeach(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	catalog := flow.NewMemoryCatalog()
+	catalog := newMemoryCatalog()
 	catalog.Activities["activity:test.echo@1"] = activity.Spec{Name: "test.echo", Version: "1", Effect: activity.EffectIdempotent}
 	catalog.Schemas["schema:any@1"] = &flow.Schema{}
 	ir, diags := flow.Compile(doc, catalog)

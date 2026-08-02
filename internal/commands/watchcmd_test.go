@@ -18,7 +18,6 @@ func TestWatch_V2FailsFastOnMissingFlow(t *testing.T) {
 	defer cancel()
 	err := Watch(ctx, WatchOptions{
 		ProjectDir: dir,
-		Engine:     "v2",
 		Issues:     true,
 		Out:        io.Discard,
 	})

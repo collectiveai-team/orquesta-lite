@@ -21,11 +21,9 @@
     "intake": {"agents": ["haiku"], "prompt": ".orquestalite/packs/development/4/prompts/intake.md", "result_path": ".orquestalite/results/intake.json", "timeout_seconds": 900},
     "pr_reviewer": {"agents": ["haiku"], "prompt": ".orquestalite/packs/development/4/prompts/pr-reviewer.md", "result_path": ".orquestalite/results/pr_reviewer.json", "timeout_seconds": 1200}
   },
-  "limits": {"max_review_cycles": 3, "max_fix_iterations": 5, "verify_tester_command": true},
+  "resume_sessions": true,
   "rate_limit_backoff": {"initial_seconds": 30, "factor": 2, "max_seconds": 1800, "default_pattern": "(?i)(rate_?limit|429|quota|too many requests|session limit|usage limit)"},
   "conventions_file": "CONVENTIONS.md",
-  "full_test_command": "uv run pytest -q",
-  "lint_command": "uv run ruff check .",
   "lint_argv": ["uv", "run", "ruff", "check", "."],
   "test_argv": ["uv", "run", "pytest", "-q"]
 }

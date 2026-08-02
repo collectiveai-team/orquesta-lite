@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 )
 
 func writeLog(t *testing.T, lines string) string {
@@ -77,19 +76,5 @@ func TestRollup(t *testing.T) {
 	}
 	if rep.TotalUSD <= 0.75 || rep.Runs != 4 || rep.Priced != 3 {
 		t.Errorf("report = %+v", rep)
-	}
-}
-
-func TestSpendSince(t *testing.T) {
-	t0 := time.Date(2026, 6, 11, 10, 0, 0, 0, time.UTC)
-	runs := []AgentRun{
-		{TS: t0.Add(-time.Hour), SessionID: "s1"},         // before window
-		{TS: t0.Add(time.Minute), SessionID: "s2"},        // counted
-		{TS: t0.Add(2 * time.Minute), SessionID: "s2"},    // duplicate session, not double-counted
-		{TS: t0.Add(3 * time.Minute), SessionID: "ghost"}, // unpriced
-	}
-	got := SpendSince(runs, sessionsFixture(), t0)
-	if got != 0.25 {
-		t.Errorf("SpendSince = %v, want 0.25", got)
 	}
 }

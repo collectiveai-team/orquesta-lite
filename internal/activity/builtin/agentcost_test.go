@@ -54,7 +54,7 @@ func usageTestExecutor(t *testing.T, fake *usageRunner) *AgentExecutor {
 	if err := os.WriteFile(filepath.Join(dir, "prompts", "coder.md"), []byte("implement the ticket"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	logger, err := eventlog.Open(filepath.Join(dir, ".orquestalite", "run.log"), io.Discard)
+	logger, err := eventlog.OpenWithFormat(filepath.Join(dir, ".orquestalite", "run.log"), io.Discard, eventlog.FormatVerbose)
 	if err != nil {
 		t.Fatal(err)
 	}

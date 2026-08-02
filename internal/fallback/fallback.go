@@ -15,7 +15,7 @@ type Outcome struct {
 	// ShouldFallback signals that the caller wants to advance to the next agent
 	// in the chain. Set FallbackReason to one of: "rate_limit", "result_missing",
 	// "timeout", "invalid_contract".
-	// For backward compat, Call also treats RateLimited=true as ShouldFallback.
+	// Call also normalizes the runner's concise RateLimited signal.
 	ShouldFallback bool
 	FallbackReason string
 
@@ -134,7 +134,7 @@ func (c *Caller) Call(ctx context.Context, chain []string, fn AgentFunc) (Outcom
 				return out, agent, err
 			}
 
-			// Normalise: legacy RateLimited=true implies ShouldFallback.
+			// Normalize the runner's RateLimited signal into fallback policy.
 			if out.RateLimited && !out.ShouldFallback {
 				out.ShouldFallback = true
 				if out.FallbackReason == "" {

@@ -1,361 +1,40 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>orquestalite</title>
-<style>
-  :root {
-    --bg: #0d1117; --panel: #161b22; --border: #30363d;
-    --fg: #e6edf3; --muted: #8b949e; --accent: #58a6ff;
-    --ok: #3fb950; --warn: #d29922; --err: #f85149; --run: #a371f7;
-    font-size: 14px;
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0; background: var(--bg); color: var(--fg);
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  }
-  header {
-    display: flex; align-items: center; gap: 12px;
-    padding: 14px 20px; border-bottom: 1px solid var(--border);
-    position: sticky; top: 0; background: var(--bg); z-index: 2;
-  }
-  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
-  header h1 span { color: var(--accent); }
-  #conn { width: 9px; height: 9px; border-radius: 50%; background: var(--err); }
-  #conn.live { background: var(--ok); }
-  #summary { color: var(--muted); margin-left: auto; }
-  #cost { color: var(--warn); padding-left: 14px; }
-  #mode { display: flex; gap: 4px; margin-left: 14px; }
-  #mode a, #mode span {
-    text-decoration: none; font-size: 12px; padding: 3px 10px; border-radius: 6px;
-    border: 1px solid var(--border); color: var(--muted); cursor: pointer; white-space: nowrap;
-  }
-  #mode .active { background: var(--accent); border-color: var(--accent); color: #0d1117; }
-  #mode a:hover { border-color: var(--accent); color: var(--fg); }
-  main {
-    display: grid; gap: 16px; padding: 16px 20px; max-width: 1400px; margin: 0 auto;
-    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
-  }
-  @media (max-width: 980px) { main { grid-template-columns: 1fr; } }
-  section {
-    background: var(--panel); border: 1px solid var(--border);
-    border-radius: 8px; overflow: hidden;
-  }
-  section > h2 {
-    font-size: 12px; text-transform: uppercase; letter-spacing: .08em;
-    color: var(--muted); margin: 0; padding: 10px 14px;
-    border-bottom: 1px solid var(--border); font-weight: 600;
-  }
-  #workflows-section, #factory-section { grid-column: 1 / -1; }
-  #factory-section { display: none; }
-  table { width: 100%; border-collapse: collapse; }
-  th, td { text-align: left; padding: 7px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
-  th { color: var(--muted); font-weight: 500; font-size: 12px; }
-  tr:last-child td { border-bottom: 0; }
-  td.title { color: var(--fg); }
-  .badge {
-    display: inline-block; padding: 1px 8px; border-radius: 10px;
-    font-size: 12px; border: 1px solid var(--border); color: var(--muted);
-    white-space: nowrap;
-  }
-  .badge.done, .badge.pass, .badge.succeeded, .badge.commit_ok, .badge.tests_pass { color: var(--ok); border-color: var(--ok); }
-  .badge.failed, .badge.cancelled, .badge.needs_human, .badge.error, .badge.commit_rejected, .badge.tests_fail { color: var(--err); border-color: var(--err); }
-  .badge.in_progress, .badge.running { color: var(--run); border-color: var(--run); }
-  .badge.pending, .badge.outcome_unknown, .badge.decomposed, .badge.needs_clarification, .badge.commit_skipped { color: var(--warn); border-color: var(--warn); }
-  #events {
-    list-style: none; margin: 0; padding: 8px 0; max-height: 70vh; overflow-y: auto;
-  }
-  #events li {
-    padding: 3px 14px; display: flex; gap: 10px; align-items: baseline;
-    border-left: 2px solid transparent;
-  }
-  #events li .ts { color: var(--muted); font-size: 12px; flex-shrink: 0; }
-  #events li .body { word-break: break-word; }
-  #events li.agent_run { border-left-color: var(--accent); }
-  #events li.task_done { border-left-color: var(--ok); }
-  #events li.task_failed, #events li.full_suite_failed, #events li.tester_verification_failed { border-left-color: var(--err); }
-  #events li.cycle_start, #events li.cycle_end { border-left-color: var(--run); }
-  .role { color: var(--accent); }
-  .muted { color: var(--muted); }
-  #empty-tasks { padding: 18px 14px; color: var(--muted); }
-  tr.taskrow { cursor: pointer; }
-  tr.taskrow:hover td { background: #1c2230; }
-  #diff-modal { position: fixed; inset: 0; display: none; z-index: 10; }
-  #diff-modal.open { display: block; }
-  #diff-backdrop { position: absolute; inset: 0; background: rgba(1,4,9,0.6); }
-  #diff-card {
-    position: absolute; top: 5%; left: 50%; transform: translateX(-50%);
-    width: min(1000px, 92vw); max-height: 88vh; display: flex; flex-direction: column;
-    background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
-  }
-  #diff-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 13px; }
-  #diff-head .x { margin-left: auto; cursor: pointer; color: var(--muted); }
-  #diff-head .x:hover { color: var(--fg); }
-  #diff-pre { margin: 0; padding: 12px 14px; overflow: auto; font-size: 12px; line-height: 1.5; white-space: pre; }
-  #diff-pre .add { color: var(--ok); }
-  #diff-pre .del { color: var(--err); }
-  #diff-pre .hunk { color: var(--accent); }
-  #diff-pre .meta { color: var(--muted); }
-  #diff-summary { display: none; padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--fg); font-size: 13px; line-height: 1.5; }
-  #diff-summary.show { display: block; }
-  #diff-summary b { color: var(--muted); font-weight: 600; }
-  tr.featrow { cursor: pointer; }
-  tr.featrow:hover td { background: #1c2230; }
-  #tasks-modal { position: fixed; inset: 0; display: none; z-index: 9; }
-  #tasks-modal.open { display: block; }
-  #tasks-backdrop { position: absolute; inset: 0; background: rgba(1,4,9,0.6); }
-  #tasks-card {
-    position: absolute; top: 8%; left: 50%; transform: translateX(-50%);
-    width: min(820px, 92vw); max-height: 84vh; display: flex; flex-direction: column;
-    background: var(--panel); border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
-  }
-  #tasks-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 13px; }
-  #tasks-head .x { margin-left: auto; cursor: pointer; color: var(--muted); }
-  #tasks-head .x:hover { color: var(--fg); }
-  #tasks-list { overflow: auto; }
-  #tasks-list table { width: 100%; }
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>orquestalite · durable workflows</title>
+  <style>
+    :root { color-scheme: dark; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background:#0b1020; color:#e7ebf3 }
+    body { max-width:1200px; margin:0 auto; padding:28px }
+    header { display:flex; align-items:baseline; justify-content:space-between; gap:20px }
+    h1 { font-size:22px; margin:0 } h2 { font-size:14px; color:#98a4bc; text-transform:uppercase; letter-spacing:.08em }
+    .pill { border:1px solid #33405a; border-radius:999px; padding:5px 10px; font-size:12px }
+    .ok { color:#68d391 } .error { color:#fc8181 } .warn { color:#f6c85f }
+    section { margin-top:28px; background:#11182a; border:1px solid #263149; border-radius:12px; padding:18px }
+    table { width:100%; border-collapse:collapse; font-size:12px } th,td { padding:10px 8px; border-bottom:1px solid #263149; text-align:left; vertical-align:top }
+    th { color:#98a4bc } code { color:#9dd6ff } .empty { color:#748099; padding:12px 0 }
+    #events { max-height:260px; overflow:auto; white-space:pre-wrap; color:#aab5cb; font-size:11px }
+  </style>
 </head>
 <body>
-<header>
-  <div id="conn" title="event stream"></div>
-  <h1>orquesta<span>lite</span></h1>
-  <div id="summary"></div>
-  <div id="cost" class="muted" title="spend priced via agtop"></div>
-  <nav id="mode" title="screen mode">
-    <span class="active">▣ Dashboard</span>
-    <a href="/gameboard" onclick="try{localStorage.setItem('orqScreenMode','office')}catch(e){}">🎮 Office</a>
-  </nav>
-</header>
-<main>
-  <section id="workflows-section">
-    <h2>Durable workflows</h2>
-    <div id="empty-workflows" class="muted" style="padding:18px 14px">No v2 workflow runs yet.</div>
-    <table id="workflows-table" style="display:none">
-      <thead><tr><th>Run</th><th>Status</th><th>Flow</th><th>Definition</th><th>Updated</th><th>Error</th></tr></thead>
-      <tbody id="workflows-body"></tbody>
-    </table>
-  </section>
-  <section id="factory-section">
-    <h2>Factory queue</h2>
-    <table>
-      <thead><tr><th>ID</th><th>Status</th><th>Branch</th><th>Done</th><th>Failed</th><th>Cost</th><th>Title</th></tr></thead>
-      <tbody id="factory-body"></tbody>
-    </table>
-  </section>
-  <section>
-    <h2>Tasks</h2>
-    <div id="empty-tasks">No tasks yet — run <b>orq-lite plan</b> or <b>orq-lite factory</b>.</div>
-    <table id="tasks-table" style="display:none">
-      <thead><tr><th>ID</th><th>Work</th><th>Verify</th><th>Att</th><th>Agent</th><th>Title</th></tr></thead>
-      <tbody id="tasks-body"></tbody>
-    </table>
-  </section>
-  <section>
-    <h2>Live events</h2>
-    <ul id="events"></ul>
-  </section>
-</main>
-<div id="diff-modal">
-  <div id="diff-backdrop"></div>
-  <div id="diff-card">
-    <div id="diff-head"><b id="diff-title"></b><span id="diff-meta" class="muted"></span><span class="x" id="diff-close" title="close (Esc)">✕</span></div>
-    <div id="diff-summary"></div>
-    <pre id="diff-pre"></pre>
-  </div>
-</div>
-<div id="tasks-modal">
-  <div id="tasks-backdrop"></div>
-  <div id="tasks-card">
-    <div id="tasks-head"><b id="tasks-title"></b><span id="tasks-sub" class="muted"></span><span class="x" id="tasks-close" title="close (Esc)">✕</span></div>
-    <div id="tasks-list"></div>
-  </div>
-</div>
-<script>
-const $ = (id) => document.getElementById(id);
-const esc = (s) => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
-const badge = (s) => s ? `<span class="badge ${esc(s)}">${esc(s)}</span>` : "";
-
-async function refreshWorkflows() {
-  try {
-    const res = await fetch("/api/workflows?limit=25");
-    const data = await res.json();
-    const runs = data.workflows || [];
-    $("empty-workflows").style.display = runs.length ? "none" : "block";
-    $("workflows-table").style.display = runs.length ? "table" : "none";
-    $("workflows-body").innerHTML = runs.map(run => `<tr>
-      <td>${esc(run.id)}</td><td>${badge(run.status)}</td><td>${esc(run.flowRef)}</td>
-      <td class="muted">${esc((run.definitionHash || "").slice(0, 12))}</td>
-      <td class="muted">${esc(run.updatedAt || "")}</td><td>${esc(run.error || "")}</td>
-    </tr>`).join("");
-  } catch { /* retry on next poll */ }
-}
-
-async function refreshTasks() {
-  try {
-    const res = await fetch("/api/tasks");
-    const data = await res.json();
-    const tasks = data.tasks || [];
-    $("empty-tasks").style.display = tasks.length ? "none" : "block";
-    $("tasks-table").style.display = tasks.length ? "table" : "none";
-    $("tasks-body").innerHTML = tasks.map(t => `<tr class="taskrow" data-task="${esc(t.id)}" title="click to view this task's changes">
-      <td>${esc(t.id)}</td>
-      <td>${badge(t.status)}</td>
-      <td>${badge(t.verify_state)}</td>
-      <td>${t.attempts ?? 0}</td>
-      <td class="muted">${esc(t.last_agent || "")}</td>
-      <td class="title">${esc(t.title)}${t.failure_reason ? ` <span class="muted">(${esc(t.failure_reason)})</span>` : ""}</td>
-    </tr>`).join("");
-    const counts = {};
-    for (const t of tasks) counts[t.status] = (counts[t.status] || 0) + 1;
-    $("summary").textContent = tasks.length
-      ? Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(" · ")
-      : "";
-  } catch { /* server briefly unavailable; next poll retries */ }
-}
-
-async function refreshFactory() {
-  try {
-    const res = await fetch("/api/factory");
-    const q = await res.json();
-    if (!q || !q.features) { $("factory-section").style.display = "none"; return; }
-    $("factory-section").style.display = "block";
-    $("factory-body").innerHTML = q.features.map(f => `<tr class="featrow" data-feature="${esc(f.id)}" data-title="${esc(f.title)}" title="click to browse this feature's tasks">
-      <td>${esc(f.id)}</td>
-      <td>${badge(f.status)}</td>
-      <td class="muted">${esc(f.branch)}</td>
-      <td>${f.tasks_done ?? 0}</td>
-      <td>${f.tasks_failed ?? 0}</td>
-      <td>${f.cost_usd ? "$" + f.cost_usd.toFixed(2) : ""}</td>
-      <td class="title">${esc(f.title)}${f.pr_url ? ` <a href="${esc(f.pr_url)}" style="color:var(--accent)">PR</a>` : ""}</td>
-    </tr>`).join("");
-  } catch { /* retry on next poll */ }
-}
-
-function describe(ev) {
-  const f = ev; // events are flat JSON objects from run.log
-  switch (f.event) {
-    case "agent_run":
-      return `<span class="role">${esc(f.role)}</span> ${esc(f.agent || "")} ` +
-             `${badge(f.status)} <span class="muted">${esc(f.task_id || "")} ${f.duration_s ? Math.round(f.duration_s) + "s" : ""}</span>`;
-    case "task_start":  return `task <b>${esc(f.task_id)}</b> started`;
-    case "task_done":   return `task <b>${esc(f.task_id)}</b> ${badge("done")} <span class="muted">${esc((f.commit_sha || "").slice(0, 8))}</span>`;
-    case "task_failed": return `task <b>${esc(f.task_id)}</b> ${badge("failed")} <span class="muted">${esc(f.reason || "")}</span>`;
-    case "cycle_start": return `— review cycle ${esc(f.cycle)} —`;
-    case "cycle_end":   return `cycle ${esc(f.cycle)} ended <span class="muted">new tasks: ${esc(f.new_tasks_proposed ?? "0")}</span>`;
-    case "tester_verification_failed":
-      return `tester claimed pass but <code>${esc(f.command)}</code> failed ${badge("error")}`;
-    default: {
-      const extra = Object.entries(f)
-        .filter(([k]) => !["ts", "event"].includes(k))
-        .map(([k, v]) => `${k}=${typeof v === "object" ? JSON.stringify(v) : v}`)
-        .join(" ");
-      return `${esc(f.event)} <span class="muted">${esc(extra.slice(0, 200))}</span>`;
+  <header><h1>orquestalite <span class="warn">v2</span></h1><span id="health" class="pill">checking setup…</span></header>
+  <section><h2>Durable workflow runs</h2><div id="runs" class="empty">loading…</div></section>
+  <section><h2>Installed flow catalog</h2><div id="flows" class="empty">loading…</div></section>
+  <section><h2>Live runtime events</h2><div id="events"></div></section>
+  <script>
+    const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    const table = (headers, rows) => rows.length ? `<table><thead><tr>${headers.map(h=>`<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(row=>`<tr>${row.map(v=>`<td>${esc(v)}</td>`).join('')}</tr>`).join('')}</tbody></table>` : '<div class="empty">none</div>';
+    async function refresh() {
+      const [doctor, workflows, flows] = await Promise.all(['/api/doctor','/api/workflows','/api/flows'].map(path=>fetch(path).then(r=>r.json())));
+      const health = document.querySelector('#health'); health.textContent = doctor.ok ? 'setup ready' : 'setup needs attention'; health.className = `pill ${doctor.ok?'ok':'error'}`;
+      document.querySelector('#runs').innerHTML = table(['run','status','flow','updated','error'], (workflows.workflows||[]).map(run=>[run.id,run.status,run.flow_ref,run.updated_at,run.error]));
+      document.querySelector('#flows').innerHTML = table(['flow','pack','roles','inputs'], (flows.flows||[]).map(flow=>[flow.name,flow.pack,flow.roles.join(', '),Object.keys(flow.inputs).join(', ')]));
     }
-  }
-}
-
-function connectEvents() {
-  const es = new EventSource("/api/events");
-  es.onopen = () => $("conn").classList.add("live");
-  es.onerror = () => $("conn").classList.remove("live");
-  es.onmessage = (m) => {
-    let ev; try { ev = JSON.parse(m.data); } catch { return; }
-    const li = document.createElement("li");
-    li.className = esc(ev.event || "");
-    const ts = (ev.ts || "").replace(/^.*T/, "").replace(/(\.\d+)?(Z|[+-].*)$/, "");
-    li.innerHTML = `<span class="ts">${esc(ts)}</span><span class="body">${describe(ev)}</span>`;
-    const list = $("events");
-    const atBottom = list.scrollTop + list.clientHeight >= list.scrollHeight - 30;
-    list.appendChild(li);
-    while (list.children.length > 500) list.removeChild(list.firstChild);
-    if (atBottom) list.scrollTop = list.scrollHeight;
-  };
-}
-
-async function refreshCost() {
-  try {
-    const res = await fetch("/api/cost");
-    const c = await res.json();
-    $("cost").textContent = c.available ? `$${c.total_usd.toFixed(2)}` : "";
-  } catch { /* retry on next poll */ }
-}
-
-function colorDiff(text) {
-  return String(text).split("\n").map(line => {
-    let c = "";
-    if (line.startsWith("+") && !line.startsWith("+++")) c = "add";
-    else if (line.startsWith("-") && !line.startsWith("---")) c = "del";
-    else if (line.startsWith("@@")) c = "hunk";
-    else if (/^(commit |Author|AuthorDate|Commit|CommitDate|Date|diff |index |\+\+\+|---) /.test(line) || /^(diff|index|\+\+\+|---)/.test(line)) c = "meta";
-    return `<span class="${c}">${esc(line)}</span>`;
-  }).join("\n");
-}
-
-function setSummary(text) {
-  const el = $("diff-summary");
-  if (text) { el.innerHTML = `<b>summary:</b> ${esc(text)}`; el.classList.add("show"); }
-  else { el.textContent = ""; el.classList.remove("show"); }
-}
-async function openDiff(task) {
-  $("diff-title").textContent = task;
-  $("diff-meta").textContent = "loading…";
-  $("diff-pre").innerHTML = "";
-  setSummary("");
-  $("diff-modal").classList.add("open");
-  try {
-    const res = await fetch("/api/diff/" + encodeURIComponent(task));
-    const d = await res.json();
-    setSummary(d.summary || "");
-    if (!d.available) { $("diff-meta").textContent = ""; $("diff-pre").textContent = "No commit recorded for this task yet."; return; }
-    $("diff-meta").textContent = [d.short, d.agent].filter(Boolean).join(" · ");
-    $("diff-pre").innerHTML = colorDiff(d.diff || "");
-  } catch { $("diff-meta").textContent = ""; $("diff-pre").textContent = "Failed to load diff."; }
-}
-function closeDiff() { $("diff-modal").classList.remove("open"); }
-$("diff-backdrop").addEventListener("click", closeDiff);
-$("diff-close").addEventListener("click", closeDiff);
-
-async function openFeature(feature, title) {
-  $("tasks-title").textContent = feature + (title ? " · " + title : "");
-  $("tasks-sub").textContent = "loading…";
-  $("tasks-list").innerHTML = "";
-  $("tasks-modal").classList.add("open");
-  try {
-    const res = await fetch("/api/tasks/" + encodeURIComponent(feature));
-    const data = await res.json();
-    const tasks = data.tasks || [];
-    $("tasks-sub").textContent = `${tasks.length} task${tasks.length === 1 ? "" : "s"}`;
-    $("tasks-list").innerHTML = `<table><tbody>${tasks.map(t => `<tr class="taskrow" data-task="${esc(t.id)}" title="view changes">
-      <td>${esc(t.id)}</td><td>${badge(t.status)}</td><td class="title">${esc(t.title)}</td>
-    </tr>`).join("")}</tbody></table>`;
-  } catch { $("tasks-sub").textContent = ""; $("tasks-list").textContent = "Failed to load tasks."; }
-}
-function closeTasks() { $("tasks-modal").classList.remove("open"); }
-$("tasks-backdrop").addEventListener("click", closeTasks);
-$("tasks-close").addEventListener("click", closeTasks);
-
-document.addEventListener("keydown", e => {
-  if (e.key !== "Escape") return;
-  if ($("diff-modal").classList.contains("open")) closeDiff();
-  else closeTasks();
-});
-// Delegated clicks: a task row (current Tasks table or the feature modal) opens
-// its diff; a feature row opens that feature's task list.
-document.addEventListener("click", e => {
-  const taskTr = e.target.closest("tr[data-task]");
-  if (taskTr) { openDiff(taskTr.dataset.task); return; }
-  const featTr = e.target.closest("tr[data-feature]");
-  if (featTr) openFeature(featTr.dataset.feature, featTr.dataset.title);
-});
-
-refreshWorkflows(); refreshTasks(); refreshFactory(); connectEvents(); refreshCost();
-setInterval(refreshWorkflows, 2000);
-setInterval(refreshTasks, 2000);
-setInterval(refreshFactory, 3000);
-setInterval(refreshCost, 60000);
-</script>
+    refresh().catch(error => { document.querySelector('#health').textContent = error.message; document.querySelector('#health').className='pill error'; });
+    setInterval(refresh, 3000);
+    const events = document.querySelector('#events');
+    new EventSource('/api/events').onmessage = event => { events.textContent += event.data+'\n'; events.scrollTop = events.scrollHeight; };
+  </script>
 </body>
 </html>

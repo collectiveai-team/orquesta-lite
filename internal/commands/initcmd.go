@@ -9,9 +9,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	governedpack "github.com/lionelchamorro/orquestalite/examples/governed-pack"
 )
 
-//go:embed assets/team.json assets/prompts/*.md assets/schemas/*.json assets/flows.json
+//go:embed assets/team.json
 var defaultAssets embed.FS
 
 // InitOptions tunes scaffolding behaviour.
@@ -19,19 +21,9 @@ type InitOptions struct {
 	// Lang overrides language autodetection. One of "python", "node", "go",
 	// "auto", or "" (treated as auto).
 	Lang string
-	// Precommit, when set, also writes a `.pre-commit-config` matching the
-	// detected language and sets `lint_command` in team.json so the fix-loop
-	// lint gate enforces the same rule set as the developer's local hook.
-	Precommit bool
 }
 
-// Init scaffolds a project directory with default assets, using language
-// autodetection for the .gitignore and full_test_command.
-func Init(dir string) error {
-	return InitWithOptions(dir, InitOptions{})
-}
-
-// InitWithOptions scaffolds a project with the given options.
+// InitWithOptions scaffolds a durable v2 project with the given options.
 func InitWithOptions(dir string, opts InitOptions) error {
 	if err := os.MkdirAll(filepath.Join(dir, ".orquestalite", "results"), 0o755); err != nil {
 		return err
@@ -53,71 +45,46 @@ func InitWithOptions(dir string, opts InitOptions) error {
 		return err
 	}
 
-	// Optional pre-commit scaffolding: write .pre-commit-config and set
-	// team.json's lint_command to the matching rule set so the fix-loop lint
-	// gate enforces it (a violation feeds {{LINT_FEEDBACK}} back to the coder
-	// instead of a raw git hook aborting the agent's commit).
-	if opts.Precommit {
-		if rs, err := applyPrecommit(dir, teamPath, lang); err != nil {
-			fmt.Fprintf(os.Stdout, "warning: precommit scaffolding skipped for %q: %v\n", lang, err)
-		} else {
-			fmt.Fprintf(os.Stdout, "precommit: wrote .pre-commit-config (%s) and set team.json lint_command\n", rs.Name)
-		}
-	}
-
 	if _, err := exec.LookPath("codex"); err != nil {
 		fmt.Fprintln(os.Stdout, "warning: codex CLI not found in PATH; the default team.json sets codex_gpt5 as primary coder. Install codex (https://github.com/openai/codex) or edit team.json to use a different agent.")
-	}
-
-	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0o755); err != nil {
-		return err
-	}
-	entries, err := fs.ReadDir(defaultAssets, "assets/prompts")
-	if err != nil {
-		return err
-	}
-	for _, e := range entries {
-		if err := writeIfMissing(
-			filepath.Join(dir, "prompts", e.Name()),
-			mustReadAsset("assets/prompts/"+e.Name()),
-		); err != nil {
-			return err
-		}
-	}
-
-	if err := os.MkdirAll(filepath.Join(dir, "schemas"), 0o755); err != nil {
-		return err
-	}
-	schemaEntries, err := fs.ReadDir(defaultAssets, "assets/schemas")
-	if err != nil {
-		return err
-	}
-	for _, e := range schemaEntries {
-		if err := writeIfMissing(
-			filepath.Join(dir, "schemas", e.Name()),
-			mustReadAsset("assets/schemas/"+e.Name()),
-		); err != nil {
-			return err
-		}
 	}
 
 	if err := writeGitignore(filepath.Join(dir, ".gitignore"), lang); err != nil {
 		return err
 	}
 
-	// flows.json — the configuration-driven flow engine's default flow
-	// catalogue. Same write-if-missing policy as team.json: a project that
-	// already customised its flows keeps them.
-	if err := writeIfMissing(filepath.Join(dir, "flows.json"), mustReadAsset("assets/flows.json")); err != nil {
+	if err := installBuiltinDevelopmentPack(dir); err != nil {
 		return err
 	}
 
 	return commitGitignore(dir)
 }
 
+func installBuiltinDevelopmentPack(projectDir string) error {
+	destination := filepath.Join(projectDir, ".orquestalite", "packs", "development", "4")
+	return fs.WalkDir(governedpack.FS, "pack", func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relative, err := filepath.Rel("pack", path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(destination, relative)
+		if entry.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		data, err := governedpack.FS.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return writeIfMissing(target, data)
+	})
+}
+
 // commitGitignore stages and commits ONLY the .gitignore so the ignore rules
-// (which keep run's Rollback `git clean -fd` from deleting team.json/prompts/
-// schemas/.orquestalite) are themselves tracked and survive across rollbacks.
+// (which keep workflow state and team.json from being deleted by cleanup) are
+// themselves tracked and survive across rollbacks.
 //
 // It is a no-op when git is absent, dir is not a work tree, or .gitignore has
 // no staged change (keeps re-running Init idempotent). Only the .gitignore path
@@ -217,30 +184,23 @@ func detectLanguage(dir string) string {
 // install` and `doctor` all reported success and the very first `flow run`
 // failed on a missing key.
 func applyTestCommand(team []byte, lang string) []byte {
-	var testCmd string
 	var testArgv, lintArgv []string
 	switch lang {
 	case "python":
-		testCmd = "uv run pytest -q"
 		testArgv = []string{"uv", "run", "pytest", "-q"}
 		lintArgv = []string{"uv", "run", "ruff", "check", "."}
 	case "node":
-		testCmd = "npm test --silent"
 		testArgv = []string{"npm", "test", "--silent"}
 		lintArgv = []string{"npm", "run", "lint"}
 	case "go":
 		return team
 	default:
-		// Ambiguous language: clear the commands rather than keep the Go
-		// defaults, which would fail every gate in a non-Go repo. Empty is a
-		// no-op for the string form (see config.Validate); for the argv form
-		// it is a deliberate, loud hole — doctor reports it and a flow that
+		// Ambiguous language: clear the argv gates rather than keep Go defaults,
+		// which would fail every gate in a non-Go repo. This is a deliberate,
+		// loud hole — doctor reports it and a flow that
 		// needs the gate refuses to start rather than silently running
 		// nothing. The run-time detector and the operator fill these in.
-		testCmd = ""
 	}
-	team = bytes.Replace(team, []byte(`"full_test_command": "go test ./..."`),
-		[]byte(fmt.Sprintf(`"full_test_command": %q`, testCmd)), 1)
 	team = bytes.Replace(team, []byte(`"lint_argv": ["go", "vet", "./..."]`),
 		[]byte(`"lint_argv": `+encodeArgv(lintArgv)), 1)
 	team = bytes.Replace(team, []byte(`"test_argv": ["go", "test", "./..."]`),
@@ -259,15 +219,12 @@ func encodeArgv(argv []string) string {
 	return "[" + strings.Join(quoted, ", ") + "]"
 }
 
-// writeGitignore ensures .gitignore covers .orquestalite/ plus any
+// writeGitignore ensures .gitignore covers durable local state plus any
 // language-appropriate build artefacts. Idempotent: re-running adds nothing.
 func writeGitignore(path, lang string) error {
-	// team.json, prompts/, and schemas/ are ignored alongside .orquestalite/ so
-	// run's Rollback (`git clean -fd`) cannot delete them. The .gitignore itself
-	// is committed by commitGitignore so the rules are tracked and survive the
-	// clean — otherwise an untracked .gitignore is wiped on the first rollback
-	// and the ignored dirs die on the next one.
-	entries := []string{".orquestalite/", "team.json", "prompts/", "schemas/", "flows.json"}
+	// Pack installs and workflow state live under .orquestalite; team.json is
+	// local runtime configuration. Project-owned v2 flows remain trackable.
+	entries := []string{".orquestalite/", "team.json"}
 	switch lang {
 	case "python":
 		entries = append(entries,

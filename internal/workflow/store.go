@@ -126,11 +126,6 @@ type CreateRunParams struct {
 	IR, Inputs, Policy                     json.RawMessage
 }
 
-func (s *Store) CreateRun(ctx context.Context, params CreateRunParams) (*Run, error) {
-	run, _, err := s.CreateRunOnce(ctx, params)
-	return run, err
-}
-
 // CreateRunOnce atomically claims a source key. Repeated delivery of the same
 // external trigger returns its original run without creating a second run.
 func (s *Store) CreateRunOnce(ctx context.Context, params CreateRunParams) (*Run, bool, error) {

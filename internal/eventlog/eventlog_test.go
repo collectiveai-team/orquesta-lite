@@ -15,7 +15,7 @@ import (
 func TestSetRunID_StampsEvents(t *testing.T) {
 	dir := t.TempDir()
 	pretty := &bytes.Buffer{}
-	l, err := Open(filepath.Join(dir, "run.log"), pretty)
+	l, err := OpenWithFormat(filepath.Join(dir, "run.log"), pretty, FormatVerbose)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +40,7 @@ func TestSetRunID_StampsEvents(t *testing.T) {
 func TestLog_WritesJSONLAndPretty(t *testing.T) {
 	dir := t.TempDir()
 	pretty := &bytes.Buffer{}
-	l, err := Open(filepath.Join(dir, "run.log"), pretty)
+	l, err := OpenWithFormat(filepath.Join(dir, "run.log"), pretty, FormatVerbose)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +69,7 @@ func TestLog_WritesJSONLAndPretty(t *testing.T) {
 func TestLog_PrettyOutputSanitisesLongMultilineFields(t *testing.T) {
 	dir := t.TempDir()
 	pretty := &bytes.Buffer{}
-	l, err := Open(filepath.Join(dir, "run.log"), pretty)
+	l, err := OpenWithFormat(filepath.Join(dir, "run.log"), pretty, FormatVerbose)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +93,7 @@ func TestLog_PrettyOutputSanitisesLongMultilineFields(t *testing.T) {
 func TestRotateAtThreshold(t *testing.T) {
 	dir := t.TempDir()
 	pretty := &bytes.Buffer{}
-	l, _ := Open(filepath.Join(dir, "run.log"), pretty)
+	l, _ := OpenWithFormat(filepath.Join(dir, "run.log"), pretty, FormatVerbose)
 	l.RotateBytes = 200 // tiny threshold for test
 	defer l.Close()
 
@@ -219,7 +219,7 @@ func TestVerboseFormat_StableOrderAndElidesEmpty(t *testing.T) {
 func TestAppendPreservesOutboxEnvelope(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "run.log")
-	logger, err := Open(path, io.Discard)
+	logger, err := OpenWithFormat(path, io.Discard, FormatVerbose)
 	if err != nil {
 		t.Fatal(err)
 	}

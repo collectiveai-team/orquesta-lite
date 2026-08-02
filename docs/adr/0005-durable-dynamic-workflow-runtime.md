@@ -1,72 +1,41 @@
 # ADR-0005: Durable dynamic workflow runtime
 
 Date: 2026-07-14
-Status: Accepted
+Status: Accepted; cutover completed 2026-08-01
 
 ## Context
 
-orq-lite currently has two execution models. `internal/loops` and
-`internal/factory` implement the production development lifecycle with durable
-task/factory files and domain-specific recovery. `internal/engine` interprets
-configuration-driven flows, but stores context in memory and does not provide
-equivalent validation, idempotency, recovery, or resume semantics.
-
-Extending the generic engine with native actions that invoke the specialized
-loops would preserve two schedulers while hiding one behind an opaque action.
-It would also prevent users from changing the implementation and verification
-strategy declaratively.
+Orquestalite previously had specialized Go schedulers and a separate in-memory flow interpreter. Adding features to both produced divergent semantics for validation, recovery, resume, quality gates, and observability.
 
 ## Decision
 
-We will converge on one generic workflow runtime with four layers:
+Orquestalite has one runtime with four layers:
 
-1. `internal/flow`: versioned flow/subflow documents and an immutable compiled IR.
-2. `internal/workflow`: durable state machine, scheduling, retry, resume, budgets,
-   approvals, and event outbox.
-3. `internal/activity`: typed, bounded effects with schemas, idempotency mode,
-   reconciliation, and optional compensation.
-4. External packs: domain workflows, policies, prompts, schemas, and activities.
+1. `internal/flow`: strict versioned flow/subflow documents and immutable compiled IR.
+2. `internal/workflow`: durable scheduling, retry, resume, budgets, approvals, and transactional event outbox.
+3. `internal/activity`: typed bounded effects with explicit recovery semantics.
+4. Packs: domain flows, subflows, policies, prompts, schemas, and optional activity manifests.
 
-Flow v2 definitions are runtime data. High-level operations such as
-`implement-ticket` are subflows, not Go activities. Activities do not schedule
-other work or own retry loops.
+High-level operations are subflows, not opaque Go activities. Activities do not schedule work or own retry loops.
 
-Operational workflow state is stored in `.orquestalite/workflows.db`.
-`.orquestalite/orq.db` remains a rebuildable read-model of `run.log`; it is not
-used for checkpoints. State transitions and their events are committed through
-a transactional outbox.
+Operational state is stored in `.orquestalite/workflows.db`. Runs pin compiled IR, policy, resources, and pack digests.
 
-The current engine, loops, and factory packages are frozen for compatibility.
-Commands migrate to versioned flow aliases one at a time. Unfinished legacy
-state is drained by the legacy runtime rather than converted automatically.
+The CLI's development commands are aliases into the installed `development` pack. No engine flag or compatibility routing remains.
 
 ## Consequences
 
-Positive:
-
-- Flows, subflows, roles, and policies can change without recompiling orq-lite.
-- Resume has explicit semantics for successful, failed, and uncertain effects.
-- The core no longer knows coder/tester/critic, tasks, factory branches, or PRs.
-- Orquesta can operate the same runtime through stable run/step/attempt models.
-
-Negative:
-
-- Two runtimes coexist during migration.
-- External effects require activity-specific reconciliation to be safely retried.
-- A development pack must reach parity before specialized packages can be removed.
+- Flows, roles, prompts, policies, and domain loops can evolve as verified data.
+- Resume behavior is explicit for successful, failed, and uncertain effects.
+- The core scheduler has no knowledge of tickets, coder/tester roles, factory queues, branches, or PRs.
+- There is one validation and recovery model to test and operate.
+- Old `tasks.json`, `factory.json`, and `flows.json` state is not converted or read.
 
 ## Guardrails
 
-- No new features are added to `internal/engine`, `internal/loops`, or
-  `internal/factory` except critical compatibility fixes.
-- `command.run` is at-most-once by default; an uncertain outcome is not retried.
 - A run pins compiled IR, policy, pack digests, and activity versions.
-- Parallel execution is deferred until sequential kill-and-resume tests pass.
-- Legacy package deletion requires a successful `orq-lite cutover check`; the
-  command validates versioned evidence plus current controlled-project and
-  pack state. Canary binaries select v2 through a link-time default while an
-  implicit v2 request still drains unfinished legacy state safely.
+- Shell permission and effect capabilities come from runtime policy, never untrusted flow input.
+- Loops and retries are structurally bounded.
+- External activities must describe the same contract as their pinned manifest.
+- Packs fail closed on missing, changed, unlisted, or symlinked resources.
 
-## Implementation
-
-See `docs/superpowers/plans/2026-07-14-durable-dynamic-workflow-runtime.md`.
+The original implementation plan was removed after cutover; the current architecture is documented in `docs/ARCHITECTURE.md`.
