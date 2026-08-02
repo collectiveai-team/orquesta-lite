@@ -199,21 +199,3 @@ func Rollup(runs []AgentRun, sessions map[string]Session) Report {
 	}
 	return rep
 }
-
-// SpendSince sums the cost of sessions referenced by agent runs at or after t.
-// Used for per-feature attribution in factory mode (run.log is shared across
-// features; the time window isolates one feature's spend).
-func SpendSince(runs []AgentRun, sessions map[string]Session, t time.Time) float64 {
-	seen := map[string]bool{}
-	total := 0.0
-	for _, r := range runs {
-		if r.TS.Before(t) || seen[r.SessionID] {
-			continue
-		}
-		seen[r.SessionID] = true
-		if s, ok := sessions[r.SessionID]; ok {
-			total += s.Cost.Total
-		}
-	}
-	return total
-}

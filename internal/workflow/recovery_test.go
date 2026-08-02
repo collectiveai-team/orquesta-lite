@@ -34,13 +34,13 @@ func (e *recoveryExecutor) Reconcile(_ context.Context, request activity.Reconci
 	return activity.ReconcileResult{Status: e.reconcile, Result: &activity.Result{Output: json.RawMessage(`{"ok":true}`), Receipt: request.IdempotencyKey}}, nil
 }
 
-func recoveryIR(t *testing.T, effect activity.EffectMode) (*flow.IR, *flow.MemoryCatalog) {
+func recoveryIR(t *testing.T, effect activity.EffectMode) (*flow.IR, *memoryCatalog) {
 	t.Helper()
 	doc, err := flow.Decode(strings.NewReader(`{"apiVersion":"orq.dev/v2","kind":"Flow","metadata":{"name":"recover","version":"1"},"steps":[{"id":"effect","uses":"activity:test.effect@1"}],"outputs":{"ok":{"$ref":"steps.effect.output.ok"}}}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	catalog := flow.NewMemoryCatalog()
+	catalog := newMemoryCatalog()
 	catalog.Activities["activity:test.effect@1"] = activity.Spec{Name: "test.effect", Version: "1", Effect: effect}
 	ir, diagnostics := flow.Compile(doc, catalog)
 	if diagnostics.HasErrors() {
@@ -54,7 +54,7 @@ func interruptedRun(t *testing.T, store *Store, ir *flow.IR) (*StepRun, *Attempt
 	ctx := context.Background()
 	irRaw, _ := json.Marshal(ir)
 	policyRaw, _ := json.Marshal(DefaultPolicy())
-	if _, err := store.CreateRun(ctx, CreateRunParams{ID: "r", FlowRef: "flow:recover@1", DefinitionHash: string(ir.Digest), IR: irRaw, Inputs: json.RawMessage(`{}`), Policy: policyRaw}); err != nil {
+	if _, _, err := store.CreateRunOnce(ctx, CreateRunParams{ID: "r", FlowRef: "flow:recover@1", DefinitionHash: string(ir.Digest), IR: irRaw, Inputs: json.RawMessage(`{}`), Policy: policyRaw}); err != nil {
 		t.Fatal(err)
 	}
 	step, err := store.EnsureStep(ctx, "r", "root", "effect", "", "activity:test.effect@1", json.RawMessage(`{}`))

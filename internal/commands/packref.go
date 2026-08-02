@@ -33,17 +33,15 @@ func resolvePackFlowRef(projectDir, target string) (root string, flowRef string,
 		}
 		packVersion = installed[len(installed)-1]
 	}
-	for _, candidate := range []string{filepath.Join(packsRoot, packName, packVersion), filepath.Join(packsRoot, packName+"@"+packVersion)} {
-		if info, statErr := os.Stat(candidate); statErr == nil && info.IsDir() {
-			return candidate, "flow:" + flowName + "@" + flowVersion, nil
-		}
+	candidate := filepath.Join(packsRoot, packName, packVersion)
+	if info, statErr := os.Stat(candidate); statErr == nil && info.IsDir() {
+		return candidate, "flow:" + flowName + "@" + flowVersion, nil
 	}
 	return "", "", fmt.Errorf("installed pack %s@%s is required for flow %s but was not found under %s (installed: %s)", packName, packVersion, flowName, packsRoot, describeInstalledVersions(installed))
 }
 
 // installedPackVersions returns every installed version of packName in
-// ascending semver order, covering both the `<name>/<version>` layout written
-// by `pack install` and the legacy flat `<name>@<version>` directory.
+// ascending semver order from the canonical `<name>/<version>` layout.
 func installedPackVersions(packsRoot, packName string) []string {
 	seen := map[string]bool{}
 	var versions []string
@@ -56,11 +54,6 @@ func installedPackVersions(packsRoot, packName string) []string {
 	}
 	for _, entry := range readDirNames(filepath.Join(packsRoot, packName)) {
 		add(entry)
-	}
-	for _, entry := range readDirNames(packsRoot) {
-		if name, version, ok := strings.Cut(entry, "@"); ok && name == packName {
-			add(version)
-		}
 	}
 	return flow.SortVersions(versions)
 }

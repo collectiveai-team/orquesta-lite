@@ -60,11 +60,6 @@ func packList(projectDir string, out io.Writer) error {
 	packsRoot := filepath.Join(projectDir, ".orquestalite", "packs")
 	names := map[string]bool{}
 	for _, entry := range readDirNames(packsRoot) {
-		name, _, hasVersion := strings.Cut(entry, "@")
-		if hasVersion {
-			names[name] = true
-			continue
-		}
 		names[entry] = true
 	}
 	sorted := make([]string, 0, len(names))
@@ -102,10 +97,9 @@ func packList(projectDir string, out io.Writer) error {
 }
 
 func packDirectory(packsRoot, name, version string) string {
-	for _, candidate := range []string{filepath.Join(packsRoot, name, version), filepath.Join(packsRoot, name+"@"+version)} {
-		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
-			return candidate
-		}
+	candidate := filepath.Join(packsRoot, name, version)
+	if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+		return candidate
 	}
 	return ""
 }

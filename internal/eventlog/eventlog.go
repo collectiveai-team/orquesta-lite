@@ -45,10 +45,6 @@ type Logger struct {
 	runID       string
 }
 
-func Open(path string, pretty io.Writer) (*Logger, error) {
-	return OpenWithFormat(path, pretty, FormatVerbose)
-}
-
 // SetRunID stamps every subsequent Log() record with this run_id (alongside
 // ts/event). An empty ID clears it. Safe for concurrent use with Log().
 func (l *Logger) SetRunID(id string) {

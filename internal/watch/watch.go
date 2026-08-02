@@ -55,15 +55,8 @@ type Config struct {
 	Enabled      map[ItemType]bool
 	ReviewOwnPRs bool // review PRs orq-lite opened (default: skip them)
 	Lister       Lister
-	// Intake is invoked for each new issue; it receives the issue body. nil →
-	// issues are observed but not acted on.
-	Intake func(ctx context.Context, issueBody string) error
-	// Review is invoked for each new PR; it receives the PR number. nil → PRs
-	// are observed but not acted on.
-	Review func(ctx context.Context, prNumber string) error
-	// Trigger is the generic v2 path. When set it receives a versioned flow ref,
-	// structured inputs and a stable source idempotency key. Legacy Intake and
-	// Review callbacks remain available during migration.
+	// Trigger receives a versioned flow ref, structured inputs and a stable
+	// source idempotency key.
 	Trigger  func(context.Context, Trigger) error
 	FlowRefs map[ItemType]string
 	// Now is the clock; nil → time.Now. Useful for deterministic tests.
@@ -227,13 +220,6 @@ func logTickError(cfg Config, err error, consecutive int) {
 	}
 }
 
-// Tick runs exactly one poll and persists state. Exported for tests so the
-// cursor/processed/dedup behavior is asserted without the wall-clock loop.
-func Tick(ctx context.Context, cfg Config, state *State) error {
-	ownUser, _ := cfg.Lister.WhoAmI(ctx)
-	return tick(ctx, cfg, state, ownUser)
-}
-
 func tick(ctx context.Context, cfg Config, state *State, ownUser string) error {
 	if cfg.Enabled[ItemIssue] {
 		items, err := cfg.Lister.ListIssues(ctx, state.LastSeen[ItemIssue])
@@ -241,13 +227,10 @@ func tick(ctx context.Context, cfg Config, state *State, ownUser string) error {
 			return err
 		}
 		if err := processItems(ctx, cfg, state, ItemIssue, items, ownUser, func(ctx context.Context, it Item) error {
-			if cfg.Trigger != nil {
-				return cfg.Trigger(ctx, triggerFor(cfg, it))
-			}
-			if cfg.Intake == nil {
+			if cfg.Trigger == nil {
 				return nil
 			}
-			return cfg.Intake(ctx, it.Body)
+			return cfg.Trigger(ctx, triggerFor(cfg, it))
 		}); err != nil {
 			_ = state.Save(cfg.ProjectDir)
 			return err
@@ -259,13 +242,10 @@ func tick(ctx context.Context, cfg Config, state *State, ownUser string) error {
 			return err
 		}
 		if err := processItems(ctx, cfg, state, ItemPR, items, ownUser, func(ctx context.Context, it Item) error {
-			if cfg.Trigger != nil {
-				return cfg.Trigger(ctx, triggerFor(cfg, it))
-			}
-			if cfg.Review == nil {
+			if cfg.Trigger == nil {
 				return nil
 			}
-			return cfg.Review(ctx, it.Number)
+			return cfg.Trigger(ctx, triggerFor(cfg, it))
 		}); err != nil {
 			_ = state.Save(cfg.ProjectDir)
 			return err

@@ -22,7 +22,7 @@ func TestWorkflowAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = store.CreateRun(context.Background(), workflow.CreateRunParams{ID: "r1", FlowRef: "flow:demo@1", DefinitionHash: "hash", IR: json.RawMessage(`{}`), Inputs: json.RawMessage(`{}`), Policy: json.RawMessage(`{}`)}); err != nil {
+	if _, _, err = store.CreateRunOnce(context.Background(), workflow.CreateRunParams{ID: "r1", FlowRef: "flow:demo@1", DefinitionHash: "hash", IR: json.RawMessage(`{}`), Inputs: json.RawMessage(`{}`), Policy: json.RawMessage(`{}`)}); err != nil {
 		t.Fatal(err)
 	}
 	store.Close()

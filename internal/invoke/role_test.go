@@ -26,6 +26,24 @@ type fakeRoleResult struct {
 
 func (r fakeRoleResult) MemoryNote() *string { return r.NotesForMemory }
 
+// Role preserves the old typed test call shape while exercising the v2 Raw
+// invocation path used by activity:agent.invoke@1.
+func Role[T any](ctx context.Context, inv *RoleInvoker, roleName string, call RoleCall, rc RunContext, parse func(path string) (*T, error)) (*T, error) {
+	resultPath := call.ResultPath
+	if resultPath == "" {
+		resultPath = inv.Specs[roleName].ResultPath
+	}
+	var parsed *T
+	_, err := Raw(ctx, inv, roleName, call, rc, func([]byte) error {
+		value, parseErr := parse(absPath(inv.Dir, resultPath))
+		if parseErr == nil {
+			parsed = value
+		}
+		return parseErr
+	})
+	return parsed, err
+}
+
 type fakeAgentRunner struct {
 	specs []runner.Spec
 }
@@ -64,7 +82,7 @@ func (usageAgentRunner) Run(_ context.Context, spec runner.Spec) (*runner.Result
 	}, nil
 }
 
-func TestRoleRunsArchivesParsesAndAppendsMemory(t *testing.T) {
+func TestRawRunsArchivesParsesAndInjectsMemory(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, "prompts"), 0o755); err != nil {
 		t.Fatal(err)
@@ -79,7 +97,7 @@ func TestRoleRunsArchivesParsesAndAppendsMemory(t *testing.T) {
 	if err := os.WriteFile(memPath, []byte("prior note"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	logger, err := eventlog.Open(filepath.Join(dir, ".orquestalite", "run.log"), io.Discard)
+	logger, err := eventlog.OpenWithFormat(filepath.Join(dir, ".orquestalite", "run.log"), io.Discard, eventlog.FormatVerbose)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,14 +161,6 @@ func TestRoleRunsArchivesParsesAndAppendsMemory(t *testing.T) {
 		t.Fatalf("archive missing: %v", err)
 	}
 
-	memRaw, err := os.ReadFile(memPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	mem := string(memRaw)
-	if !strings.Contains(mem, "## [cycle 4, task T123, tester]") || !strings.Contains(mem, "remember this") {
-		t.Fatalf("memory note not appended with run context: %q", mem)
-	}
 }
 
 func TestRunOnceLogsUsageTokens(t *testing.T) {
@@ -162,7 +172,7 @@ func TestRunOnceLogsUsageTokens(t *testing.T) {
 		t.Fatal(err)
 	}
 	logPath := filepath.Join(dir, ".orquestalite", "run.log")
-	logger, err := eventlog.Open(logPath, io.Discard)
+	logger, err := eventlog.OpenWithFormat(logPath, io.Discard, eventlog.FormatVerbose)
 	if err != nil {
 		t.Fatal(err)
 	}

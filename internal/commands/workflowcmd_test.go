@@ -109,3 +109,19 @@ func TestFlowCLIMissingPackHasActionableError(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 }
+
+func TestFlowCLIListIgnoresLegacyFlowsJSON(t *testing.T) {
+	dir := t.TempDir()
+	legacy := []byte(`{"flows":{"legacy-only":{"steps":[]}}}`)
+	if err := os.WriteFile(filepath.Join(dir, "flows.json"), legacy, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out bytes.Buffer
+	if err := FlowCLI(context.Background(), dir, []string{"list"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "legacy-only") {
+		t.Fatalf("flow list exposed legacy flows.json entry:\n%s", out.String())
+	}
+}

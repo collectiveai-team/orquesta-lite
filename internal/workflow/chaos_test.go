@@ -52,7 +52,7 @@ func TestChaosOutboxReplaysAfterAppendFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	_, err = store.CreateRun(context.Background(), CreateRunParams{ID: "outbox", FlowRef: "flow:test@1", DefinitionHash: "h", IR: json.RawMessage(`{}`), Inputs: json.RawMessage(`{}`), Policy: json.RawMessage(`{}`)})
+	_, _, err = store.CreateRunOnce(context.Background(), CreateRunParams{ID: "outbox", FlowRef: "flow:test@1", DefinitionHash: "h", IR: json.RawMessage(`{}`), Inputs: json.RawMessage(`{}`), Policy: json.RawMessage(`{}`)})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -112,8 +112,8 @@ func TestContractRetry_InvalidContractRecovers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected success, got err=%v", err)
 	}
-	if string(raw) != `{"status":"ok"}` {
-		t.Fatalf("raw = %s", raw)
+	if string(raw.Output) != `{"status":"ok"}` {
+		t.Fatalf("raw = %s", raw.Output)
 	}
 	if len(r.specs) != 2 {
 		t.Fatalf("expected 2 runner calls, got %d", len(r.specs))

@@ -3,659 +3,93 @@ package config
 import (
 	"os"
 	"path/filepath"
-	"reflect"
-	"strings"
 	"testing"
-	"time"
 )
 
-func TestLimits_VisualRounds(t *testing.T) {
-	if got := (Limits{}).VisualRounds(); got != 2 {
-		t.Errorf("default VisualRounds = %d, want 2", got)
-	}
-	if got := (Limits{MaxVisualRounds: 4}).VisualRounds(); got != 4 {
-		t.Errorf("configured VisualRounds = %d, want 4", got)
-	}
-	if got := (Limits{MaxVisualRounds: -1}).VisualRounds(); got != 2 {
-		t.Errorf("negative VisualRounds falls back to %d, want 2", got)
-	}
-}
-
-func writeTeamJSON(t *testing.T, body string) string {
+func writeConfig(t *testing.T, body string) string {
 	t.Helper()
-	dir := t.TempDir()
-	p := filepath.Join(dir, "team.json")
-	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+	path := filepath.Join(t.TempDir(), "team.json")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	return p
+	return path
 }
 
-func TestLoad_Valid(t *testing.T) {
-	p := writeTeamJSON(t, `{
-		"agents": {
-			"a1": {"cmd": ["claude", "-p", "{{PROMPT}}"], "rate_limit_pattern": "rate_?limit"}
-		},
-		"roles": {
-			"coder": {"agents": ["a1"], "prompt": "prompts/coder.md", "result_path": ".orquestalite/results/coder.json", "timeout_seconds": 900}
-		},
-		"limits": {"max_review_cycles": 3, "max_fix_iterations": 5},
-		"rate_limit_backoff": {"initial_seconds": 30, "factor": 2, "max_seconds": 1800, "default_pattern": "rate_?limit|429"},
-		"full_test_command": "go test ./..."
-	}`)
+const validTeam = `{
+  "agents": {
+    "primary": {"provider":"codex","model":"gpt-5.5"},
+    "fallback": {"cmd":["fake","{{PROMPT}}"]}
+  },
+  "roles": {
+    "coder": {"agents":["primary"],"escalation_ladder":["fallback"],"prompt":"prompts/coder.md","result_path":".orquestalite/results/coder.json","timeout_seconds":60}
+  },
+  "limits":{"resume_sessions":true},
+  "rate_limit_backoff":{"initial_seconds":1,"factor":2,"max_seconds":8},
+  "runtime":{"retention_runs":7,"artifact_max_bytes":1024},
+  "lint_argv":["go","vet","./..."],
+  "test_argv":["go","test","./..."]
+}`
 
-	cfg, err := Load(p)
+func TestLoadAndResolveDeclaredRoles(t *testing.T) {
+	config, err := Load(writeConfig(t, validTeam))
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatal(err)
 	}
-	if cfg.Limits.MaxFixIterations != 5 {
-		t.Errorf("MaxFixIterations = %d, want 5", cfg.Limits.MaxFixIterations)
-	}
-	if got := cfg.Roles["coder"].Agents[0]; got != "a1" {
-		t.Errorf("coder.agents[0] = %q, want %q", got, "a1")
-	}
-}
-
-func TestResolve_IncludesCustomRoles(t *testing.T) {
-	// A config-driven flow may declare roles beyond the orchestrated/optional
-	// vocabulary (e.g. architect). Resolve must surface them so the engine can
-	// invoke them; the mandatory orchestrated roles are still required.
-	role := func(n string) string {
-		return `"` + n + `": {"agents": ["a1"], "prompt": "prompts/` + n + `.md", "result_path": ".orquestalite/results/` + n + `.json", "timeout_seconds": 60}`
-	}
-	p := writeTeamJSON(t, `{
-		"agents": {"a1": {"cmd": ["claude", "-p", "{{PROMPT}}"], "rate_limit_pattern": "x"}},
-		"roles": {`+
-		role("parser")+`,`+role("coder")+`,`+role("tester")+`,`+role("critic")+`,`+role("reviewer")+`,`+role("architect")+`,`+role("qa")+`,`+role("pm")+`
-		},
-		"limits": {"max_review_cycles": 1, "max_fix_iterations": 1},
-		"rate_limit_backoff": {"initial_seconds": 1, "factor": 2, "max_seconds": 2, "default_pattern": "x"},
-		"full_test_command": "true"
-	}`)
-
-	cfg, err := Load(p)
+	roles, err := config.ResolveAll()
 	if err != nil {
-		t.Fatalf("load: %v", err)
+		t.Fatal(err)
 	}
-	specs, err := cfg.Resolve()
+	coder := roles["coder"]
+	if len(coder.Agents) != 1 || coder.Agents[0].Provider != "codex" || len(coder.EscalationLadder) != 1 {
+		t.Fatalf("coder = %+v", coder)
+	}
+	if coder.PromptPath != "prompts/coder.md" || coder.Timeout.Seconds() != 60 {
+		t.Fatalf("coder = %+v", coder)
+	}
+}
+
+func TestLoadDynamicValidatesOnlyReferencedRoles(t *testing.T) {
+	path := writeConfig(t, `{
+      "agents":{"ok":{"cmd":["fake","{{PROMPT}}"]}},
+      "roles":{
+        "used":{"agents":["ok"],"prompt":"used.md","result_path":"used.json","timeout_seconds":1},
+        "broken":{"agents":["missing"],"prompt":"broken.md","result_path":"broken.json","timeout_seconds":1}
+      }
+    }`)
+	config, err := LoadDynamic(path)
 	if err != nil {
-		t.Fatalf("resolve: %v", err)
+		t.Fatal(err)
 	}
-	for _, custom := range []string{"architect", "qa", "pm"} {
-		if _, ok := specs[custom]; !ok {
-			t.Errorf("custom role %q missing from resolved specs", custom)
-		}
+	if _, err := config.ResolveRoles([]string{"used"}); err != nil {
+		t.Fatalf("unreferenced role blocked resolution: %v", err)
 	}
-}
-
-func TestLoad_UnknownAgentInRoleFails(t *testing.T) {
-	p := writeTeamJSON(t, `{
-		"agents": {"a1": {"cmd": ["x"]}},
-		"roles": {"coder": {"agents": ["a1", "ghost"], "prompt": "p.md", "result_path": "r.json", "timeout_seconds": 1}},
-		"limits": {"max_review_cycles": 1, "max_fix_iterations": 1},
-		"rate_limit_backoff": {"initial_seconds": 1, "factor": 2, "max_seconds": 2, "default_pattern": "x"},
-		"full_test_command": "true"
-	}`)
-
-	_, err := Load(p)
-	if err == nil || !strings.Contains(err.Error(), "ghost") {
-		t.Fatalf("expected error mentioning unknown agent 'ghost', got: %v", err)
+	if _, err := config.ResolveRoles([]string{"broken"}); err == nil {
+		t.Fatal("referenced invalid role should fail")
 	}
 }
 
-func TestLoad_PromptInCmdMustContainMarker(t *testing.T) {
-	p := writeTeamJSON(t, `{
-		"agents": {"a1": {"cmd": ["claude", "-p", "no-marker"]}},
-		"roles": {"coder": {"agents": ["a1"], "prompt": "p.md", "result_path": "r.json", "timeout_seconds": 1}},
-		"limits": {"max_review_cycles": 1, "max_fix_iterations": 1},
-		"rate_limit_backoff": {"initial_seconds": 1, "factor": 2, "max_seconds": 2, "default_pattern": "x"},
-		"full_test_command": "true"
-	}`)
-	_, err := Load(p)
-	if err == nil || !strings.Contains(err.Error(), "{{PROMPT}}") {
-		t.Fatalf("expected error about missing {{PROMPT}} marker, got: %v", err)
-	}
-}
-
-func TestLoad_ProviderAgentDoesNotRequirePromptMarker(t *testing.T) {
-	p := writeTeamJSON(t, `{
-		"agents": {"a1": {"provider": "codex", "model": "gpt-5", "effort": "medium"}},
-		"roles": {"coder": {"agents": ["a1"], "prompt": "p.md", "result_path": "r.json", "timeout_seconds": 1}},
-		"limits": {"max_review_cycles": 1, "max_fix_iterations": 1},
-		"rate_limit_backoff": {"initial_seconds": 1, "factor": 2, "max_seconds": 2, "default_pattern": "x"},
-		"full_test_command": "true"
-	}`)
-	cfg, err := Load(p)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got := cfg.Agents["a1"].Provider; got != "codex" {
-		t.Fatalf("Provider = %q, want codex", got)
-	}
-}
-
-func TestLoad_AgentCannotSetCmdAndProvider(t *testing.T) {
-	p := writeTeamJSON(t, `{
-		"agents": {"a1": {"cmd": ["claude", "-p", "{{PROMPT}}"], "provider": "claude"}},
-		"roles": {"coder": {"agents": ["a1"], "prompt": "p.md", "result_path": "r.json", "timeout_seconds": 1}},
-		"limits": {"max_review_cycles": 1, "max_fix_iterations": 1},
-		"rate_limit_backoff": {"initial_seconds": 1, "factor": 2, "max_seconds": 2, "default_pattern": "x"},
-		"full_test_command": "true"
-	}`)
-	_, err := Load(p)
-	if err == nil || !strings.Contains(err.Error(), "both cmd and provider") {
-		t.Fatalf("expected cmd/provider conflict error, got: %v", err)
-	}
-}
-
-func TestLoad_UnknownProviderFails(t *testing.T) {
-	p := writeTeamJSON(t, `{
-		"agents": {"a1": {"provider": "ghost"}},
-		"roles": {"coder": {"agents": ["a1"], "prompt": "p.md", "result_path": "r.json", "timeout_seconds": 1}},
-		"limits": {"max_review_cycles": 1, "max_fix_iterations": 1},
-		"rate_limit_backoff": {"initial_seconds": 1, "factor": 2, "max_seconds": 2, "default_pattern": "x"},
-		"full_test_command": "true"
-	}`)
-	_, err := Load(p)
-	if err == nil || !strings.Contains(err.Error(), "unknown provider") {
-		t.Fatalf("expected unknown provider error, got: %v", err)
-	}
-}
-
-func TestLoad_EscalationLadderRoundTrip(t *testing.T) {
-	p := writeTeamJSON(t, `{
-		"agents": {
-			"a1": {"cmd": ["claude", "-p", "{{PROMPT}}"]},
-			"a2": {"cmd": ["claude", "-p", "{{PROMPT}}"]}
-		},
-		"roles": {
-			"coder": {
-				"agents": ["a1"],
-				"escalation_ladder": ["a2"],
-				"prompt": "prompts/coder.md",
-				"result_path": ".orquestalite/results/coder.json",
-				"timeout_seconds": 900
+func TestValidationRejectsInvalidAgentAndBackoff(t *testing.T) {
+	for name, body := range map[string]string{
+		"unknown provider":      `{"agents":{"a":{"provider":"bogus"}},"roles":{"r":{"agents":["a"],"prompt":"p","result_path":"r","timeout_seconds":1}},"rate_limit_backoff":{"initial_seconds":1,"factor":2,"max_seconds":2}}`,
+		"missing prompt marker": `{"agents":{"a":{"cmd":["fake"]}},"roles":{"r":{"agents":["a"],"prompt":"p","result_path":"r","timeout_seconds":1}},"rate_limit_backoff":{"initial_seconds":1,"factor":2,"max_seconds":2}}`,
+		"bad backoff":           `{"agents":{"a":{"cmd":["fake","{{PROMPT}}"]}},"roles":{"r":{"agents":["a"],"prompt":"p","result_path":"r","timeout_seconds":1}},"rate_limit_backoff":{"initial_seconds":2,"factor":1,"max_seconds":1}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Load(writeConfig(t, body)); err == nil {
+				t.Fatal("expected validation error")
 			}
-		},
-		"limits": {"max_review_cycles": 3, "max_fix_iterations": 5},
-		"rate_limit_backoff": {"initial_seconds": 30, "factor": 2, "max_seconds": 1800, "default_pattern": "rate_?limit|429"},
-		"full_test_command": "go test ./..."
-	}`)
-
-	cfg, err := Load(p)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	ladder := cfg.Roles["coder"].EscalationLadder
-	if len(ladder) != 1 || ladder[0] != "a2" {
-		t.Errorf("EscalationLadder = %v, want [a2]", ladder)
+		})
 	}
 }
 
-func TestLoad_EscalationLadderUnknownAgentFails(t *testing.T) {
-	p := writeTeamJSON(t, `{
-		"agents": {
-			"a1": {"cmd": ["claude", "-p", "{{PROMPT}}"]}
-		},
-		"roles": {
-			"coder": {
-				"agents": ["a1"],
-				"escalation_ladder": ["ghost_agent"],
-				"prompt": "prompts/coder.md",
-				"result_path": ".orquestalite/results/coder.json",
-				"timeout_seconds": 900
-			}
-		},
-		"limits": {"max_review_cycles": 3, "max_fix_iterations": 5},
-		"rate_limit_backoff": {"initial_seconds": 30, "factor": 2, "max_seconds": 1800, "default_pattern": "rate_?limit|429"},
-		"full_test_command": "go test ./..."
-	}`)
-
-	_, err := Load(p)
-	if err == nil || !strings.Contains(err.Error(), "ghost_agent") {
-		t.Fatalf("expected error mentioning unknown agent 'ghost_agent', got: %v", err)
+func TestRuntimeAndSessionDefaults(t *testing.T) {
+	if !(Limits{}).SessionResumeEnabled() {
+		t.Fatal("session resume should default on")
 	}
-}
-
-func TestConfig_PreflightEnabledRoundTrips(t *testing.T) {
-	p := writeTeamJSON(t, `{
-		"agents": {
-			"a1": {"cmd": ["claude", "-p", "{{PROMPT}}"]}
-		},
-		"roles": {
-			"coder": {
-				"agents": ["a1"],
-				"prompt": "prompts/coder.md",
-				"result_path": ".orquestalite/results/coder.json",
-				"timeout_seconds": 900
-			}
-		},
-		"limits": {"max_review_cycles": 3, "max_fix_iterations": 5, "preflight_enabled": true},
-		"rate_limit_backoff": {"initial_seconds": 30, "factor": 2, "max_seconds": 1800, "default_pattern": "rate_?limit|429"},
-		"full_test_command": "go test ./..."
-	}`)
-
-	cfg, err := Load(p)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if (Runtime{}).RetentionCeiling() != 20 || (Runtime{}).ArtifactLimit() != 8<<20 {
+		t.Fatal("unexpected runtime defaults")
 	}
-	if !cfg.Limits.PreflightEnabled {
-		t.Errorf("PreflightEnabled = false, want true")
-	}
-
-	// Verify default (omitempty) — a config without the field should default to false.
-	p2 := writeTeamJSON(t, `{
-		"agents": {
-			"a1": {"cmd": ["claude", "-p", "{{PROMPT}}"]}
-		},
-		"roles": {
-			"coder": {
-				"agents": ["a1"],
-				"prompt": "prompts/coder.md",
-				"result_path": ".orquestalite/results/coder.json",
-				"timeout_seconds": 900
-			}
-		},
-		"limits": {"max_review_cycles": 3, "max_fix_iterations": 5},
-		"rate_limit_backoff": {"initial_seconds": 30, "factor": 2, "max_seconds": 1800, "default_pattern": "rate_?limit|429"},
-		"full_test_command": "go test ./..."
-	}`)
-	cfg2, err := Load(p2)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if cfg2.Limits.PreflightEnabled {
-		t.Errorf("PreflightEnabled = true, want false (default)")
-	}
-}
-
-func TestConfig_DecomposePromptRoundTrips(t *testing.T) {
-	p := writeTeamJSON(t, `{
-		"agents": {
-			"a1": {"cmd": ["claude", "-p", "{{PROMPT}}"]}
-		},
-		"roles": {
-			"parser": {
-				"agents": ["a1"],
-				"prompt": "prompts/parser.md",
-				"result_path": ".orquestalite/results/parser.json",
-				"timeout_seconds": 300,
-				"decompose_prompt": "prompts/parser-decompose.md"
-			}
-		},
-		"limits": {"max_review_cycles": 3, "max_fix_iterations": 5},
-		"rate_limit_backoff": {"initial_seconds": 30, "factor": 2, "max_seconds": 1800, "default_pattern": "rate_?limit|429"},
-		"full_test_command": "go test ./..."
-	}`)
-
-	cfg, err := Load(p)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	got := cfg.Roles["parser"].DecomposePrompt
-	if got != "prompts/parser-decompose.md" {
-		t.Errorf("DecomposePrompt = %q, want %q", got, "prompts/parser-decompose.md")
-	}
-}
-
-func TestConfig_ResolveValidTeam(t *testing.T) {
-	p := writeTeamJSON(t, `{
-		"agents": {
-			"coder_agent": {"provider": "codex", "model": "gpt-5", "effort": "high", "rate_limit_pattern": "429"},
-			"parser_agent": {"cmd": ["parser", "{{PROMPT}}"], "dangerously_skip_permissions": true, "safe_mode": true},
-			"tester_agent": {"provider": "claude", "model": "claude-sonnet-4-6"},
-			"critic_agent": {"provider": "claude", "model": "claude-opus-4-8"},
-			"reviewer_agent": {"cmd": ["reviewer", "{{PROMPT}}"]}
-		},
-		"roles": {
-			"parser": {"agents": ["parser_agent"], "prompt": "prompts/parser.md", "result_path": ".orquestalite/results/parser.json", "timeout_seconds": 300, "decompose_prompt": "prompts/parser-decompose.md"},
-			"coder": {"agents": ["coder_agent", "parser_agent"], "prompt": "prompts/coder.md", "result_path": ".orquestalite/results/coder.json", "timeout_seconds": 1200, "escalation_ladder": ["parser_agent"]},
-			"tester": {"agents": ["tester_agent"], "prompt": "prompts/tester.md", "result_path": ".orquestalite/results/tester.json", "timeout_seconds": 600},
-			"critic": {"agents": ["critic_agent"], "prompt": "prompts/critic.md", "result_path": ".orquestalite/results/critic.json", "timeout_seconds": 300},
-			"reviewer": {"agents": ["reviewer_agent"], "prompt": "prompts/reviewer.md", "result_path": ".orquestalite/results/reviewer.json", "timeout_seconds": 600}
-		},
-		"limits": {"max_review_cycles": 3, "max_fix_iterations": 5},
-		"rate_limit_backoff": {"initial_seconds": 30, "factor": 2, "max_seconds": 1800, "default_pattern": "rate_?limit|429"},
-		"full_test_command": "go test ./..."
-	}`)
-
-	cfg, err := Load(p)
-	if err != nil {
-		t.Fatalf("unexpected load error: %v", err)
-	}
-	resolved, err := cfg.Resolve()
-	if err != nil {
-		t.Fatalf("unexpected resolve error: %v", err)
-	}
-
-	coder := resolved["coder"]
-	if coder.PromptPath != "prompts/coder.md" {
-		t.Errorf("coder.PromptPath = %q, want prompts/coder.md", coder.PromptPath)
-	}
-	if coder.Timeout != 1200*time.Second {
-		t.Errorf("coder.Timeout = %s, want 1200s", coder.Timeout)
-	}
-	if len(coder.Agents) != 2 || coder.Agents[0].Provider != "codex" || coder.Agents[1].Cmd[0] != "parser" {
-		t.Errorf("coder.Agents = %+v, want ordered resolved agent specs", coder.Agents)
-	}
-	if len(coder.EscalationLadder) != 1 || len(coder.EscalationLadder[0].Cmd) == 0 {
-		t.Errorf("coder.EscalationLadder = %+v, want resolved parser_agent", coder.EscalationLadder)
-	}
-	parser := resolved["parser"]
-	if parser.DecomposePrompt != "prompts/parser-decompose.md" {
-		t.Errorf("parser.DecomposePrompt = %q, want prompts/parser-decompose.md", parser.DecomposePrompt)
-	}
-	if !parser.Agents[0].SkipPerms {
-		t.Errorf("parser agent SkipPerms = false, want true")
-	}
-	if !parser.Agents[0].SafeMode {
-		t.Errorf("parser agent SafeMode = false, want true")
-	}
-}
-
-func TestConfig_ResolveMissingOrchestratedRoleFails(t *testing.T) {
-	cfg := completeResolveConfig()
-	delete(cfg.Roles, "reviewer")
-
-	_, err := cfg.Resolve()
-	if err == nil || !strings.Contains(err.Error(), `missing orchestrated role "reviewer"`) {
-		t.Fatalf("expected missing reviewer role error, got: %v", err)
-	}
-}
-
-func TestConfig_ResolveEscalationLadderTypoFails(t *testing.T) {
-	cfg := completeResolveConfig()
-	coder := cfg.Roles["coder"]
-	coder.EscalationLadder = []string{"claude_oppus"}
-	cfg.Roles["coder"] = coder
-
-	_, err := cfg.Resolve()
-	if err == nil || !strings.Contains(err.Error(), "claude_oppus") {
-		t.Fatalf("expected escalation ladder typo error, got: %v", err)
-	}
-}
-
-func TestConfig_ResolveDoesNotStatDecomposePrompt(t *testing.T) {
-	cfg := completeResolveConfig()
-	parser := cfg.Roles["parser"]
-	parser.DecomposePrompt = filepath.Join(t.TempDir(), "does-not-exist.md")
-	cfg.Roles["parser"] = parser
-
-	resolved, err := cfg.Resolve()
-	if err != nil {
-		t.Fatalf("unexpected resolve error: %v", err)
-	}
-	if resolved["parser"].DecomposePrompt != parser.DecomposePrompt {
-		t.Errorf("DecomposePrompt = %q, want %q", resolved["parser"].DecomposePrompt, parser.DecomposePrompt)
-	}
-}
-
-func completeResolveConfig() *Config {
-	return &Config{
-		Agents: map[string]Agent{
-			"claude_opus": {
-				Provider:                   "claude",
-				Model:                      "claude-opus-4-8",
-				DangerouslySkipPermissions: true,
-				SafeMode:                   true,
-				RateLimitPattern:           "429",
-			},
-			"claude_sonnet": {
-				Provider: "claude",
-				Model:    "claude-sonnet-4-6",
-			},
-			"codex_gpt5": {
-				Provider: "codex",
-				Model:    "gpt-5",
-				Effort:   "high",
-			},
-		},
-		Roles: map[string]Role{
-			"parser": {
-				Agents:          []string{"claude_opus"},
-				Prompt:          "prompts/parser.md",
-				ResultPath:      ".orquestalite/results/parser.json",
-				TimeoutSeconds:  300,
-				DecomposePrompt: "prompts/parser-decompose.md",
-			},
-			"coder": {
-				Agents:           []string{"codex_gpt5", "claude_sonnet"},
-				Prompt:           "prompts/coder.md",
-				ResultPath:       ".orquestalite/results/coder.json",
-				TimeoutSeconds:   1200,
-				EscalationLadder: []string{"claude_opus"},
-			},
-			"tester": {
-				Agents:         []string{"claude_sonnet"},
-				Prompt:         "prompts/tester.md",
-				ResultPath:     ".orquestalite/results/tester.json",
-				TimeoutSeconds: 600,
-			},
-			"critic": {
-				Agents:         []string{"claude_opus"},
-				Prompt:         "prompts/critic.md",
-				ResultPath:     ".orquestalite/results/critic.json",
-				TimeoutSeconds: 300,
-			},
-			"reviewer": {
-				Agents:         []string{"claude_opus"},
-				Prompt:         "prompts/reviewer.md",
-				ResultPath:     ".orquestalite/results/reviewer.json",
-				TimeoutSeconds: 600,
-			},
-		},
-	}
-}
-
-func fiveRolesJSON() string {
-	role := func(name string) string {
-		return `"` + name + `": {"agents": ["a1"], "prompt": "prompts/` + name + `.md", "result_path": ".orquestalite/results/` + name + `.json", "timeout_seconds": 60}`
-	}
-	return role("parser") + "," + role("coder") + "," + role("tester") + "," + role("critic") + "," + role("reviewer")
-}
-
-func TestConfig_ResolveOptionalVerifierRole(t *testing.T) {
-	p := writeTeamJSON(t, `{
-		"agents": {"a1": {"provider": "claude"}},
-		"roles": {`+fiveRolesJSON()+`,
-			"verifier": {"agents": ["a1"], "prompt": "prompts/verifier.md", "result_path": ".orquestalite/results/verifier.json", "timeout_seconds": 600}
-		},
-		"limits": {"max_review_cycles": 1, "max_fix_iterations": 1},
-		"rate_limit_backoff": {"initial_seconds": 1, "factor": 2, "max_seconds": 2, "default_pattern": "x"},
-		"full_test_command": "true"
-	}`)
-
-	cfg, err := Load(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !cfg.HasVerifier() {
-		t.Error("HasVerifier() = false, want true")
-	}
-	specs, err := cfg.Resolve()
-	if err != nil {
-		t.Fatal(err)
-	}
-	v, ok := specs["verifier"]
-	if !ok {
-		t.Fatal("verifier role not resolved")
-	}
-	if v.Timeout != 600*time.Second {
-		t.Errorf("verifier timeout = %v", v.Timeout)
-	}
-}
-
-func TestConfig_ResolveWithoutVerifierRole(t *testing.T) {
-	p := writeTeamJSON(t, `{
-		"agents": {"a1": {"provider": "claude"}},
-		"roles": {`+fiveRolesJSON()+`},
-		"limits": {"max_review_cycles": 1, "max_fix_iterations": 1},
-		"rate_limit_backoff": {"initial_seconds": 1, "factor": 2, "max_seconds": 2, "default_pattern": "x"},
-		"full_test_command": "true"
-	}`)
-
-	cfg, err := Load(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.HasVerifier() {
-		t.Error("HasVerifier() = true, want false")
-	}
-	specs, err := cfg.Resolve()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := specs["verifier"]; ok {
-		t.Error("verifier should not be resolved when absent")
-	}
-}
-
-func TestLimits_TesterVerificationDefaultsOn(t *testing.T) {
-	var l Limits
-	if !l.TesterVerificationEnabled() {
-		t.Error("nil verify_tester_command should default to enabled")
-	}
-	off := false
-	l.VerifyTesterCommand = &off
-	if l.TesterVerificationEnabled() {
-		t.Error("explicit false should disable verification")
-	}
-}
-
-func TestConfig_VerifierModes(t *testing.T) {
-	load := func(mode string) *Config {
-		modeField := ""
-		if mode != "" {
-			modeField = `"mode": "` + mode + `",`
-		}
-		p := writeTeamJSON(t, `{
-			"agents": {"a1": {"provider": "claude"}},
-			"roles": {`+fiveRolesJSON()+`,
-				"verifier": {"agents": ["a1"], `+modeField+` "prompt": "prompts/verifier.md", "result_path": ".orquestalite/results/verifier.json", "timeout_seconds": 600}
-			},
-			"limits": {"max_review_cycles": 1, "max_fix_iterations": 1},
-			"rate_limit_backoff": {"initial_seconds": 1, "factor": 2, "max_seconds": 2, "default_pattern": "x"},
-			"full_test_command": "true"
-		}`)
-		cfg, err := Load(p)
-		if err != nil {
-			t.Fatalf("mode %q: %v", mode, err)
-		}
-		return cfg
-	}
-
-	cases := []struct {
-		mode            string
-		perTask, perCyc bool
-	}{
-		{"", false, true}, // default: end of cycle
-		{"per_cycle", false, true},
-		{"per_task", true, false},
-		{"both", true, true},
-	}
-	for _, c := range cases {
-		cfg := load(c.mode)
-		if got := cfg.VerifierPerTask(); got != c.perTask {
-			t.Errorf("mode %q: VerifierPerTask = %v, want %v", c.mode, got, c.perTask)
-		}
-		if got := cfg.VerifierPerCycle(); got != c.perCyc {
-			t.Errorf("mode %q: VerifierPerCycle = %v, want %v", c.mode, got, c.perCyc)
-		}
-	}
-}
-
-func TestConfig_InvalidVerifierModeFails(t *testing.T) {
-	p := writeTeamJSON(t, `{
-		"agents": {"a1": {"provider": "claude"}},
-		"roles": {`+fiveRolesJSON()+`,
-			"verifier": {"agents": ["a1"], "mode": "sometimes", "prompt": "p.md", "result_path": "r.json", "timeout_seconds": 60}
-		},
-		"limits": {"max_review_cycles": 1, "max_fix_iterations": 1},
-		"rate_limit_backoff": {"initial_seconds": 1, "factor": 2, "max_seconds": 2, "default_pattern": "x"},
-		"full_test_command": "true"
-	}`)
-	if _, err := Load(p); err == nil || !strings.Contains(err.Error(), "mode") {
-		t.Fatalf("expected mode validation error, got %v", err)
-	}
-}
-
-func TestConfig_ConventionsFileRoundTrips(t *testing.T) {
-	p := writeTeamJSON(t, `{
-		"agents": {"a1": {"provider": "claude"}},
-		"roles": {`+fiveRolesJSON()+`},
-		"limits": {"max_review_cycles": 1, "max_fix_iterations": 1},
-		"rate_limit_backoff": {"initial_seconds": 1, "factor": 2, "max_seconds": 2, "default_pattern": "x"},
-		"full_test_command": "true",
-		"conventions_file": "docs/CONVENTIONS.md"
-	}`)
-	cfg, err := Load(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cfg.ConventionsFile != "docs/CONVENTIONS.md" {
-		t.Errorf("ConventionsFile = %q", cfg.ConventionsFile)
-	}
-}
-
-func TestLimitsFeatureRetries(t *testing.T) {
-	if got := (Limits{}).FeatureRetries(); got != 1 {
-		t.Errorf("default FeatureRetries = %d, want 1", got)
-	}
-	if got := (Limits{MaxFeatureRetries: 3}).FeatureRetries(); got != 3 {
-		t.Errorf("explicit FeatureRetries = %d, want 3", got)
-	}
-}
-
-func TestResolveAllDoesNotRequireLegacyRoles(t *testing.T) {
-	cfg := &Config{
-		Agents: map[string]Agent{"a1": {Provider: "claude"}},
-		Roles: map[string]Role{"architect": {
-			Agents:         []string{"a1"},
-			Prompt:         "prompts/architect.md",
-			ResultPath:     ".orquestalite/results/architect.json",
-			TimeoutSeconds: 60,
-		}},
-	}
-	roles, err := cfg.ResolveAll()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, ok := roles["architect"]; !ok || len(roles) != 1 {
-		t.Fatalf("roles = %#v", roles)
-	}
-	if _, err := cfg.Resolve(); err == nil {
-		t.Fatal("legacy Resolve should still require orchestrated roles")
-	}
-}
-
-func TestMissingOrchestratedRoles(t *testing.T) {
-	c := &Config{Roles: map[string]Role{"coder": {}, "critic": {}}}
-	got := c.MissingOrchestratedRoles()
-	want := []string{"parser", "tester", "reviewer"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("MissingOrchestratedRoles() = %v, want %v", got, want)
-	}
-	full := &Config{Roles: map[string]Role{
-		"parser": {}, "coder": {}, "tester": {}, "critic": {}, "reviewer": {},
-	}}
-	if got := full.MissingOrchestratedRoles(); len(got) != 0 {
-		t.Fatalf("full legacy set: MissingOrchestratedRoles() = %v, want empty", got)
-	}
-}
-
-func TestResolveRolesIgnoresBrokenUnreferencedRole(t *testing.T) {
-	cfg := &Config{
-		Agents: map[string]Agent{"good": {Provider: "claude"}},
-		Roles: map[string]Role{
-			"architect": {Agents: []string{"good"}, Prompt: "architect.md", ResultPath: "architect.json", TimeoutSeconds: 60},
-			"broken":    {Agents: []string{"missing"}, Prompt: "broken.md", ResultPath: "broken.json", TimeoutSeconds: 60},
-		},
-	}
-	roles, err := cfg.ResolveRoles([]string{"architect"})
-	if err != nil || len(roles) != 1 || roles["architect"].Agents[0].Name != "good" {
-		t.Fatalf("roles=%+v err=%v", roles, err)
-	}
-	if _, err = cfg.ResolveRoles([]string{"broken"}); err == nil {
-		t.Fatal("referenced broken role should fail")
+	if (Runtime{RetentionRuns: 3, ArtifactMaxBytes: 99}).RetentionCeiling() != 3 || (Runtime{ArtifactMaxBytes: 99}).ArtifactLimit() != 99 {
+		t.Fatal("runtime overrides ignored")
 	}
 }

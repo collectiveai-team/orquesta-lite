@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/lionelchamorro/orquestalite/internal/artifacts"
 	"github.com/lionelchamorro/orquestalite/internal/memory"
 	"github.com/lionelchamorro/orquestalite/internal/prompts"
-	"github.com/lionelchamorro/orquestalite/internal/results"
 )
 
 // ErrInvalidContract marks fallback exhaustion where every usable agent wrote
@@ -90,7 +90,7 @@ func Raw(ctx context.Context, inv *RoleInvoker, roleName string, call RoleCall, 
 	if err != nil {
 		return outcome, fmt.Errorf("read role result %s: %w", resultAbs, err)
 	}
-	if err := results.Archive(inv.Dir, archiveRole, rc.TaskID, rc.Cycle, rc.Attempt, raw); err != nil {
+	if err := artifacts.ArchiveResult(inv.Dir, archiveRole, rc.TaskID, rc.Cycle, rc.Attempt, raw); err != nil {
 		return outcome, err
 	}
 	outcome.Output = raw

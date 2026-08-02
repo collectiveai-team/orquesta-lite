@@ -179,6 +179,17 @@
      "FEATURES_PATH": {
       "$ref": "inputs.features_path"
      }
+    },
+    "context": {
+     "QA_REVIEW": {
+      "$ref": "steps.qa.output"
+     },
+     "CRITIC_REVIEW": {
+      "$ref": "steps.critic.output"
+     },
+     "ADVERSARY_REVIEW": {
+      "$ref": "steps.adversary.output"
+     }
     }
    }
   },
@@ -203,6 +214,15 @@
     },
     "verdict": {
      "$ref": "item.verdict"
+    },
+    "qa_review": {
+     "$ref": "steps.qa.output"
+    },
+    "critic_review": {
+     "$ref": "steps.critic.output"
+    },
+    "adversary_review": {
+     "$ref": "steps.adversary.output"
     }
    }
   },

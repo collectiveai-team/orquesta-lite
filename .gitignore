@@ -49,3 +49,12 @@ flows.json
 benchmark/results/*-artifacts/
 benchmark/posts/
 __pycache__/
+.env
+!.env.schema
+.tmp/
+.scratch/
+.worktrees/
+.journals/
+
+.agents/
+.claude/

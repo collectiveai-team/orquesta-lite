@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -19,7 +20,7 @@ import (
 	"github.com/lionelchamorro/orquestalite/internal/agenthealth"
 	"github.com/lionelchamorro/orquestalite/internal/artifacts"
 	"github.com/lionelchamorro/orquestalite/internal/config"
-	"github.com/lionelchamorro/orquestalite/internal/engine"
+	"github.com/lionelchamorro/orquestalite/internal/doctor"
 	"github.com/lionelchamorro/orquestalite/internal/eventlog"
 	"github.com/lionelchamorro/orquestalite/internal/fallback"
 	"github.com/lionelchamorro/orquestalite/internal/flow"
@@ -28,6 +29,60 @@ import (
 	"github.com/lionelchamorro/orquestalite/internal/sessions"
 	"github.com/lionelchamorro/orquestalite/internal/workflow"
 )
+
+const agentHealthThreshold = 2
+
+func resolveLogFormat(format eventlog.Format, out *os.File) eventlog.Format {
+	if format == eventlog.FormatHuman || format == eventlog.FormatVerbose {
+		return format
+	}
+	if out != nil {
+		if info, err := out.Stat(); err == nil && info.Mode()&os.ModeCharDevice != 0 {
+			return eventlog.FormatHuman
+		}
+	}
+	return eventlog.FormatVerbose
+}
+
+func runStaticAgentPreflight(cfg *config.Config, tracker *agenthealth.Tracker, logger *eventlog.Logger, roles []string) {
+	used := map[string]bool{}
+	for _, roleName := range roles {
+		role, ok := cfg.Roles[roleName]
+		if !ok {
+			continue
+		}
+		for _, name := range append(append([]string{}, role.Agents...), role.EscalationLadder...) {
+			used[name] = true
+		}
+	}
+	names := make([]string, 0, len(used))
+	for name := range used {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		agent, ok := cfg.Agents[name]
+		if !ok {
+			continue
+		}
+		binary := agent.Provider
+		if binary == "" && len(agent.Cmd) > 0 {
+			binary = agent.Cmd[0]
+		}
+		if binary == "" {
+			continue
+		}
+		if _, err := exec.LookPath(binary); err != nil {
+			tracker.Skip(name, agenthealth.ReasonUnreachable)
+			logger.Log(eventlog.Event{Type: "preflight_skipped_agent", Fields: map[string]any{"agent": name, "binary": binary, "reason": "binary_not_in_path"}})
+			continue
+		}
+		if agent.Provider != "" && !doctor.ProviderHasUsableCredentials(agent.Provider) {
+			tracker.Skip(name, agenthealth.ReasonNoCredentials)
+			logger.Log(eventlog.Event{Type: "preflight_skipped_agent", Fields: map[string]any{"agent": name, "binary": binary, "provider": agent.Provider, "reason": "no_credentials"}})
+		}
+	}
+}
 
 type compiledWorkflow struct {
 	Doc     *flow.Document
@@ -320,10 +375,10 @@ func (d *workflowDeps) close(ctx context.Context) error {
 	return errors.Join(flushErr, logErr, storeErr)
 }
 
-// FlowCLI dispatches both v2 workflow commands and the legacy `flow run <name>` path.
+// FlowCLI dispatches durable v2 workflow commands.
 func FlowCLI(ctx context.Context, projectDir string, args []string, out io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: orq-lite flow <validate|inspect|list|run|status|resume|cancel|approve|events> ...")
+		return fmt.Errorf("usage: orq-lite flow <validate|inspect|list|run|status|resume|cancel|approve|events> <arguments>")
 	}
 	switch args[0] {
 	case "validate", "inspect":
@@ -406,13 +461,6 @@ func flowCLIRun(ctx context.Context, projectDir string, args []string, out io.Wr
 		return fmt.Errorf("usage: orq-lite flow run <flow-ref-or-path> [key=value ...]")
 	}
 	target := args[0]
-	if !strings.Contains(target, ":") {
-		if flows, err := engine.LoadFlows(filepath.Join(projectDir, "flows.json")); err == nil {
-			if _, ok := flows.Flows[target]; ok {
-				return RunFlow(ctx, FlowOptions{ProjectDir: projectDir, TeamPath: filepath.Join(projectDir, "team.json"), FlowsPath: filepath.Join(projectDir, "flows.json"), FlowName: target, InputArgs: args[1:]})
-			}
-		}
-	}
 	compiled, err := compileWorkflowTarget(projectDir, target)
 	if err != nil {
 		return err
@@ -670,11 +718,8 @@ func workflowInputs(ir *flow.IR, args []string) (map[string]any, error) {
 }
 
 func listWorkflows(projectDir string, out io.Writer) error {
-	names := ListFlowNames(filepath.Join(projectDir, "flows.json"))
+	names := []string{}
 	seen := map[string]bool{}
-	for _, name := range names {
-		seen[name] = true
-	}
 	roots := []string{filepath.Join(projectDir, "flows"), filepath.Join(projectDir, ".orquestalite", "packs")}
 	for _, root := range roots {
 		_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
@@ -688,7 +733,7 @@ func listWorkflows(projectDir string, out io.Writer) error {
 			name := "flow:" + doc.Metadata.Name + "@" + doc.Metadata.Version
 			packRoot := flow.PackRootForPath(path)
 			if pack, packErr := flow.LoadPack(packRoot); packErr == nil {
-				name = pack.Name + "/" + doc.Metadata.Name + "@" + pack.Version
+				name = pack.Name + "/" + doc.Metadata.Name + "@" + doc.Metadata.Version
 			}
 			if !seen[name] {
 				names = append(names, name)

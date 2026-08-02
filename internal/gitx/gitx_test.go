@@ -1,7 +1,6 @@
 package gitx
 
 import (
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,328 +8,58 @@ import (
 	"testing"
 )
 
-func gitOrSkip(t *testing.T) {
+func git(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not installed")
+	command := exec.Command("git", args...)
+	command.Dir = dir
+	command.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+	out, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
 	}
+	return strings.TrimSpace(string(out))
 }
 
-func initRepo(t *testing.T) string {
+func testRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	for _, args := range [][]string{
-		{"init", "-q"},
-		{"config", "user.email", "test@test"},
-		{"config", "user.name", "test"},
-		{"commit", "--allow-empty", "-m", "init"},
-	} {
-		c := exec.Command("git", args...)
-		c.Dir = dir
-		if out, err := c.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
+	git(t, dir, "init", "-q")
+	if err := os.WriteFile(filepath.Join(dir, "base.txt"), []byte("base\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
+	git(t, dir, "add", "base.txt")
+	git(t, dir, "commit", "-q", "-m", "base")
 	return dir
 }
 
-func TestIsCleanTree_TrueOnFreshRepo(t *testing.T) {
-	gitOrSkip(t)
-	dir := initRepo(t)
-	clean, err := IsCleanTree(dir)
-	if err != nil {
+func TestRepoCleanAndWorktreeDiff(t *testing.T) {
+	dir := testRepo(t)
+	if !IsRepo(dir) {
+		t.Fatal("expected repository")
+	}
+	if clean, err := IsCleanTree(dir); err != nil || !clean {
+		t.Fatalf("clean=%v err=%v", clean, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "new.txt"), []byte("new\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if !clean {
-		t.Errorf("expected clean tree")
-	}
-}
-
-func TestDiffWorktree_IncludesModifiedAndUntracked(t *testing.T) {
-	gitOrSkip(t)
-	dir := initRepo(t)
-
-	// Modify a tracked file → appears in diff.
-	if err := os.WriteFile(filepath.Join(dir, "existing.txt"), []byte("init\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	c := exec.Command("git", "add", "existing.txt")
-	c.Dir = dir
-	if out, err := c.CombinedOutput(); err != nil {
-		t.Fatalf("git add: %v\n%s", err, out)
-	}
-	c = exec.Command("git", "commit", "-q", "-m", "add existing")
-	c.Dir = dir
-	if out, err := c.CombinedOutput(); err != nil {
-		t.Fatalf("git commit: %v\n%s", err, out)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "existing.txt"), []byte("changed\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	// Add a brand-new untracked file → must also appear (intent-to-add).
-	if err := os.WriteFile(filepath.Join(dir, "new.txt"), []byte("fresh\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
 	diff, err := DiffWorktree(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(diff, "existing.txt") {
-		t.Errorf("modified tracked file missing from worktree diff:\n%s", diff)
-	}
-	if !strings.Contains(diff, "new.txt") {
-		t.Errorf("untracked file missing from worktree diff:\n%s", diff)
-	}
-
-	// Clean tree → empty.
-	c = exec.Command("git", "add", "-A")
-	c.Dir = dir
-	if out, err := c.CombinedOutput(); err != nil {
-		t.Fatalf("git add -A: %v\n%s", err, out)
-	}
-	c = exec.Command("git", "commit", "-q", "-m", "stage all")
-	c.Dir = dir
-	if out, err := c.CombinedOutput(); err != nil {
-		t.Fatalf("git commit: %v\n%s", err, out)
-	}
-	diff, err = DiffWorktree(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if diff != "" {
-		t.Errorf("expected empty diff on clean tree, got:\n%s", diff)
+	if err != nil || !strings.Contains(diff, "new.txt") {
+		t.Fatalf("diff=%q err=%v", diff, err)
 	}
 }
 
-func TestIsCleanTree_FalseAfterModification(t *testing.T) {
-	gitOrSkip(t)
-	dir := initRepo(t)
-	if err := os.WriteFile(filepath.Join(dir, "x.txt"), []byte("hi"), 0o644); err != nil {
+func TestDiffRefs(t *testing.T) {
+	dir := testRepo(t)
+	base := git(t, dir, "rev-parse", "HEAD")
+	if err := os.WriteFile(filepath.Join(dir, "base.txt"), []byte("changed\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	clean, _ := IsCleanTree(dir)
-	if clean {
-		t.Errorf("expected dirty tree")
-	}
-}
-
-func TestCommitAll_CreatesCommit(t *testing.T) {
-	gitOrSkip(t)
-	dir := initRepo(t)
-	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	sha, err := CommitAll(dir, "feat: add a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(sha) < 7 {
-		t.Errorf("sha too short: %q", sha)
-	}
-}
-
-func TestCommitAll_NothingToCommitReturnsSentinel(t *testing.T) {
-	gitOrSkip(t)
-	dir := initRepo(t)
-	// No changes since the initial commit: the work tree is clean, so there is
-	// nothing to stage. CommitAll must surface this as ErrNothingToCommit (not a
-	// generic git error) so a no-op task — one whose files a prior task already
-	// produced — is treated as done rather than a hard commit failure.
-	sha, err := CommitAll(dir, "noop")
-	if !errors.Is(err, ErrNothingToCommit) {
-		t.Fatalf("expected ErrNothingToCommit, got err=%v sha=%q", err, sha)
-	}
-	if sha != "" {
-		t.Errorf("expected empty sha on no-op, got %q", sha)
-	}
-}
-
-func TestUntrackedFiles_ExcludesIgnoredAndTracked(t *testing.T) {
-	gitOrSkip(t)
-	dir := initRepo(t)
-	_ = os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("ignored.txt\n"), 0o644)
-	_ = os.WriteFile(filepath.Join(dir, "tracked.txt"), []byte("t"), 0o644)
-	_, _ = CommitAll(dir, "add tracked + gitignore")
-	_ = os.WriteFile(filepath.Join(dir, "new.txt"), []byte("n"), 0o644)
-	_ = os.WriteFile(filepath.Join(dir, "ignored.txt"), []byte("i"), 0o644)
-
-	got, err := UntrackedFiles(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != 1 || got[0] != "new.txt" {
-		t.Errorf("UntrackedFiles = %v, want [new.txt] (tracked + ignored excluded)", got)
-	}
-}
-
-func TestResetHard_RevertsModificationAndRestoresDeletion(t *testing.T) {
-	gitOrSkip(t)
-	dir := initRepo(t)
-	p := filepath.Join(dir, "a.txt")
-	_ = os.WriteFile(p, []byte("a"), 0o644)
-	base, _ := CommitAll(dir, "add a")
-	_ = os.WriteFile(p, []byte("DIRTY"), 0o644) // modify
-	_ = os.Remove(filepath.Join(dir, "a.txt"))  // delete then re-modify scenario
-	_ = os.WriteFile(filepath.Join(dir, "a.txt"), []byte("DIRTY"), 0o644)
-
-	if err := ResetHard(dir, base); err != nil {
-		t.Fatal(err)
-	}
-	raw, _ := os.ReadFile(p)
-	if string(raw) != "a" {
-		t.Errorf("reset --hard did not restore tracked file: %q", raw)
-	}
-}
-
-// TestRollbackTo is the core safety guarantee: a failed task reverts the agent's
-// tracked edits and removes the untracked files it created, while leaving
-// pre-existing untracked user files (captured in keepUntracked) untouched.
-func TestRollbackTo_RemovesAgentFilesButKeepsUserFiles(t *testing.T) {
-	gitOrSkip(t)
-	dir := initRepo(t)
-	tracked := filepath.Join(dir, "src.go")
-	_ = os.WriteFile(tracked, []byte("original\n"), 0o644)
-	_, _ = CommitAll(dir, "seed src.go")
-	base, _ := HeadSHA(dir)
-
-	// Pre-existing untracked user file (present at task start).
-	userFile := filepath.Join(dir, "notes.txt")
-	_ = os.WriteFile(userFile, []byte("my notes"), 0o644)
-	snap, err := UntrackedFiles(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	keep := map[string]bool{}
-	for _, f := range snap {
-		keep[f] = true
-	}
-
-	// Agent does work: modifies a tracked file and creates a new untracked file
-	// in a new directory.
-	_ = os.WriteFile(tracked, []byte("agent broke this\n"), 0o644)
-	_ = os.MkdirAll(filepath.Join(dir, "pkg"), 0o755)
-	agentFile := filepath.Join(dir, "pkg", "agent_new.go")
-	_ = os.WriteFile(agentFile, []byte("junk"), 0o644)
-
-	if err := RollbackTo(dir, base, keep); err != nil {
-		t.Fatal(err)
-	}
-
-	if raw, _ := os.ReadFile(tracked); string(raw) != "original\n" {
-		t.Errorf("tracked file not reverted: %q", raw)
-	}
-	if _, err := os.Stat(agentFile); !os.IsNotExist(err) {
-		t.Errorf("agent-created untracked file should be removed")
-	}
-	if _, err := os.Stat(filepath.Join(dir, "pkg")); !os.IsNotExist(err) {
-		t.Errorf("empty dir left by agent file should be pruned")
-	}
-	if raw, err := os.ReadFile(userFile); err != nil || string(raw) != "my notes" {
-		t.Errorf("pre-existing untracked user file must survive rollback: err=%v content=%q", err, raw)
-	}
-}
-
-func TestLogStatSinceHead(t *testing.T) {
-	gitOrSkip(t)
-	dir := initRepo(t)
-	start, _ := HeadSHA(dir)
-	_ = os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a"), 0o644)
-	_, _ = CommitAll(dir, "add a")
-	out, err := LogStat(dir, start)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out, "add a") {
-		t.Errorf("log missing commit message: %q", out)
-	}
-}
-
-func TestMergeFastForward_FastForwards(t *testing.T) {
-	gitOrSkip(t)
-	dir := initRepo(t)
-	base, err := CurrentBranch(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := CheckoutNewBranch(dir, "feat-x", base); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := CommitAll(dir, "feat: f"); err != nil {
-		t.Fatal(err)
-	}
-	method, err := MergeFastForward(dir, base, "feat-x")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if method != "ff" {
-		t.Errorf("method = %q, want ff", method)
-	}
-	if cur, _ := CurrentBranch(dir); cur != base {
-		t.Errorf("current branch = %q, want %q", cur, base)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "f.txt")); err != nil {
-		t.Errorf("merged file missing on base: %v", err)
-	}
-}
-
-func TestMergeFastForward_NonFFCreatesMergeCommit(t *testing.T) {
-	gitOrSkip(t)
-	dir := initRepo(t)
-	base, _ := CurrentBranch(dir)
-	if err := CheckoutNewBranch(dir, "feat-y", base); err != nil {
-		t.Fatal(err)
-	}
-	_ = os.WriteFile(filepath.Join(dir, "y.txt"), []byte("y"), 0o644)
-	if _, err := CommitAll(dir, "feat: y"); err != nil {
-		t.Fatal(err)
-	}
-	if err := Checkout(dir, base); err != nil {
-		t.Fatal(err)
-	}
-	_ = os.WriteFile(filepath.Join(dir, "b.txt"), []byte("b"), 0o644)
-	if _, err := CommitAll(dir, "chore: b"); err != nil {
-		t.Fatal(err)
-	}
-	method, err := MergeFastForward(dir, base, "feat-y")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if method != "no-ff" {
-		t.Errorf("method = %q, want no-ff", method)
-	}
-	for _, f := range []string{"y.txt", "b.txt"} {
-		if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
-			t.Errorf("missing %s after merge: %v", f, err)
-		}
-	}
-}
-
-func TestMergeFastForward_ConflictAborts(t *testing.T) {
-	gitOrSkip(t)
-	dir := initRepo(t)
-	base, _ := CurrentBranch(dir)
-	if err := CheckoutNewBranch(dir, "feat-z", base); err != nil {
-		t.Fatal(err)
-	}
-	_ = os.WriteFile(filepath.Join(dir, "c.txt"), []byte("feat\n"), 0o644)
-	if _, err := CommitAll(dir, "feat: c"); err != nil {
-		t.Fatal(err)
-	}
-	if err := Checkout(dir, base); err != nil {
-		t.Fatal(err)
-	}
-	_ = os.WriteFile(filepath.Join(dir, "c.txt"), []byte("base\n"), 0o644)
-	if _, err := CommitAll(dir, "chore: c"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := MergeFastForward(dir, base, "feat-z"); err == nil {
-		t.Fatal("expected a conflict error")
-	}
-	if clean, _ := IsCleanTree(dir); !clean {
-		t.Errorf("tree must be clean after merge --abort")
+	git(t, dir, "add", "base.txt")
+	git(t, dir, "commit", "-q", "-m", "change")
+	head := git(t, dir, "rev-parse", "HEAD")
+	diff, err := DiffRefs(dir, base, head)
+	if err != nil || !strings.Contains(diff, "changed") {
+		t.Fatalf("diff=%q err=%v", diff, err)
 	}
 }

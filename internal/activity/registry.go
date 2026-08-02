@@ -2,7 +2,6 @@ package activity
 
 import (
 	"fmt"
-	"sort"
 	"sync"
 )
 
@@ -57,15 +56,4 @@ func (r *Registry) Resolve(ref string) (Executor, bool) {
 	defer r.mu.RUnlock()
 	executor, ok := r.items[ref]
 	return executor, ok
-}
-
-func (r *Registry) Specs() []Spec {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	out := make([]Spec, 0, len(r.items))
-	for _, executor := range r.items {
-		out = append(out, executor.Spec())
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Ref() < out[j].Ref() })
-	return out
 }

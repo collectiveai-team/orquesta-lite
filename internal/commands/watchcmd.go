@@ -27,7 +27,6 @@ type WatchOptions struct {
 	PublishPRs   bool // post PR reviews via gh when reviewing
 	LogFormat    eventlog.Format
 	Out          io.Writer
-	Engine       string
 	IssueFlow    string
 	PRFlow       string
 }
@@ -68,62 +67,54 @@ func Watch(ctx context.Context, opts WatchOptions) error {
 		Enabled:      enabled,
 		ReviewOwnPRs: opts.ReviewOwnPRs,
 		Lister:       lister,
-		Intake:       newIntakeTrigger(opts, lister),
-		Review:       newReviewTrigger(opts),
 		Log:          logger,
 	}
-	if opts.Engine == "v2" {
-		if opts.IssueFlow == "" {
-			opts.IssueFlow = "development/issue-fix@1"
+	if opts.IssueFlow == "" {
+		opts.IssueFlow = "development/issue-fix@1"
+	}
+	if opts.PRFlow == "" {
+		opts.PRFlow = "development/pr-review@1"
+	}
+	cfg.FlowRefs = map[watch.ItemType]string{watch.ItemIssue: opts.IssueFlow, watch.ItemPR: opts.PRFlow}
+	// Fail fast: compile every enabled flow ref now so a misconfigured daemon
+	// surfaces the error at startup rather than on the first provider event.
+	declared := map[watch.ItemType]map[string]bool{}
+	for itemType, ref := range cfg.FlowRefs {
+		if !enabled[itemType] {
+			continue
 		}
-		if opts.PRFlow == "" {
-			opts.PRFlow = "development/pr-review@1"
+		compiled, compileErr := compileWorkflowTarget(opts.ProjectDir, ref)
+		if compileErr != nil {
+			return fmt.Errorf("watch: flow %s does not compile: %w", ref, compileErr)
 		}
-		cfg.FlowRefs = map[watch.ItemType]string{watch.ItemIssue: opts.IssueFlow, watch.ItemPR: opts.PRFlow}
-		// Fail fast: compile every enabled flow ref now so a misconfigured watch
-		// daemon surfaces the error at startup rather than silently hours later on
-		// the first event. The compiled IR doubles as the input contract the
-		// trigger below narrows its payload to.
-		declared := map[watch.ItemType]map[string]bool{}
-		for itemType, ref := range cfg.FlowRefs {
-			if !enabled[itemType] {
-				continue
-			}
-			compiled, compileErr := compileWorkflowTarget(opts.ProjectDir, ref)
-			if compileErr != nil {
-				return fmt.Errorf("watch: flow %s does not compile: %w", ref, compileErr)
-			}
-			// Same reasoning as the compile check: a gate whose argv is missing
-			// from team.json must surface now, not on the first event hours later.
-			if configErr := validateConfigReferences(compiled.IR, loadGateConfig(filepath.Join(opts.ProjectDir, "team.json"))); configErr != nil {
-				return fmt.Errorf("watch: flow %s: %w", ref, configErr)
-			}
-			names := make(map[string]bool, len(compiled.IR.Inputs))
-			for name := range compiled.IR.Inputs {
-				names[name] = true
-			}
-			declared[itemType] = names
+		if configErr := validateConfigReferences(compiled.IR, loadGateConfig(filepath.Join(opts.ProjectDir, "team.json"))); configErr != nil {
+			return fmt.Errorf("watch: flow %s: %w", ref, configErr)
 		}
-		cfg.Trigger = func(ctx context.Context, trigger watch.Trigger) error {
-			inputs, err := watchFlowInputs(opts, trigger, declared[watchItemTypeOf(trigger)])
+		names := make(map[string]bool, len(compiled.IR.Inputs))
+		for name := range compiled.IR.Inputs {
+			names[name] = true
+		}
+		declared[itemType] = names
+	}
+	cfg.Trigger = func(ctx context.Context, trigger watch.Trigger) error {
+		inputs, err := watchFlowInputs(opts, trigger, declared[watchItemTypeOf(trigger)])
+		if err != nil {
+			return err
+		}
+		args := []string{"run", trigger.FlowRef, "--source-key=" + trigger.IdempotencyKey}
+		keys := make([]string, 0, len(inputs))
+		for key := range inputs {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			raw, err := json.Marshal(inputs[key])
 			if err != nil {
-				return err
+				return fmt.Errorf("encode watch input %s: %w", key, err)
 			}
-			args := []string{"run", trigger.FlowRef, "--source-key=" + trigger.IdempotencyKey}
-			keys := make([]string, 0, len(inputs))
-			for key := range inputs {
-				keys = append(keys, key)
-			}
-			sort.Strings(keys)
-			for _, key := range keys {
-				raw, err := json.Marshal(inputs[key])
-				if err != nil {
-					return fmt.Errorf("encode watch input %s: %w", key, err)
-				}
-				args = append(args, key+"="+string(raw))
-			}
-			return FlowCLI(ctx, opts.ProjectDir, args, opts.Out)
+			args = append(args, key+"="+string(raw))
 		}
+		return FlowCLI(ctx, opts.ProjectDir, args, opts.Out)
 	}
 	fmt.Fprintf(opts.Out, "watch: %s — enabled: %s — interval %s\n",
 		opts.ProjectDir, summaryOfEnabled(enabled), intervalLabel(cfg.Interval))
@@ -178,8 +169,7 @@ func watchFlowInputs(opts WatchOptions, trigger watch.Trigger, declared map[stri
 }
 
 // writeWatchIssue materialises the polled issue as a markdown file inside the
-// project so a flow step can read it, mirroring what the legacy intake trigger
-// does. The returned path is relative to the project dir because that is the
+// project. The returned path is relative to the project dir because that is the
 // working directory flow commands run in.
 func writeWatchIssue(projectDir string, trigger watch.Trigger) (string, error) {
 	dir := filepath.Join(projectDir, ".orquestalite")
@@ -213,40 +203,6 @@ func intervalLabel(d time.Duration) string {
 		return "60s (default)"
 	}
 	return d.String()
-}
-
-// newIntakeTrigger returns a watch.Intake func that writes the issue body to a
-// temp file and runs the intake role→plan→run pipeline on it.
-func newIntakeTrigger(opts WatchOptions, _ *ghLister) func(context.Context, string) error {
-	return func(ctx context.Context, issueBody string) error {
-		issuePath := filepath.Join(opts.ProjectDir, ".orquestalite", "watch-issue.md")
-		if err := os.WriteFile(issuePath, []byte(issueBody), 0o644); err != nil {
-			return err
-		}
-		fmt.Fprintf(opts.Out, "watch: new issue → intake\n")
-		return Intake(ctx, IntakeOptions{
-			ProjectDir: opts.ProjectDir,
-			IssuePath:  issuePath,
-			Run:        true,
-			LogFormat:  opts.LogFormat,
-			Out:        opts.Out,
-		})
-	}
-}
-
-// newReviewTrigger returns a watch.Review func that runs the critic review over
-// the PR's diff and (when PublishPRs) posts the verdict via gh.
-func newReviewTrigger(opts WatchOptions) func(context.Context, string) error {
-	return func(ctx context.Context, prNumber string) error {
-		fmt.Fprintf(opts.Out, "watch: new PR #%s → review\n", prNumber)
-		return Review(ctx, ReviewOptions{
-			ProjectDir: opts.ProjectDir,
-			PR:         prNumber,
-			Publish:    opts.PublishPRs,
-			LogFormat:  opts.LogFormat,
-			Out:        opts.Out,
-		})
-	}
 }
 
 // ghLister implements watch.Lister by shelling out to the already-authenticated
@@ -285,6 +241,16 @@ func (g *ghLister) ListPRs(ctx context.Context, since time.Time) ([]watch.Item, 
 	items, err := parseGHItems(string(out), watch.ItemPR, since)
 	// PR reviews operate on the PR number/diff, not a body; leave Body empty.
 	return items, err
+}
+
+func ghRun(ctx context.Context, dir string, args ...string) ([]byte, error) {
+	command := exec.CommandContext(ctx, "gh", args...)
+	command.Dir = dir
+	out, err := command.CombinedOutput()
+	if err != nil {
+		return out, fmt.Errorf("gh %s: %w\n%s", strings.Join(args, " "), err, out)
+	}
+	return out, nil
 }
 
 // parseGHItems parses `gh <kind> list --json` output into watch.Items,

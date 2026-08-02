@@ -50,7 +50,7 @@ func TestCostBudgetStopsARunawayRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	catalog := flow.NewMemoryCatalog()
+	catalog := newMemoryCatalog()
 	catalog.Activities["activity:test.plan@1"] = activity.Spec{Name: "test.plan", Version: "1", Effect: activity.EffectIdempotent}
 	ir, diagnostics := flow.Compile(doc, catalog)
 	if diagnostics.HasErrors() {

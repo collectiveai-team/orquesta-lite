@@ -18,7 +18,7 @@ func TestStoreCreateRunStepAttemptAndOutbox(t *testing.T) {
 	}
 	defer store.Close()
 	ctx := context.Background()
-	run, err := store.CreateRun(ctx, CreateRunParams{ID: "r1", FlowRef: "flow:demo@1", DefinitionHash: "abc", IR: json.RawMessage(`{}`), Inputs: json.RawMessage(`{}`), Policy: json.RawMessage(`{}`)})
+	run, _, err := store.CreateRunOnce(ctx, CreateRunParams{ID: "r1", FlowRef: "flow:demo@1", DefinitionHash: "abc", IR: json.RawMessage(`{}`), Inputs: json.RawMessage(`{}`), Policy: json.RawMessage(`{}`)})
 	if err != nil {
 		t.Fatal(err)
 	}

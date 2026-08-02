@@ -11,6 +11,15 @@
   },
   "verdict": {
    "schema": "schema:review-result@1"
+  },
+  "qa_review": {
+   "schema": "schema:review-result@1"
+  },
+  "critic_review": {
+   "schema": "schema:review-result@1"
+  },
+  "adversary_review": {
+   "schema": "schema:review-result@1"
   }
  },
  "steps": [
@@ -29,6 +38,15 @@
      },
      "GOV_REVIEW": {
       "$ref": "inputs.verdict"
+     },
+     "QA_REVIEW": {
+      "$ref": "inputs.qa_review"
+     },
+     "CRITIC_REVIEW": {
+      "$ref": "inputs.critic_review"
+     },
+     "ADVERSARY_REVIEW": {
+      "$ref": "inputs.adversary_review"
      }
     }
    }
@@ -67,6 +85,17 @@
     "vars": {
      "FEATURES_PATH": {
       "$ref": "inputs.features_path"
+     }
+    },
+    "context": {
+     "QA_REVIEW": {
+      "$ref": "inputs.qa_review"
+     },
+     "CRITIC_REVIEW": {
+      "$ref": "inputs.critic_review"
+     },
+     "ADVERSARY_REVIEW": {
+      "$ref": "inputs.adversary_review"
      }
     }
    }

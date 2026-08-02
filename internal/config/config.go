@@ -10,14 +10,6 @@ import (
 	"github.com/lionelchamorro/orquestalite/internal/providers"
 )
 
-var orchestratedRoles = []string{"parser", "coder", "tester", "critic", "reviewer"}
-
-// optionalRoles are resolved when declared in team.json but are not required.
-// "verifier" black-box-verifies the change after the critic approves.
-// "planner" extracts vertical-slice features from a plan in factory mode; it is
-// not used by `run`, so a team.json without it still works for non-factory use.
-var optionalRoles = []string{"verifier", "planner", "compactor", "generalist", "intake"}
-
 type Agent struct {
 	Cmd                        []string `json:"cmd,omitempty"`
 	Provider                   string   `json:"provider,omitempty"`
@@ -45,14 +37,6 @@ type Role struct {
 	ResultPath       string   `json:"result_path"`
 	TimeoutSeconds   int      `json:"timeout_seconds"`
 	EscalationLadder []string `json:"escalation_ladder,omitempty"`
-	DecomposePrompt  string   `json:"decompose_prompt,omitempty"`
-	// Mode applies to the verifier role only: "per_cycle" (default) verifies
-	// the whole increment once per review cycle and feeds the report to the
-	// reviewer; "per_task" verifies inside every fix loop; "both" does both.
-	Mode string `json:"mode,omitempty"`
-	// CyclePrompt is the prompt used for the per-cycle verification pass
-	// (verifier role only). Falls back to Prompt when unset.
-	CyclePrompt string `json:"cycle_prompt,omitempty"`
 }
 
 type RoleSpec struct {
@@ -61,99 +45,18 @@ type RoleSpec struct {
 	ResultPath       string
 	Timeout          time.Duration
 	EscalationLadder []AgentSpec
-	DecomposePrompt  string
-	Mode             string
-	CyclePrompt      string
 }
 
 type Limits struct {
-	MaxReviewCycles  int  `json:"max_review_cycles"`
-	MaxFixIterations int  `json:"max_fix_iterations"`
-	PreflightEnabled bool `json:"preflight_enabled,omitempty"`
-	// VerifyTesterCommand re-runs the tester's command_run in the orchestrator
-	// after a reported pass; a non-zero exit overrides the pass. Defaults to
-	// true (nil = enabled) because a tester claiming pass on a failing command
-	// is the root cause of "tests pass but manual testing fails" runs.
-	VerifyTesterCommand *bool `json:"verify_tester_command,omitempty"`
-	// FactoryBudgetUSD stops the factory queue before starting the next
-	// feature once the recorded spend (priced via agtop) reaches this amount.
-	// 0 = unlimited.
-	FactoryBudgetUSD float64 `json:"factory_budget_usd,omitempty"`
-	// MaxVisualRounds caps how many times a visual feature's browser
-	// verification can fail and feed its findings back as tasks before the
-	// feature is marked failed. 0 = use the default (2).
-	MaxVisualRounds int `json:"max_visual_rounds,omitempty"`
-	// ResumeSessions lets the coder resume its provider session for a task on
-	// fix-loop feedback (and after a factory --resume) when the same agent runs
-	// again, instead of starting the conversation from scratch. Defaults to true
-	// (nil = enabled); switching to a different provider always starts fresh.
+	// ResumeSessions lets a role resume its provider session for the same
+	// durable scope. Switching providers always starts a fresh session.
 	ResumeSessions *bool `json:"resume_sessions,omitempty"`
-	// MemoryCompactChars is the size (in characters) of .orquestalite/memory.md
-	// above which the compactor role rewrites it into a smaller, deduplicated
-	// digest, so the full memory injected into every prompt stays bounded.
-	// 0 = use the default (24000 ≈ 6k tokens). Compaction only runs when a
-	// "compactor" role is configured.
-	MemoryCompactChars int `json:"memory_compact_chars,omitempty"`
-	// MaxFeatureRetries caps how many extra times the factory re-runs a feature
-	// that did not pass the merge gate before giving up and stopping the queue.
-	// The no-progress guard can stop earlier. 0 = use the default (1).
-	MaxFeatureRetries int `json:"max_feature_retries,omitempty"`
-	// FastMode raises orchestration from task-level to feature-level batching:
-	// coder implements the whole feature/task list, then tester and critic run
-	// once for the batch. CLI flags can override this per invocation.
-	FastMode bool `json:"fast_mode,omitempty"`
-	// KeepRuns caps how many .orquestalite/runs/<run_id>/ directories (and their
-	// per-invocation prompt/stdout/stderr artifacts) survive; older runs are
-	// pruned at the start of a new run. 0 = use the default (20).
-	KeepRuns int `json:"keep_runs,omitempty"`
-}
-
-// MemoryCompactThreshold returns the memory size above which compaction runs,
-// defaulting to 24000 characters when unset.
-func (l Limits) MemoryCompactThreshold() int {
-	if l.MemoryCompactChars <= 0 {
-		return 24000
-	}
-	return l.MemoryCompactChars
 }
 
 // SessionResumeEnabled reports whether agents may resume a prior provider
 // session for the same task. Enabled unless explicitly set to false.
 func (l Limits) SessionResumeEnabled() bool {
 	return l.ResumeSessions == nil || *l.ResumeSessions
-}
-
-// VisualRounds returns the configured cap on browser-verify feedback rounds for
-// a visual feature, defaulting to 2 when unset.
-func (l Limits) VisualRounds() int {
-	if l.MaxVisualRounds <= 0 {
-		return 2
-	}
-	return l.MaxVisualRounds
-}
-
-// FeatureRetries returns the extra feature-level retry budget on a merge-gate
-// failure, defaulting to 1 when unset.
-func (l Limits) FeatureRetries() int {
-	if l.MaxFeatureRetries <= 0 {
-		return 1
-	}
-	return l.MaxFeatureRetries
-}
-
-// KeepRunsCeiling returns the cap on retained .orquestalite/runs/<run_id>/
-// directories, defaulting to 20 when unset.
-func (l Limits) KeepRunsCeiling() int {
-	if l.KeepRuns <= 0 {
-		return 20
-	}
-	return l.KeepRuns
-}
-
-// TesterVerificationEnabled reports whether the orchestrator should re-run the
-// tester's command itself. Enabled unless explicitly set to false.
-func (l Limits) TesterVerificationEnabled() bool {
-	return l.VerifyTesterCommand == nil || *l.VerifyTesterCommand
 }
 
 type RateLimitBackoff struct {
@@ -189,16 +92,8 @@ type Config struct {
 	Limits           Limits           `json:"limits"`
 	RateLimitBackoff RateLimitBackoff `json:"rate_limit_backoff"`
 	Runtime          Runtime          `json:"runtime,omitempty"`
-	FullTestCommand  string           `json:"full_test_command"`
-	// LintCommand is an optional quality gate run before the test suite after
-	// each task; a non-zero exit blocks the commit (the change is rolled back),
-	// so lint/format violations cannot ship. Empty = no lint gate. A missing
-	// lint binary is treated as a skip, not a failure, so an unconfigured tool
-	// never blocks every task.
-	LintCommand string `json:"lint_command,omitempty"`
-	// LintArgv and TestArgv are the argv forms of the same two gates, and the
-	// only team.json keys a v2 flow can read (through the read-only `config.`
-	// namespace). Flows get argv rather than the shell strings above because
+	// LintArgv and TestArgv are argv gates exposed through the read-only
+	// `config.` namespace. Flows get argv rather than shell strings because
 	// `allowShell` is false by policy: a gate the engine runs directly cannot
 	// smuggle in a pipeline or a redirect.
 	//
@@ -234,7 +129,7 @@ func Load(path string) (*Config, error) {
 }
 
 // LoadDynamic decodes team configuration for a compiled v2 flow. Validation is
-// deferred to ResolveRoles so unrelated legacy or optional roles cannot block
+// deferred to ResolveRoles so unrelated roles cannot block
 // a flow that does not reference them.
 func LoadDynamic(path string) (*Config, error) {
 	raw, err := os.ReadFile(path)
@@ -249,14 +144,21 @@ func LoadDynamic(path string) (*Config, error) {
 }
 
 func (c *Config) Resolve() (map[string]RoleSpec, error) {
-	return c.resolve(true)
+	return c.ResolveAll()
 }
 
 // ResolveAll resolves exactly the roles declared by configuration without
-// imposing the legacy parser/coder/tester/critic/reviewer set. Dynamic flow v2
-// uses this path and validates only roles referenced by its compiled IR.
+// imposing a hardcoded role set. Durable flows validate only roles referenced
+// by their compiled IR.
 func (c *Config) ResolveAll() (map[string]RoleSpec, error) {
-	return c.resolve(false)
+	if c == nil {
+		return nil, fmt.Errorf("config is nil")
+	}
+	names := make([]string, 0, len(c.Roles))
+	for name := range c.Roles {
+		names = append(names, name)
+	}
+	return c.ResolveRoles(names)
 }
 
 // ResolveRoles resolves only names referenced by one compiled workflow IR.
@@ -294,102 +196,6 @@ func (c *Config) ResolveRoles(names []string) (map[string]RoleSpec, error) {
 	return resolved, nil
 }
 
-// MissingOrchestratedRoles returns the legacy orchestrated roles (parser,
-// coder, tester, critic, reviewer) that are not declared in the config, in
-// canonical order. Legacy commands (plan/run/factory) require all of them;
-// v2 `flow run` only needs the roles its compiled IR references.
-func (c *Config) MissingOrchestratedRoles() []string {
-	var missing []string
-	for _, name := range orchestratedRoles {
-		if _, ok := c.Roles[name]; !ok {
-			missing = append(missing, name)
-		}
-	}
-	return missing
-}
-
-func (c *Config) resolve(requireLegacy bool) (map[string]RoleSpec, error) {
-	if c == nil {
-		return nil, fmt.Errorf("config is nil")
-	}
-	if len(c.Agents) == 0 {
-		return nil, fmt.Errorf("no agents declared")
-	}
-
-	resolvedAgents := make(map[string]AgentSpec, len(c.Agents))
-	for name, agent := range c.Agents {
-		spec, err := resolveAgentSpec(name, agent)
-		if err != nil {
-			return nil, err
-		}
-		resolvedAgents[name] = spec
-	}
-
-	roles := make(map[string]RoleSpec, len(c.Roles))
-	legacyRoles := orchestratedRoles
-	if !requireLegacy {
-		legacyRoles = nil
-	}
-	for _, roleName := range legacyRoles {
-		role, ok := c.Roles[roleName]
-		if !ok {
-			return nil, fmt.Errorf("missing orchestrated role %q", roleName)
-		}
-		spec, err := resolveRoleSpec(roleName, role, resolvedAgents)
-		if err != nil {
-			return nil, err
-		}
-		roles[roleName] = spec
-	}
-	for _, roleName := range optionalRoles {
-		role, ok := c.Roles[roleName]
-		if !ok {
-			continue
-		}
-		spec, err := resolveRoleSpec(roleName, role, resolvedAgents)
-		if err != nil {
-			return nil, err
-		}
-		roles[roleName] = spec
-	}
-
-	// Custom roles: any declared role that is neither orchestrated nor optional
-	// is still resolved so configuration-driven flows (flows.json) can invoke
-	// arbitrary roles (e.g. architect/qa/pm) without the engine knowing them at
-	// compile time. The legacy run/factory pipelines simply never look these up.
-	for roleName, role := range c.Roles {
-		if _, done := roles[roleName]; done {
-			continue
-		}
-		spec, err := resolveRoleSpec(roleName, role, resolvedAgents)
-		if err != nil {
-			return nil, err
-		}
-		roles[roleName] = spec
-	}
-
-	return roles, nil
-}
-
-// HasVerifier reports whether the optional verifier role is configured.
-func (c *Config) HasVerifier() bool {
-	_, ok := c.Roles["verifier"]
-	return ok
-}
-
-// VerifierPerTask reports whether the verifier runs inside every fix loop.
-func (c *Config) VerifierPerTask() bool {
-	r, ok := c.Roles["verifier"]
-	return ok && (r.Mode == "per_task" || r.Mode == "both")
-}
-
-// VerifierPerCycle reports whether the verifier runs once at the end of each
-// review cycle, feeding its report to the reviewer. This is the default mode.
-func (c *Config) VerifierPerCycle() bool {
-	r, ok := c.Roles["verifier"]
-	return ok && (r.Mode == "" || r.Mode == "per_cycle" || r.Mode == "both")
-}
-
 func (c *Config) Validate() error {
 	if len(c.Agents) == 0 {
 		return fmt.Errorf("no agents declared")
@@ -415,11 +221,6 @@ func (c *Config) Validate() error {
 		}
 		if r.TimeoutSeconds <= 0 {
 			return fmt.Errorf("role %q timeout_seconds must be > 0", rname)
-		}
-		switch r.Mode {
-		case "", "per_task", "per_cycle", "both":
-		default:
-			return fmt.Errorf("role %q mode %q invalid (per_task|per_cycle|both)", rname, r.Mode)
 		}
 	}
 	// Second pass: validate agent invocation shape.
@@ -449,14 +250,9 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("agent %q cmd is missing {{PROMPT}} marker", name)
 		}
 	}
-	if c.Limits.MaxReviewCycles <= 0 || c.Limits.MaxFixIterations <= 0 {
-		return fmt.Errorf("limits must be positive")
-	}
 	if c.RateLimitBackoff.InitialSeconds <= 0 || c.RateLimitBackoff.Factor < 2 || c.RateLimitBackoff.MaxSeconds < c.RateLimitBackoff.InitialSeconds {
 		return fmt.Errorf("invalid rate_limit_backoff")
 	}
-	// full_test_command may be empty: it is a verification hook, not a
-	// correctness requirement. runcmd treats empty as a no-op.
 	return nil
 }
 
@@ -505,9 +301,6 @@ func resolveRoleSpec(name string, role Role, agents map[string]AgentSpec) (RoleS
 		ResultPath:       role.ResultPath,
 		Timeout:          time.Duration(role.TimeoutSeconds) * time.Second,
 		EscalationLadder: escalationSpecs,
-		DecomposePrompt:  role.DecomposePrompt,
-		Mode:             role.Mode,
-		CyclePrompt:      role.CyclePrompt,
 	}, nil
 }
 

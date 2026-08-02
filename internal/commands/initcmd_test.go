@@ -9,23 +9,43 @@ import (
 	"testing"
 
 	"github.com/lionelchamorro/orquestalite/internal/config"
-	"github.com/lionelchamorro/orquestalite/internal/engine"
+	"github.com/lionelchamorro/orquestalite/internal/flow"
 )
+
+func Init(dir string) error {
+	return InitWithOptions(dir, InitOptions{})
+}
 
 func TestInit_CreatesScaffolding(t *testing.T) {
 	dir := t.TempDir()
-	if err := Init(dir); err != nil {
+	if err := InitWithOptions(dir, InitOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	for _, p := range []string{
 		"team.json",
-		"prompts/parser.md", "prompts/coder.md", "prompts/tester.md", "prompts/critic.md", "prompts/reviewer.md",
-		"prompts/_review-rubric.md",
 		".orquestalite/results",
+		".orquestalite/packs/development/4/pack.json",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, p)); err != nil {
 			t.Errorf("missing %s: %v", p, err)
 		}
+	}
+}
+
+func TestInit_ListsInstalledFlowVersion(t *testing.T) {
+	dir := t.TempDir()
+	if err := InitWithOptions(dir, InitOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	var out strings.Builder
+	if err := FlowCLI(t.Context(), dir, []string{"list"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "development/task-list@1") {
+		t.Fatalf("flow list must use the flow version, got:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), "development/task-list@4") {
+		t.Fatalf("flow list incorrectly used the pack version:\n%s", out.String())
 	}
 }
 
@@ -51,36 +71,6 @@ func TestInit_IsIdempotent(t *testing.T) {
 	}
 	if err := Init(dir); err != nil {
 		t.Fatalf("second init failed: %v", err)
-	}
-}
-
-// TestInit_MaterialisesSchemas verifies that Init writes all five role schemas
-// to <workspace>/schemas/ and that each file parses as valid JSON.
-func TestInit_MaterialisesSchemas(t *testing.T) {
-	dir := t.TempDir()
-	if err := Init(dir); err != nil {
-		t.Fatal(err)
-	}
-
-	expectedSchemas := []string{
-		"parser.json",
-		"coder.json",
-		"tester.json",
-		"critic.json",
-		"reviewer.json",
-	}
-
-	for _, name := range expectedSchemas {
-		path := filepath.Join(dir, "schemas", name)
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			t.Errorf("schema %s missing: %v", name, err)
-			continue
-		}
-		var v map[string]any
-		if err := json.Unmarshal(raw, &v); err != nil {
-			t.Errorf("schema %s is not valid JSON: %v", name, err)
-		}
 	}
 }
 
@@ -143,19 +133,6 @@ func TestInit_TeamJSONHasCodexProviderPrimary(t *testing.T) {
 	}
 }
 
-// TestInit_MaterialisesDecomposePrompt verifies that Init writes the
-// parser-decompose.md prompt to <workspace>/prompts/.
-func TestInit_MaterialisesDecomposePrompt(t *testing.T) {
-	dir := t.TempDir()
-	if err := Init(dir); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(dir, "prompts", "parser-decompose.md")
-	if _, err := os.Stat(path); err != nil {
-		t.Errorf("prompts/parser-decompose.md not materialised: %v", err)
-	}
-}
-
 // TestInit_WarnsWhenCodexMissing would verify that Init prints a warning when
 // the codex binary is not in PATH. However, exec.LookPath cannot be stubbed
 // without dependency injection, and we cannot guarantee that the test runner
@@ -166,42 +143,29 @@ func TestInit_WarnsWhenCodexMissing(t *testing.T) {
 	t.Skip("exec.LookPath cannot be cleanly stubbed without injecting the lookup function; skipped by design")
 }
 
-// TestInitScaffoldsFlows verifies that Init writes a flows.json that parses via
-// engine.LoadFlows and contains the bundled default flows (at least `factory`
-// and `factory_fast`), so `orq-lite flow run <name>` works out of the box.
-func TestInitScaffoldsFlows(t *testing.T) {
+// TestInitScaffoldsV2DevelopmentPack verifies that Init creates a project whose
+// public commands can resolve the durable development pack without any legacy
+// flows.json catalogue.
+func TestInitScaffoldsV2DevelopmentPack(t *testing.T) {
 	dir := t.TempDir()
 	if err := Init(dir); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(dir, "flows.json")
-	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("flows.json not scaffolded: %v", err)
+	if _, err := os.Stat(filepath.Join(dir, "flows.json")); !os.IsNotExist(err) {
+		t.Fatalf("legacy flows.json must not be scaffolded, stat error = %v", err)
 	}
-	flows, err := engine.LoadFlows(path)
+	packRoot := filepath.Join(dir, ".orquestalite", "packs", "development", "4")
+	pack, err := flow.LoadPack(packRoot)
 	if err != nil {
-		t.Fatalf("scaffolded flows.json does not parse: %v", err)
+		t.Fatalf("scaffolded development pack is invalid: %v", err)
 	}
-	for _, name := range []string{"factory", "factory_fast"} {
-		if _, ok := flows.Flows[name]; !ok {
-			t.Errorf("scaffolded flows.json missing default flow %q; has %v", name, flowNames(flows.Flows))
-		}
+	if pack.Name != "development" || pack.Version != "4" {
+		t.Fatalf("scaffolded pack = %s@%s, want development@4", pack.Name, pack.Version)
 	}
-}
-
-func flowNames(m map[string]engine.Flow) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
 }
 
 // TestInitScaffoldsEveryRolePrompt verifies that every role declared in the
-// scaffolded team.json has its prompt file materialised on disk. This prevents
-// regressions of the intake.md bug: team.json referenced prompts/intake.md but
-// assets/prompts/ was missing it, so init scaffolded a project where doctor,
-// intake and watch --issues broke.
+// scaffolded team.json resolves to a prompt inside the installed pack.
 func TestInitScaffoldsEveryRolePrompt(t *testing.T) {
 	dir := t.TempDir()
 	if err := Init(dir); err != nil {
@@ -322,7 +286,7 @@ func TestInit_ScaffoldingSurvivesRollback(t *testing.T) {
 		gitRun("checkout", ".")
 		gitRun("clean", "-fd")
 	}
-	for _, p := range []string{"team.json", "prompts", "schemas", ".orquestalite", ".gitignore"} {
+	for _, p := range []string{"team.json", ".orquestalite", ".gitignore"} {
 		if _, err := os.Stat(filepath.Join(dir, p)); err != nil {
 			t.Errorf("%s did not survive rollback: %v", p, err)
 		}
@@ -331,7 +295,7 @@ func TestInit_ScaffoldingSurvivesRollback(t *testing.T) {
 
 // TestInit_WritesPythonGitignore verifies that Init detects a Python project
 // (via pyproject.toml) and writes Python-appropriate .gitignore entries plus
-// adjusts full_test_command to a pytest-driven default.
+// adjusts the durable argv gates to Python defaults.
 func TestInit_WritesPythonGitignore(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "pyproject.toml"), []byte("[project]\n"), 0o644); err != nil {
@@ -347,15 +311,14 @@ func TestInit_WritesPythonGitignore(t *testing.T) {
 		}
 	}
 	team, _ := os.ReadFile(filepath.Join(dir, "team.json"))
-	if !strings.Contains(string(team), `"full_test_command": "uv run pytest -q"`) {
-		t.Errorf("team.json full_test_command not adjusted for python:\n%s", team)
+	if !strings.Contains(string(team), `"test_argv": ["uv", "run", "pytest", "-q"]`) || !strings.Contains(string(team), `"lint_argv": ["uv", "run", "ruff", "check", "."]`) {
+		t.Errorf("team.json argv gates not adjusted for python:\n%s", team)
 	}
 }
 
 // TestInit_UnknownLangClearsTestCommand verifies that a directory with no
-// recognizable language manifest gets an empty full_test_command rather than
-// the embedded "go test ./..." default, which would fail every full-suite gate
-// in a non-Go repo. Empty is a no-op until the run-time detector fills it in.
+// recognizable language manifest gets empty argv gates rather than incorrect
+// Go defaults.
 func TestInit_UnknownLangClearsTestCommand(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "README.txt"), []byte("hello\n"), 0o644); err != nil {
@@ -365,30 +328,11 @@ func TestInit_UnknownLangClearsTestCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	team, _ := os.ReadFile(filepath.Join(dir, "team.json"))
-	if !strings.Contains(string(team), `"full_test_command": ""`) {
-		t.Errorf("unknown-language team.json should clear full_test_command, got:\n%s", team)
+	if !strings.Contains(string(team), `"test_argv": []`) || !strings.Contains(string(team), `"lint_argv": []`) {
+		t.Errorf("unknown-language team.json should clear argv gates, got:\n%s", team)
 	}
-	if strings.Contains(string(team), "go test ./...") {
+	if strings.Contains(string(team), `"test_argv": ["go"`) {
 		t.Errorf("unknown-language team.json must not keep the go default:\n%s", team)
-	}
-}
-
-// TestInit_ScaffoldsGeneralistRole verifies that Init writes a generalist role
-// to team.json and materialises prompts/generalist.md.
-func TestInit_ScaffoldsGeneralistRole(t *testing.T) {
-	dir := t.TempDir()
-	if err := InitWithOptions(dir, InitOptions{Lang: "python"}); err != nil {
-		t.Fatal(err)
-	}
-	raw, err := os.ReadFile(filepath.Join(dir, "team.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(raw), `"generalist"`) {
-		t.Errorf("scaffolded team.json missing generalist role:\n%s", raw)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "prompts", "generalist.md")); err != nil {
-		t.Errorf("prompts/generalist.md not scaffolded: %v", err)
 	}
 }
 
@@ -408,7 +352,7 @@ func TestInitWithOptions_LangOverride(t *testing.T) {
 		t.Errorf("lang=node override did not apply node gitignore: %s", raw)
 	}
 	team, _ := os.ReadFile(filepath.Join(dir, "team.json"))
-	if !strings.Contains(string(team), `"full_test_command": "npm test --silent"`) {
-		t.Errorf("lang=node override did not adjust full_test_command:\n%s", team)
+	if !strings.Contains(string(team), `"test_argv": ["npm", "test", "--silent"]`) {
+		t.Errorf("lang=node override did not adjust test_argv:\n%s", team)
 	}
 }

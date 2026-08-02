@@ -38,7 +38,7 @@ func besteffortInvoker(t *testing.T, role string, health *agenthealth.Tracker, b
 	if err := os.MkdirAll(filepath.Dir(memPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	logger, err := eventlog.Open(filepath.Join(dir, ".orquestalite", "run.log"), io.Discard)
+	logger, err := eventlog.OpenWithFormat(filepath.Join(dir, ".orquestalite", "run.log"), io.Discard, eventlog.FormatVerbose)
 	if err != nil {
 		t.Fatal(err)
 	}
