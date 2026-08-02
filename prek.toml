@@ -1,0 +1,65 @@
+# MARK: uv-lock
+[[repos]]
+repo = "https://github.com/astral-sh/uv-pre-commit"
+rev = "0.10.7"
+hooks = [{ id = "uv-lock", priority = 0 }]
+
+# MARK: pre-commit-hooks
+[[repos]]
+repo = "https://github.com/pre-commit/pre-commit-hooks"
+rev = "v6.0.0"
+
+# MARK: check-merge-conflict
+[[repos.hooks]]
+id = "check-merge-conflict"
+priority = 0
+
+# MARK: check-added-large-files
+[[repos.hooks]]
+id = "check-added-large-files"
+args = ["--maxkb=750"]
+exclude = "^uv\\.lock$"
+priority = 0
+
+# MARK: check-toml
+[[repos.hooks]]
+id = "check-toml"
+priority = 0
+
+# MARK: check-yaml
+[[repos.hooks]]
+id = "check-yaml"
+args = ["--unsafe"]
+priority = 0
+
+# MARK: end-of-file-fixer
+[[repos.hooks]]
+id = "end-of-file-fixer"
+priority = 0
+
+# MARK: trailing-whitespace
+[[repos.hooks]]
+id = "trailing-whitespace"
+priority = 0
+
+# MARK: betterleaks
+# Secret scanner (gitleaks fork). language = "golang" so prek builds it from the
+# pinned tag in an isolated toolchain. Scans staged changes on commit; --redact
+# keeps any matched secret out of the output.
+[[repos]]
+repo = "https://github.com/betterleaks/betterleaks"
+rev = "v1.5.0"
+hooks = [{ id = "betterleaks", priority = 0 }]
+
+# MARK: agents-conventional-commits
+# CES-75: the commit subject must follow Conventional Commits (type(scope): description).
+# Runs at the commit-msg stage on the message file; merge/revert/fixup subjects are exempt.
+[[repos]]
+repo = "local"
+
+[[repos.hooks]]
+id = "agents-conventional-commits"
+name = "agents-conventional-commits (commit-msg)"
+entry = "python -c \"import re,sys; msg=open(sys.argv[1],encoding='utf-8').readline().strip(); ok=bool(re.match(r'^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\\([a-z0-9._-]+\\))?!?: .+', msg)) or msg.startswith(('Merge ','Revert ','fixup! ')); sys.exit(0 if ok else not print(f'Error: CES-75 (agents-conventional-commits): commit subject must follow Conventional Commits (type(scope): description). Got: {msg!r}'))\""
+language = "system"
+stages = ["commit-msg"]
