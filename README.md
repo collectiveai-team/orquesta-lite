@@ -4,6 +4,24 @@
 
 There is one execution path. The old hardcoded development loops and the in-memory `flows.json` interpreter are not part of the product.
 
+## Bootstrap a repository
+
+For an existing working repository, the recommended installation path is to let an agent drive the setup. Bootstrap requires judgment that the CLI cannot automate: understanding the existing worktree, making the baseline gates green, pinning the toolchain, configuring agents and roles, choosing the right V2 flow, and validating the pack before spending model time.
+
+Give the agent this instruction:
+
+> Set up Orquesta Lite in this repository by following every instruction in:
+> https://raw.githubusercontent.com/lionelchamorro/orquesta-lite/main/guide.md
+> Do not summarize the guide—perform the steps, verify each gate, and stop to report any blocker that cannot be resolved safely.
+
+The guide covers installing `orq-lite` when it is not on `PATH`, initializing the built-in development pack, configuring `team.json`, proving lint/test gates, selecting a development and review strategy, launching idempotently, and monitoring or resuming the durable run.
+
+If you only need the binary, install it directly and continue with the quick start:
+
+```bash
+go install github.com/lionelchamorro/orquestalite/cmd/orq-lite@latest
+```
+
 ## Quick start
 
 ```bash
