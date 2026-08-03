@@ -129,4 +129,4 @@ update --check      check for a newer release
 version             print the binary version
 ```
 
-Architecture details live in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), the v2 schema in [docs/activity-protocol.md](docs/activity-protocol.md), and pack rules in [docs/pack-format.md](docs/pack-format.md).
+The end-to-end operator checklist lives in [guide.md](guide.md). Architecture details live in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), the v2 schema in [docs/activity-protocol.md](docs/activity-protocol.md), and pack rules in [docs/pack-format.md](docs/pack-format.md).
