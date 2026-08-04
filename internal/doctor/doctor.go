@@ -82,7 +82,7 @@ func Run(ctx context.Context, dir string) []Check {
 	}
 	add(StatusOK, "team.json", "loads and resolves")
 
-	packRoot := filepath.Join(dir, ".orquestalite", "packs", "development", "4")
+	packRoot := filepath.Join(dir, ".orquestalite", "packs", "development", "5")
 	if pack, packErr := flow.LoadPack(packRoot); packErr != nil {
 		add(StatusError, "pack:development", packErr.Error())
 	} else {

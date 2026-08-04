@@ -61,7 +61,7 @@ func TestInitProducesATeamConfigTheGovernedPackCanRun(t *testing.T) {
 			installGovernedPack(t, project)
 			config := loadGateConfig(filepath.Join(project, "team.json"))
 			for _, name := range []string{"factory-governed", "task-list", "issue-fix", "review-existing"} {
-				compiled, err := compileWorkflowTarget(project, "development/"+name+"@1")
+				compiled, err := compileWorkflowTarget(project, governedFlowRef(name))
 				if err != nil {
 					t.Fatalf("%s: %v", name, err)
 				}

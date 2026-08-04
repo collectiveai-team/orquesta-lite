@@ -22,12 +22,12 @@ Given a product objective and a repository, repeatedly produce small verified ch
 
 ## Development pack
 
-The built-in `development@4` pack provides:
+The built-in `development@5` pack provides:
 
 - `plan-tickets@1`
 - `task-list@1`
 - `factory-fast@1`
-- `factory-governed@1`
+- `factory-governed@2`
 - `review-existing@1`
 - `pr-review@1`
 - `issue-fix@1`

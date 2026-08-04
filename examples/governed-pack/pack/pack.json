@@ -1,10 +1,10 @@
 {
   "apiVersion": "orq.pack/v1",
   "name": "development",
-  "version": "4",
+  "version": "5",
   "files": {
     "flows/factory-fast@1.json": "5e12cdc4bef800771ae66122cee8cacd55a6170cc12afa1e38f492ac22219f18",
-    "flows/factory-governed@1.json": "0222caca6a4371a2198a61aa0287171de63007dfdfc19f599c2702e1c7a4d3ae",
+    "flows/factory-governed@2.json": "d12a482a67a748f8fd46226947738a4c953e71d24c7bfb9912b82bfda242f6e0",
     "flows/issue-fix@1.json": "7e29183a318f8592f3f81a9f680339cd10b812d15f92041dcbc24aee0da32b85",
     "flows/plan-tickets@1.json": "ee5866989a3db51ec3047fdbaa0a8be10838fbcdb9525924fed2a4307abbdf26",
     "flows/pr-review@1.json": "51c580e6f8685c821b82f018725bb675e8fbe31aebd94528ee5f80d9df773f81",
