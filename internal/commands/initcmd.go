@@ -41,7 +41,7 @@ func InitWithOptions(dir string, opts InitOptions) error {
 	team := mustReadAsset("assets/team.json")
 	team = applyTestCommand(team, lang)
 	teamPath := filepath.Join(dir, "team.json")
-	if err := writeIfMissing(teamPath, team); err != nil {
+	if err := writeOrMigrateTeam(teamPath, team); err != nil {
 		return err
 	}
 
@@ -60,8 +60,29 @@ func InitWithOptions(dir string, opts InitOptions) error {
 	return commitGitignore(dir)
 }
 
+func writeOrMigrateTeam(path string, defaults []byte) error {
+	existing, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return writeIfMissing(path, defaults)
+	}
+	if err != nil {
+		return err
+	}
+	oldPrefix := []byte(".orquestalite/packs/development/4/prompts/")
+	newPrefix := []byte(".orquestalite/packs/development/5/prompts/")
+	migrated := bytes.ReplaceAll(existing, oldPrefix, newPrefix)
+	if bytes.Equal(existing, migrated) {
+		return nil
+	}
+	mode := os.FileMode(0o644)
+	if info, statErr := os.Stat(path); statErr == nil {
+		mode = info.Mode().Perm()
+	}
+	return os.WriteFile(path, migrated, mode)
+}
+
 func installBuiltinDevelopmentPack(projectDir string) error {
-	destination := filepath.Join(projectDir, ".orquestalite", "packs", "development", "4")
+	destination := filepath.Join(projectDir, ".orquestalite", "packs", "development", "5")
 	return fs.WalkDir(governedpack.FS, "pack", func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr

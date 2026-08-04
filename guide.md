@@ -52,7 +52,7 @@ ambiguous. Initialization creates:
 
 - `team.json`, containing provider-backed agents, dynamic roles, and argv
   quality gates;
-- `.orquestalite/packs/development/4`, the exact built-in verified development
+- `.orquestalite/packs/development/5`, the exact built-in verified development
   pack embedded in the binary;
 - `.orquestalite/results/`, for latest role results and immutable archives;
 - ignore rules for local runtime state and language build artifacts.
@@ -64,6 +64,10 @@ default; project-owned flows under `flows/` can remain tracked.
 
 When initialization changes `.gitignore`, it commits only that file as
 `chore: orq-lite ignore rules`. It does not commit other staged work.
+Re-running V5 initialization migrates only canonical
+`.orquestalite/packs/development/4/prompts/` references in an existing
+`team.json` to V5; custom agents, gates, conventions, and other user settings
+are preserved.
 
 Confirm the installed surface:
 
@@ -84,7 +88,7 @@ development/task-list@1
 Pin both versions when exact reproducibility matters:
 
 ```text
-development@4/task-list@1
+development@5/task-list@1
 ```
 
 ## 2. Prove the baseline is green
@@ -160,7 +164,7 @@ role set.
   "roles": {
     "coder": {
       "agents": ["primary", "reviewer"],
-      "prompt": ".orquestalite/packs/development/4/prompts/coder.md",
+      "prompt": ".orquestalite/packs/development/5/prompts/coder.md",
       "result_path": ".orquestalite/results/coder.json",
       "timeout_seconds": 1800
     }
@@ -202,14 +206,14 @@ converge better than asking each role to infer the project from nearby files.
 
 ## 4. Choose the development flow
 
-The built-in `development@4` pack contains:
+The built-in `development@5` pack contains:
 
 | Flow | Purpose |
 |---|---|
 | `plan-tickets@1` | Produce or extend a bounded ticket plan. |
 | `task-list@1` | Plan, implement, ticket-QA, and run final deterministic gates. |
 | `factory-fast@1` | Implement a feature batch with one integrated QA/repair pass. |
-| `factory-governed@1` | Develop tickets, then execute integrated governance. |
+| `factory-governed@2` | Implement as a batch by default (or ticket-by-ticket), then always execute integrated governance. |
 | `review-existing@1` | Run integrated QA, adversary, critic, repair, and governance over an existing change. |
 | `issue-fix@1` | Triage and optionally repair an issue. |
 | `pr-review@1` | Review a PR and optionally publish the verdict. |
@@ -219,7 +223,7 @@ The familiar CLI commands are aliases to those flows:
 ```text
 orq-lite plan features.md        -> development/plan-tickets@1
 orq-lite run                     -> development/task-list@1
-orq-lite factory features.md     -> development/factory-governed@1
+orq-lite factory features.md     -> development/factory-governed@2
 orq-lite review --pr 123         -> development/pr-review@1
 orq-lite intake --issue issue.md -> development/issue-fix@1
 ```
@@ -230,8 +234,9 @@ There is no `--engine` flag and no alternate scheduler behind these aliases.
 
 For most development work, separate throughput from integrated criticism:
 
-1. Run the ticket-development loop. The coder implements bounded tickets,
-   ticket QA checks acceptance, and deterministic gates protect the baseline.
+1. Run the delivery phase: the default batch coder maximizes throughput, while
+   `--fast=false` uses bounded coder/ticket-QA iterations for larger objectives.
+   Deterministic gates protect both paths.
 2. After the complete change exists, run an integrated review loop. QA,
    adversary, and critic inspect the assembled system; the integrator converts
    their findings into repairs; governance decides whether another bounded
@@ -282,15 +287,19 @@ These roles should not be three differently worded spec reviewers. Their
 independent lenses are the reason the second loop finds issues that ticket-level
 development misses.
 
-### Fast mode
+### Implementation mode
 
-`--fast` is a different execution path inside the V2 pack, not the governed
-loop with shorter timeouts. It batches implementation and keeps an integrated
-QA/repair pass, but skips the full adversary/critic/governance phase of
-`factory-governed@1`.
+`factory-governed@2` defaults to `fast=true`: one `batch_coder` implements the
+bounded objective and an initial QA/repair pass checks the assembled change.
+The full integrated QA/adversary/critic/governance phase then runs
+unconditionally. Fast changes implementation granularity; it never weakens the
+shipping gate.
 
-Use it for exploratory or externally reviewed work. Before shipping fast-mode
-output, run `development/review-existing@1` as a second workflow.
+Use `orq-lite factory features.md --fast=false` when the objective is too large
+or risky for one batch and needs the coder/ticket-QA loop. Both modes finish
+through the same integrated governance. The separate `factory-fast@1` flow is
+the lighter, non-governed option and should receive a `review-existing@1` run
+before shipping.
 
 ## 5. Write an objective that survives ticket decomposition
 
@@ -319,8 +328,8 @@ Run:
 orq-lite doctor
 orq-lite pack list
 orq-lite flow list
-orq-lite flow validate development@4/factory-governed@1
-orq-lite flow inspect development@4/factory-governed@1
+orq-lite flow validate development@5/factory-governed@2
+orq-lite flow inspect development@5/factory-governed@2
 git status --short
 ```
 
@@ -343,10 +352,9 @@ Use a source key whenever the work comes from a stable external object such as
 an issue, PR, automation delivery, or objective ID:
 
 ```bash
-orq-lite flow run development@4/factory-governed@1 \
+orq-lite flow run development@5/factory-governed@2 \
   --source-key=objective:customer-import-v2 \
   features_path=features.md \
-  fast=false \
   create_pr=false
 ```
 
@@ -422,8 +430,8 @@ After changing any resource in that pack:
 ```bash
 python3 examples/governed-pack/regen-digests.py
 orq-lite pack install examples/governed-pack/pack
-orq-lite flow validate development@4/factory-governed@1
-orq-lite flow inspect development@4/factory-governed@1
+orq-lite flow validate development@5/factory-governed@2
+orq-lite flow inspect development@5/factory-governed@2
 ```
 
 Review every manifest digest change. Pack installation rejects missing files,
@@ -446,4 +454,4 @@ documents and execute through the same compiler and durable scheduler.
 - [ ] `orq-lite doctor` has no unresolved failure; warnings have been consciously handled.
 - [ ] The launch uses an exact flow reference, stable source key, and recorded run ID.
 - [ ] A monitor is assigned to inspect status/events, handle approvals, and resume instead of duplicating runs.
-- [ ] Fast-mode output receives a separate `review-existing@1` governance run before shipping.
+- [ ] `factory-governed@2` completes integrated governance; output from the lighter `factory-fast@1` receives a separate `review-existing@1` run before shipping.

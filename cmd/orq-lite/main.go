@@ -58,7 +58,7 @@ func main() {
 	case "factory":
 		fs := flag.NewFlagSet("factory", flag.ExitOnError)
 		createPR := fs.Bool("pr", false, "push each finished feature branch and open a PR via gh")
-		fast := fs.Bool("fast", false, "use the pack's fast implementation path")
+		fast := fs.Bool("fast", true, "batch implementation; full governance always runs")
 		serve := fs.Bool("serve", true, "host the web dashboard while running (on by default)")
 		addr := fs.String("addr", "127.0.0.1:4173", "dashboard address")
 		_ = fs.Parse(args)
@@ -223,7 +223,7 @@ Commands:
   init [--lang L] [dir] scaffold team.json and the built-in development pack
   plan <plan.md>        run development/plan-tickets@1
   run [--fast]          run development/task-list@1
-  factory <features.md> run development/factory-governed@1
+  factory <features.md> run development/factory-governed@2 (batch implementation by default; --fast=false uses ticket mode)
   review [--pr N|--base B --head H] [--publish] critic-review a PR diff and post the verdict via gh
   intake --issue <file> triage a GitHub issue: plan+run, or write missing_info (--no-run)
   watch <project> [--issues] [--prs] [--interval D] poll GitHub; v2 emits idempotent generic flow triggers (--issue-flow, --pr-flow)

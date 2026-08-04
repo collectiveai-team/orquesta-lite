@@ -20,6 +20,40 @@ func governedPackRoot(t *testing.T) string {
 	return root
 }
 
+func governedFlowRef(name string) string {
+	version := "1"
+	if name == "factory-governed" {
+		version = "2"
+	}
+	return "development/" + name + "@" + version
+}
+
+func TestGovernedFactoryV2DefaultsToFastAndAlwaysRunsIntegratedReview(t *testing.T) {
+	doc, err := flow.Load(filepath.Join(governedPackRoot(t), "flows", "factory-governed@2.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fast, ok := doc.Inputs["fast"]
+	if !ok || fast.Default == nil || fast.Default.Literal != true {
+		t.Fatalf("fast default = %+v, want true", fast.Default)
+	}
+	conditions := map[string]string{}
+	for _, step := range doc.Steps {
+		conditions[step.ID] = step.If
+		if step.ID == "integrated_review" {
+			if step.If != "" {
+				t.Fatalf("integrated_review condition = %q, want unconditional governance", step.If)
+			}
+		}
+	}
+	if _, ok := conditions["integrated_review"]; !ok {
+		t.Fatal("factory-governed@2 has no integrated_review step")
+	}
+	if conditions["fast_batch"] != "inputs.fast == true" || conditions["develop_tickets"] != "inputs.fast != true" {
+		t.Fatalf("implementation mode conditions = fast:%q tickets:%q", conditions["fast_batch"], conditions["develop_tickets"])
+	}
+}
+
 // The governed pack's required development flows must exist, verify against
 // pack.json, and compile.
 func TestGovernedPackRequiredFlowsCompile(t *testing.T) {
@@ -28,8 +62,8 @@ func TestGovernedPackRequiredFlowsCompile(t *testing.T) {
 		t.Fatalf("pack.json digests are stale — run examples/governed-pack/regen-digests.py: %v", err)
 	}
 	catalog := flow.NewDirectoryCatalog(root, builtinSpecs())
-	for _, name := range []string{"factory-fast", "factory-governed", "issue-fix", "plan-tickets", "pr-review", "review-existing", "task-list"} {
-		ref := flow.ResourceRef{Kind: "flow", Name: name, Version: "1"}
+	for name, version := range map[string]string{"factory-fast": "1", "factory-governed": "2", "issue-fix": "1", "plan-tickets": "1", "pr-review": "1", "review-existing": "1", "task-list": "1"} {
+		ref := flow.ResourceRef{Kind: "flow", Name: name, Version: version}
 		doc, _, resolveErr := catalog.ResolveDocument(ref)
 		if resolveErr != nil {
 			t.Errorf("%s: %v", name, resolveErr)
@@ -81,7 +115,7 @@ func TestGovernedPackHasNoHardcodedToolchain(t *testing.T) {
 func TestGovernedFactoryLoadsItsPolicyWithoutTheFlag(t *testing.T) {
 	project := t.TempDir()
 	installGovernedPack(t, project)
-	compiled, err := compileWorkflowTarget(project, "development/factory-governed@1")
+	compiled, err := compileWorkflowTarget(project, "development/factory-governed@2")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +153,7 @@ func TestGovernedPackGatesValidateAgainstTheExampleTeamConfig(t *testing.T) {
 	teamPath := filepath.Join("..", "..", "examples", "governed-pack", "team.json")
 	config := loadGateConfig(teamPath)
 	for _, name := range []string{"factory-governed", "task-list", "issue-fix", "factory-fast", "review-existing"} {
-		compiled, err := compileWorkflowTarget(project, "development/"+name+"@1")
+		compiled, err := compileWorkflowTarget(project, governedFlowRef(name))
 		if err != nil {
 			t.Errorf("%s: %v", name, err)
 			continue
@@ -139,7 +173,7 @@ func TestGovernedPackPlanDrivenLoopsDeriveTheirBound(t *testing.T) {
 		"task-list":        "develop_tickets",
 		"issue-fix":        "develop_tickets",
 	} {
-		compiled, err := compileWorkflowTarget(project, "development/"+name+"@1")
+		compiled, err := compileWorkflowTarget(project, governedFlowRef(name))
 		if err != nil {
 			t.Errorf("%s: %v", name, err)
 			continue
@@ -174,7 +208,7 @@ func TestGovernedPackPlanDrivenLoopsAreGatedOnCompletion(t *testing.T) {
 	project := t.TempDir()
 	installGovernedPack(t, project)
 	for _, name := range []string{"factory-governed", "task-list", "issue-fix"} {
-		compiled, err := compileWorkflowTarget(project, "development/"+name+"@1")
+		compiled, err := compileWorkflowTarget(project, governedFlowRef(name))
 		if err != nil {
 			t.Errorf("%s: %v", name, err)
 			continue

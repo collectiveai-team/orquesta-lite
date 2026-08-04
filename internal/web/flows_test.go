@@ -53,7 +53,7 @@ func TestAPIFlowsListsVerifiedInstalledPack(t *testing.T) {
 			continue
 		}
 		found = true
-		if entry.Pack != "development@4" || entry.PackDigest == "" {
+		if entry.Pack != "development@5" || entry.PackDigest == "" {
 			t.Fatalf("pack metadata = %+v", entry)
 		}
 		if _, ok := entry.Inputs["fast"]; !ok || len(entry.Roles) == 0 || !strings.Contains(strings.Join(entry.Roles, ","), "ticket_planner") {

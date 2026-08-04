@@ -9,11 +9,11 @@ import (
 )
 
 var developmentAliases = map[string]string{
-	"plan":    "plan-tickets",
-	"intake":  "issue-fix",
-	"review":  "pr-review",
-	"run":     "task-list",
-	"factory": "factory-governed",
+	"plan":    "plan-tickets@1",
+	"intake":  "issue-fix@1",
+	"review":  "pr-review@1",
+	"run":     "task-list@1",
+	"factory": "factory-governed@2",
 }
 
 func RunDevelopmentAlias(ctx context.Context, projectDir, command string, inputs map[string]any, out io.Writer) error {
@@ -21,7 +21,7 @@ func RunDevelopmentAlias(ctx context.Context, projectDir, command string, inputs
 	if !ok {
 		return fmt.Errorf("no development flow alias for %q", command)
 	}
-	args := []string{"run", "development/" + flowName + "@1"}
+	args := []string{"run", "development/" + flowName}
 	keys := make([]string, 0, len(inputs))
 	for key := range inputs {
 		keys = append(keys, key)

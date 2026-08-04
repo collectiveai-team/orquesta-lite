@@ -3,14 +3,14 @@
  "kind": "Flow",
  "metadata": {
   "name": "factory-governed",
-  "version": "1",
+  "version": "2",
   "policy": "policy:development@3"
  },
  "inputs": {
   "features_path": {
    "schema": "schema:path@1"
   },
-  "fast": {"schema": "schema:flag@1", "default": false},
+  "fast": {"schema": "schema:flag@1", "default": true},
   "create_pr": {"schema": "schema:flag@1", "default": false}
  },
  "steps": [
@@ -77,7 +77,6 @@
   {
    "id": "integrated_review",
    "uses": "subflow:integrated-review@1",
-   "if": "inputs.fast != true",
    "with": {
     "features_path": {
      "$ref": "inputs.features_path"

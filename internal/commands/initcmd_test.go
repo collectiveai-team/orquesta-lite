@@ -24,7 +24,7 @@ func TestInit_CreatesScaffolding(t *testing.T) {
 	for _, p := range []string{
 		"team.json",
 		".orquestalite/results",
-		".orquestalite/packs/development/4/pack.json",
+		".orquestalite/packs/development/5/pack.json",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, p)); err != nil {
 			t.Errorf("missing %s: %v", p, err)
@@ -46,6 +46,12 @@ func TestInit_ListsInstalledFlowVersion(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "development/task-list@4") {
 		t.Fatalf("flow list incorrectly used the pack version:\n%s", out.String())
+	}
+	if !strings.Contains(out.String(), "development/factory-governed@2") {
+		t.Fatalf("flow list must expose the default governed flow:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), "development/factory-governed@1") {
+		t.Fatalf("flow list exposed the replaced governed flow:\n%s", out.String())
 	}
 }
 
@@ -154,13 +160,21 @@ func TestInitScaffoldsV2DevelopmentPack(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "flows.json")); !os.IsNotExist(err) {
 		t.Fatalf("legacy flows.json must not be scaffolded, stat error = %v", err)
 	}
-	packRoot := filepath.Join(dir, ".orquestalite", "packs", "development", "4")
+	packRoot := filepath.Join(dir, ".orquestalite", "packs", "development", "5")
 	pack, err := flow.LoadPack(packRoot)
 	if err != nil {
 		t.Fatalf("scaffolded development pack is invalid: %v", err)
 	}
-	if pack.Name != "development" || pack.Version != "4" {
-		t.Fatalf("scaffolded pack = %s@%s, want development@4", pack.Name, pack.Version)
+	if pack.Name != "development" || pack.Version != "5" {
+		t.Fatalf("scaffolded pack = %s@%s, want development@5", pack.Name, pack.Version)
+	}
+	catalog := flow.NewDirectoryCatalog(packRoot, builtinSpecs())
+	doc, _, err := catalog.ResolveDocument(flow.ResourceRef{Kind: "flow", Name: "factory-governed", Version: "2"})
+	if err != nil {
+		t.Fatalf("factory-governed@2 is not installed: %v", err)
+	}
+	if _, diagnostics := flow.Compile(doc, catalog); diagnostics.HasErrors() {
+		t.Fatalf("factory-governed@2 does not compile: %+v", diagnostics)
 	}
 }
 
@@ -187,6 +201,36 @@ func TestInitScaffoldsEveryRolePrompt(t *testing.T) {
 		if _, err := os.Stat(p); err != nil {
 			t.Errorf("role %s: prompt %s not scaffolded: %v", name, role.Prompt, err)
 		}
+	}
+}
+
+func TestInitMigratesBuiltinPromptPathsFromDevelopmentV4(t *testing.T) {
+	dir := t.TempDir()
+	legacyTeam := strings.ReplaceAll(
+		string(mustReadAsset("assets/team.json")),
+		".orquestalite/packs/development/5/prompts/",
+		".orquestalite/packs/development/4/prompts/",
+	)
+	legacyTeam = strings.Replace(legacyTeam, `"conventions_file": "CONVENTIONS.md"`, `"conventions_file": "CUSTOM.md"`, 1)
+	if err := os.WriteFile(filepath.Join(dir, "team.json"), []byte(legacyTeam), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := InitWithOptions(dir, InitOptions{Lang: "go"}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "team.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	team := string(raw)
+	if strings.Contains(team, ".orquestalite/packs/development/4/prompts/") {
+		t.Fatalf("team.json still points to development@4 prompts:\n%s", team)
+	}
+	if !strings.Contains(team, ".orquestalite/packs/development/5/prompts/") {
+		t.Fatalf("team.json does not point to development@5 prompts:\n%s", team)
+	}
+	if !strings.Contains(team, `"conventions_file": "CUSTOM.md"`) {
+		t.Fatal("init overwrote unrelated user configuration")
 	}
 }
 

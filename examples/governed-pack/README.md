@@ -1,6 +1,6 @@
 # Governed development pack
 
-`development@4` is the canonical built-in pack and the source embedded into the release binary. It demonstrates the product's v2-only architecture: flows compose versioned subflows, schemas, policies, and role prompts; the durable scheduler executes the compiled and pinned IR.
+`development@5` is the canonical built-in pack and the source embedded into the release binary. It demonstrates the product's v2-only architecture: flows compose versioned subflows, schemas, policies, and role prompts; the durable scheduler executes the compiled and pinned IR.
 
 ## Flows
 
@@ -9,17 +9,19 @@
 | `plan-tickets@1` | Produce or extend a bounded ticket plan. |
 | `task-list@1` | Plan, implement, verify, and run final gates. |
 | `factory-fast@1` | Implement a feature batch with one integrated verification. |
-| `factory-governed@1` | Develop tickets, then iterate integrated governance. |
+| `factory-governed@2` | Batch implementation by default (ticket mode is optional), followed by mandatory integrated governance. |
 | `review-existing@1` | Run governance over existing changes. |
 | `pr-review@1` | Review a pull request and optionally publish the verdict. |
 | `issue-fix@1` | Triage an issue and optionally execute its repair workflow. |
 
 ## Governance design
 
-Delivery and integrated review are separate phases:
+Delivery and integrated review are separate phases. `fast=true` is the default and selects batch delivery; `fast=false` selects the per-ticket loop. Both paths always enter integrated review:
 
 ```text
-ticket planner -> coder -> ticket QA
+ticket planner
+  ├─ batch coder -> initial QA/repair       (default fast=true)
+  └─ coder <-> ticket QA                    (fast=false)
                          |
                          v
 integrated QA + adversary + critic
@@ -57,8 +59,8 @@ From the repository root:
 
 ```bash
 orq-lite pack install examples/governed-pack/pack
-orq-lite flow validate development@4/factory-governed@1
-orq-lite flow inspect development@4/factory-governed@1
+orq-lite flow validate development@5/factory-governed@2
+orq-lite flow inspect development@5/factory-governed@2
 ```
 
 When any pack resource changes, run `python3 examples/governed-pack/regen-digests.py` and review the resulting `pack.json` digest changes.

@@ -37,7 +37,7 @@ orq-lite status
 `init` creates:
 
 - `team.json`, with provider-backed agents, dynamic roles, and `lint_argv` / `test_argv` gates;
-- `.orquestalite/packs/development/4`, the built-in digest-verified development pack;
+- `.orquestalite/packs/development/5`, the built-in digest-verified development pack;
 - `.orquestalite/workflows.db` on the first run, for durable workflow state.
 
 It does not create or read `flows.json`.
@@ -50,7 +50,7 @@ The familiar commands are aliases into the installed `development` pack:
 |---|---|
 | `orq-lite plan <plan.md>` | `development/plan-tickets@1` |
 | `orq-lite run [--fast]` | `development/task-list@1` |
-| `orq-lite factory <features.md> [--fast] [--pr]` | `development/factory-governed@1` |
+| `orq-lite factory <features.md> [--fast=false] [--pr]` | `development/factory-governed@2` |
 | `orq-lite review [--pr N]` | `development/pr-review@1` |
 | `orq-lite intake --issue issue.md` | `development/issue-fix@1` |
 
@@ -70,7 +70,7 @@ orq-lite flow run development/task-list@1 features_path="features.md" fast=false
 Pack versions and flow versions are independent. `development/task-list@1` selects the newest installed development pack containing flow version 1. Pin both when reproducibility requires it:
 
 ```text
-development@4/task-list@1
+development@5/task-list@1
 ```
 
 Pack installation verifies the manifest, every listed SHA-256 digest, unlisted files, and symlinks before an atomic install under `.orquestalite/packs/<name>/<version>`.
@@ -100,7 +100,7 @@ The runtime persists runs, step instances, attempts, outputs, approvals, and out
   "roles": {
     "coder": {
       "agents": ["codex"],
-      "prompt": ".orquestalite/packs/development/4/prompts/coder.md",
+      "prompt": ".orquestalite/packs/development/5/prompts/coder.md",
       "result_path": ".orquestalite/results/coder.json",
       "timeout_seconds": 1800
     }
@@ -116,13 +116,13 @@ The governed pack obtains project-specific quality gates only through `config.li
 
 ## Governance loop
 
-The development pack separates delivery from post-delivery governance:
+The development pack separates delivery from post-delivery governance. `factory` uses batch implementation by default, but the integrated governance phase is mandatory in both batch and ticket modes:
 
-1. plan and implement bounded tickets;
-2. verify each ticket against its acceptance criteria;
-3. run integrated QA, adversarial analysis, and code criticism;
-4. turn findings into a new bounded plan;
-5. integrate fixes and repeat within the policy budget;
+1. plan a bounded objective;
+2. implement it as one batch by default, or as coder/ticket-QA iterations with `--fast=false`;
+3. run deterministic gates and initial QA/repair for the selected delivery mode;
+4. always run integrated QA, adversarial analysis, and code criticism;
+5. integrate findings and repeat governance within the policy budget;
 6. run final lint/test gates before completion.
 
 `qa`, `adversary`, and `critic` have distinct contracts. QA validates behavior and can use browser-oriented skills when the project provides them. The adversary evaluates the declared product objective and invariants, not only the literal ticket text. The critic reviews code quality, maintainability, and convention fit. See [the governed pack](examples/governed-pack/README.md).
