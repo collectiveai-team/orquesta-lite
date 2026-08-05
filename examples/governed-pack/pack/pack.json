@@ -36,7 +36,7 @@
     "schemas/workflow-state@2.json": "3ddabdbbbe13b5658b037f465049bc5e510b54474213419d46e5ddb124931acf",
     "subflows/develop-ticket@1.json": "6486af65bc7307d1993cbd70c882ab2269ca7a77f760ebf69fc6a4f1d34db51f",
     "subflows/fast-batch@1.json": "77d5271cc24c10c3de83afdecee2eb23303b92b7ae30e4b1d39cd5aa22da8dfa",
-    "subflows/governance-cycle@1.json": "6b82e95f773d3f67d274b5535a08c028e387906b4c4d4a822e8de6d933a5f24d",
+    "subflows/governance-cycle@1.json": "6028d71416d921fc6783fe211bcd723f74eff18307bd81e09b2a92d151b28d33",
     "subflows/integrated-review@1.json": "e32604c3fea36c58b79aa4cdba36150339773325f2bcc3c0a42e591d0ceee64b"
   }
 }
