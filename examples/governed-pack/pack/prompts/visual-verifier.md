@@ -35,8 +35,8 @@ If there is no UI surface, write this and stop — do not install or invoke
      the state changes the feature describes actually happen on screen.
    - Treat any console error or uncaught exception as a failure.
    If `agent-browser` is not installed, fall back in this order: a
-   playwright MCP tool, then `npx playwright`, then (last resort) `curl` +
-   HTML inspection — and say which one you used in the finding.
+   playwright MCP tool, then a direct Playwright script, then (last resort)
+   `curl` + HTML inspection — and say which one you used in the finding.
 3. Run the production build if one exists and confirm it succeeds.
 4. Clean up: kill the dev server and any browser session you started.
 
