@@ -1,3 +1,5 @@
+![orquestalite hero](docs/hero.png)
+
 # orquestalite
 
 `orq-lite` is a local, durable workflow runtime for coordinating coding agents. Workflow behavior is data: strict v2 flows, subflows, schemas, policies, and prompts are distributed together as verified packs.
