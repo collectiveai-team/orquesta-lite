@@ -20,6 +20,9 @@
   },
   "adversary_review": {
    "schema": "schema:review-result@1"
+  },
+  "visual_review": {
+   "schema": "schema:review-result@1"
   }
  },
  "steps": [
@@ -47,6 +50,9 @@
      },
      "ADVERSARY_REVIEW": {
       "$ref": "inputs.adversary_review"
+     },
+     "VISUAL_REVIEW": {
+      "$ref": "inputs.visual_review"
      }
     }
    }
@@ -85,6 +91,9 @@
      },
      "ADVERSARY_REVIEW": {
       "$ref": "inputs.adversary_review"
+     },
+     "VISUAL_REVIEW": {
+      "$ref": "inputs.visual_review"
      }
     }
    }
