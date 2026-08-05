@@ -91,6 +91,9 @@
      },
      "ADVERSARY_REVIEW": {
       "$ref": "inputs.adversary_review"
+     },
+     "VISUAL_REVIEW": {
+      "$ref": "inputs.visual_review"
      }
     }
    }
