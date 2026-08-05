@@ -23,6 +23,7 @@
     "prompts/qa.md": "4dd8b6658192240d80abd007b679c8d6d24094e472fb51a418eac121f0ebf103",
     "prompts/ticket-planner.md": "4fc15b98c8bb68885921d1a121bfb976cd5251968b5c3a0a3a84193a21afa6b2",
     "prompts/ticket-qa.md": "ab9948fcbb2caa3f8c2c96c986664664cd534b9c0a2309dc44e01f5333e6767e",
+    "prompts/visual-verifier.md": "fc5d2e7694a5e5725393431474f8a18481f300ef665c3b161493401937f07ff4",
     "schemas/flag@1.json": "95a594d4f807140ef824ec0f7c01383dd5e682a7031d278ea2fef0278546ae9a",
     "schemas/intake-result@1.json": "794f22817dd13e44bc0464d52dc50e8f1ae43048d4206678cfe2df92e138b3d3",
     "schemas/iteration-result@1.json": "f82f0a4ef6d54740c8323ed266a52a7aaea9f154655717c4e415ee6f0c691cc8",
@@ -36,6 +37,6 @@
     "subflows/develop-ticket@1.json": "6486af65bc7307d1993cbd70c882ab2269ca7a77f760ebf69fc6a4f1d34db51f",
     "subflows/fast-batch@1.json": "77d5271cc24c10c3de83afdecee2eb23303b92b7ae30e4b1d39cd5aa22da8dfa",
     "subflows/governance-cycle@1.json": "6b82e95f773d3f67d274b5535a08c028e387906b4c4d4a822e8de6d933a5f24d",
-    "subflows/integrated-review@1.json": "ccc321722c5ea42ba79d580f5a864e770f83c474189acce9860d6f99eda7e0e0"
+    "subflows/integrated-review@1.json": "e32604c3fea36c58b79aa4cdba36150339773325f2bcc3c0a42e591d0ceee64b"
   }
 }
