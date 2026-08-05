@@ -95,6 +95,35 @@
    }
   },
   {
+   "id": "visual_verifier",
+   "uses": "activity:agent.invoke@1",
+   "with": {
+    "role": "visual_verifier",
+    "outputSchema": "schema:review-result@1",
+    "context": {
+     "FEATURES_PATH": {
+      "$ref": "inputs.features_path"
+     },
+     "QA_REVIEW": {
+      "$ref": "steps.qa.output"
+     },
+     "ADVERSARY_REVIEW": {
+      "$ref": "steps.adversary.output"
+     },
+     "CRITIC_REVIEW": {
+      "$ref": "steps.critic.output"
+     }
+    },
+    "fallbackOutput": {
+     "approved": false,
+     "summary": "visual verifier unavailable; integration repair and governance must not assume the UI was checked",
+     "findings": [
+      "visual verification did not produce a valid checkpoint; downstream reviews must not treat the UI as browser-tested"
+     ]
+    }
+   }
+  },
+  {
    "id": "integration_repair",
    "uses": "activity:agent.invoke@1",
    "while": {
@@ -129,6 +158,9 @@
      },
      "ADVERSARY_REVIEW": {
       "$ref": "steps.adversary.output"
+     },
+     "VISUAL_REVIEW": {
+      "$ref": "steps.visual_verifier.output"
      }
     }
    }
@@ -167,6 +199,9 @@
      },
      "ADVERSARY_REVIEW": {
       "$ref": "steps.adversary.output"
+     },
+     "VISUAL_REVIEW": {
+      "$ref": "steps.visual_verifier.output"
      }
     }
    }
@@ -201,6 +236,9 @@
     },
     "adversary_review": {
      "$ref": "steps.adversary.output"
+    },
+    "visual_review": {
+     "$ref": "steps.visual_verifier.output"
     }
    }
   },
@@ -233,6 +271,9 @@
   },
   "adversary": {
    "$ref": "steps.adversary.output"
+  },
+  "visual_verifier": {
+   "$ref": "steps.visual_verifier.output"
   }
  }
 }
