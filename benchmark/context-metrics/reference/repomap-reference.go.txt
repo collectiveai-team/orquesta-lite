@@ -1,0 +1,288 @@
+// repomap2 — a token-budgeted repository map.
+//
+// Consumes `tree-sitter tags` output and ranks files by PageRank over the
+// definition/reference graph. Four fixes over a naive reference count, each one
+// addressing a failure mode observed on a real repo:
+//
+//   - Common-name damping: a symbol defined in K files contributes 1/K to each
+//     edge. Without this, `interface Props` (defined in 20+ files in a React
+//     codebase) made 20 files tie for the top and consumed the whole budget.
+//   - PageRank instead of raw in-degree, so importance propagates: a file used
+//     by an important file outranks one used by a leaf.
+//   - Test down-weighting, because `scheduler_test.go` ranked #1 in a Go repo
+//     purely for defining Spec/Execute.
+//   - Whole-artifact budget, not just the symbol section.
+//
+// usage: repomap2 <repo> [budgetTokens]
+// env:   TREE_SITTER_BIN, TREE_SITTER_DIR
+package main
+
+import (
+	"bufio"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+)
+
+type def struct {
+	Name string
+	Kind string
+	Doc  string
+}
+
+type fileInfo struct {
+	Path   string
+	Defs   []def
+	Refs   map[string]bool
+	IsTest bool
+	Score  float64
+}
+
+var langExt = map[string]bool{
+	".py": true, ".go": true, ".ts": true, ".tsx": true, ".js": true, ".jsx": true, ".mjs": true,
+}
+
+func isTest(p string) bool {
+	lp := strings.ToLower(p)
+	for _, m := range []string{"/test", "test_", "_test.", ".test.", ".spec.", "/tests/",
+		"/__tests__/", "/playwright/", "/e2e/", "conftest.py", "/spec/", "/fixtures/", "/testdata/"} {
+		if strings.Contains(lp, m) {
+			return true
+		}
+	}
+	return strings.HasPrefix(lp, "test") || strings.HasPrefix(lp, "tests/")
+}
+
+func main() {
+	if len(os.Args) < 2 {
+		fmt.Fprintln(os.Stderr, "usage: repomap2 <repo> [budgetTokens]")
+		os.Exit(2)
+	}
+	repo := os.Args[1]
+	budget := 1500
+	if len(os.Args) > 2 {
+		fmt.Sscanf(os.Args[2], "%d", &budget)
+	}
+	tsBin := os.Getenv("TREE_SITTER_BIN")
+	if tsBin == "" {
+		tsBin = "tree-sitter"
+	}
+
+	start := time.Now()
+	out, err := exec.Command("git", "-C", repo, "ls-files").Output()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "git ls-files: %v\n", err)
+		os.Exit(1)
+	}
+	var targets []string
+	for _, rel := range strings.Fields(string(out)) {
+		if langExt[strings.ToLower(filepath.Ext(rel))] {
+			targets = append(targets, rel)
+		}
+	}
+	if len(targets) == 0 {
+		fmt.Fprintln(os.Stderr, "[repomap] no source files with a configured grammar")
+		return
+	}
+
+	// --- collect tags, batched to stay under ARG_MAX ---
+	files := map[string]*fileInfo{}
+	order := []string{}
+	const batch = 200
+	for i := 0; i < len(targets); i += batch {
+		end := i + batch
+		if end > len(targets) {
+			end = len(targets)
+		}
+		cmd := exec.Command(tsBin, append([]string{"tags"}, targets[i:end]...)...)
+		cmd.Dir = repo
+		stdout, err := cmd.Output()
+		if err != nil && len(stdout) == 0 {
+			fmt.Fprintf(os.Stderr, "[warn] tree-sitter tags batch failed: %v\n", err)
+			continue
+		}
+		cur := ""
+		sc := bufio.NewScanner(strings.NewReader(string(stdout)))
+		sc.Buffer(make([]byte, 1<<20), 1<<20)
+		for sc.Scan() {
+			line := sc.Text()
+			if line == "" {
+				continue
+			}
+			if !strings.HasPrefix(line, "\t") {
+				cur = strings.TrimSpace(line)
+				if _, ok := files[cur]; !ok {
+					files[cur] = &fileInfo{Path: cur, Refs: map[string]bool{}, IsTest: isTest(cur)}
+					order = append(order, cur)
+				}
+				continue
+			}
+			fi := files[cur]
+			if fi == nil {
+				continue
+			}
+			parts := strings.Split(strings.TrimPrefix(line, "\t"), "\t")
+			if len(parts) < 3 {
+				continue
+			}
+			name := strings.TrimSpace(parts[0])
+			kind := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(parts[1]), "|"))
+			role := parts[2]
+			doc := ""
+			if len(parts) > 3 {
+				doc = strings.Trim(strings.TrimSpace(parts[3]), `"`)
+				if idx := strings.IndexAny(doc, ".\n"); idx > 0 {
+					doc = doc[:idx]
+				}
+				doc = strings.TrimSuffix(strings.TrimSpace(doc), "...")
+			}
+			switch {
+			case strings.HasPrefix(role, "def"):
+				fi.Defs = append(fi.Defs, def{Name: name, Kind: kind, Doc: doc})
+			case strings.HasPrefix(role, "ref"):
+				fi.Refs[name] = true
+			}
+		}
+	}
+	tagDur := time.Since(start)
+
+	// --- graph with common-name damping ---
+	definers := map[string][]string{}
+	for _, p := range order {
+		seen := map[string]bool{}
+		for _, d := range files[p].Defs {
+			if seen[d.Name] {
+				continue
+			}
+			seen[d.Name] = true
+			definers[d.Name] = append(definers[d.Name], p)
+		}
+	}
+	edge := map[string]map[string]float64{} // src -> dst -> weight
+	outW := map[string]float64{}
+	for _, src := range order {
+		for name := range files[src].Refs {
+			owners := definers[name]
+			if len(owners) == 0 {
+				continue
+			}
+			// A symbol defined in K files carries 1/K of the signal. This is the
+			// fix for `Props`-style convention names.
+			w := 1.0 / float64(len(owners))
+			for _, dst := range owners {
+				if dst == src {
+					continue
+				}
+				if edge[src] == nil {
+					edge[src] = map[string]float64{}
+				}
+				edge[src][dst] += w
+				outW[src] += w
+			}
+		}
+	}
+
+	// --- PageRank ---
+	n := float64(len(order))
+	const d = 0.85
+	score := map[string]float64{}
+	for _, p := range order {
+		score[p] = 1 / n
+	}
+	for iter := 0; iter < 40; iter++ {
+		next := map[string]float64{}
+		var dangling float64
+		for _, p := range order {
+			if outW[p] == 0 {
+				dangling += score[p]
+			}
+		}
+		base := (1-d)/n + d*dangling/n
+		for _, p := range order {
+			next[p] = base
+		}
+		for src, dsts := range edge {
+			if outW[src] == 0 {
+				continue
+			}
+			for dst, w := range dsts {
+				next[dst] += d * score[src] * w / outW[src]
+			}
+		}
+		score = next
+	}
+	// test files are real but should not headline the map
+	for _, p := range order {
+		files[p].Score = score[p]
+		if files[p].IsTest {
+			files[p].Score *= 0.15
+		}
+	}
+
+	ranked := append([]string{}, order...)
+	sort.SliceStable(ranked, func(a, b int) bool {
+		if files[ranked[a]].Score != files[ranked[b]].Score {
+			return files[ranked[a]].Score > files[ranked[b]].Score
+		}
+		return ranked[a] < ranked[b]
+	})
+
+	// --- render under a whole-artifact budget ---
+	var b strings.Builder
+	used := 0
+	add := func(s string) bool {
+		if used+len(s)/4 > budget {
+			return false
+		}
+		b.WriteString(s)
+		used += len(s) / 4
+		return true
+	}
+	add("## Repository map — most-depended-upon first\n")
+	shownFiles, omitted := 0, 0
+	for _, p := range ranked {
+		fi := files[p]
+		if len(fi.Defs) == 0 {
+			continue
+		}
+		var blk strings.Builder
+		tag := ""
+		if fi.IsTest {
+			tag = " (test)"
+		}
+		fmt.Fprintf(&blk, "\n%s%s\n", p, tag)
+		seen := map[string]bool{}
+		shown := 0
+		for _, dd := range fi.Defs {
+			if seen[dd.Name] {
+				continue
+			}
+			seen[dd.Name] = true
+			if dd.Doc != "" {
+				fmt.Fprintf(&blk, "  %s %s — %s\n", dd.Kind, dd.Name, dd.Doc)
+			} else {
+				fmt.Fprintf(&blk, "  %s %s\n", dd.Kind, dd.Name)
+			}
+			if shown++; shown >= 10 {
+				break
+			}
+		}
+		if !add(blk.String()) {
+			omitted++
+			continue
+		}
+		shownFiles++
+	}
+	if omitted > 0 {
+		add(fmt.Sprintf("\n… %d more files omitted for budget; grep for them.\n", omitted))
+	}
+
+	fmt.Print(b.String())
+	fmt.Fprintf(os.Stderr,
+		"[repomap] %s\n  tagged %d files in %v | ~%d tokens (budget %d) | shown=%d omitted=%d\n",
+		repo, len(order), tagDur.Round(time.Millisecond), used, budget, shownFiles, omitted)
+}
