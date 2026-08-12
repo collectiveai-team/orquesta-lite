@@ -63,6 +63,12 @@ type RoleInvoker struct {
 	// skill's content as {{SKILLS}}. Empty defaults to "skills". A requested
 	// skill that is not on disk is a clear, immediate error.
 	SkillsDir string
+	// AgentEnv, when non-empty, is the environment handed to every agent
+	// subprocess instead of inheriting this process's. It carries the
+	// context-optimization settings (proxy address, filter binary on PATH) so
+	// they apply per project rather than leaking from the launching shell. Built
+	// once per run by internal/contextopt.
+	AgentEnv []string
 	// Sessions, when set, records each successful run's provider session id and
 	// supplies it back to resume the conversation when the same agent runs again
 	// on the same task. Nil disables session tracking entirely.
@@ -282,6 +288,7 @@ func (inv *RoleInvoker) runValidated(ctx context.Context, roleName string, role 
 				"RESULT_PATH": absResultPath,
 				"ROLE":        roleName,
 			},
+			Env: inv.AgentEnv,
 		}
 		// Resume this agent's prior conversation for the task when one exists.
 		// Only the same agent on the same task resumes; a fallback to a different

@@ -39,6 +39,84 @@ Start from a clean commit. Durable state protects workflow progress, but a
 clean baseline is still necessary for agents and reviewers to attribute a diff
 to the current objective.
 
+### Context optimization (recommended, on by default)
+
+Two external tools cut what each agent invocation carries. Both are **enabled by
+default** in `team.json` and both **degrade silently when absent** — a run without
+them works, it just costs more. Measured on an end-to-end benchmark run of the
+same specification: the compression proxy cut cost 38%, the command filter 25%.
+
+orq-lite does not install or supervise either one. Install them here, in
+preconditions, and leave the proxy running.
+
+**1. Compression proxy** — compresses request bodies between the agent and the
+provider API, chiefly the tool schemas declared on every invocation (91% of its
+measured saving). It is a daemon, so it must be running before the flow starts.
+
+```bash
+uv tool install --python 3.13 "headroom-ai[all]"   # NOT "headroom" — see below
+headroom proxy --port 8787                          # leave this running
+curl -s http://127.0.0.1:8787/stats >/dev/null && echo reachable
+```
+
+Leave it running for the duration of the work — in a separate terminal, a
+`tmux`/`screen` session, or as a user service. orq-lite probes the address at run
+start: reachable means it is used, unreachable means the run proceeds without it
+and says so in the log.
+
+> **Install trap.** The PyPI name `headroom` belongs to an unrelated project (a
+> command-line AI assistant). Installing it gives you the wrong tool with no
+> error. The correct package is **`headroom-ai`**.
+
+**2. Command filter** — rewrites the agent's shell commands so verbose output is
+filtered before it becomes a tool result. A one-shot binary, no daemon.
+
+```bash
+brew install rtk        # or: cargo install rtk, or a release binary
+rtk --version
+command -v rtk          # must resolve by name — see below
+```
+
+> **Do not run `rtk init -g`.** It writes a hook into your **global**
+> `~/.claude/settings.json`, affecting every unrelated Claude session on the
+> machine. orq-lite writes the equivalent hook into this project's
+> `.claude/settings.json` instead, so the setting is per project and reversible
+> by editing one local file. (`rtk init -g` also prompts and answers *no* when
+> there is no TTY, so it silently does nothing in automation.)
+
+> **The binary must resolve by name.** The hook rewrites `git status` to
+> `rtk git status` with no path. If `rtk` is not on `PATH`, every rewritten
+> command dies with exit 127 and the agent retries blind — a failure that looks
+> like agent confusion, not a configuration error. orq-lite verifies this before
+> enabling the filter and skips it rather than breaking every shell call, but
+> installing the binary somewhere on `PATH` is what you actually want.
+
+**3. Confirm what is active.** `orq-lite doctor` reports both:
+
+```
+[PASS] compression_proxy      reachable at http://127.0.0.1:8787
+[PASS] command_filter         verified: /opt/homebrew/bin/rtk
+```
+
+A `[WARN]` on either means the run will proceed without that tool. That is a
+deliberate choice, not a failure — but it is also money, so resolve it before a
+long run.
+
+**To turn either off**, set it in `team.json`. Omitting the block enables both:
+
+```json
+{
+  "runtime": {
+    "context_optimization": {
+      "compression_proxy": { "enabled": false },
+      "command_filter":    { "enabled": false }
+    }
+  }
+}
+```
+
+Use `url` / `binary` in the same blocks to point at a pinned or vendored install.
+
 ## 1. Initialize the project
 
 Run `init` from the project root:

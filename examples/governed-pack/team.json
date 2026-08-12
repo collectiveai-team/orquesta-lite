@@ -5,7 +5,7 @@
       "model": "claude-haiku-4-5-20251001",
       "dangerously_skip_permissions": true,
       "safe_mode": true,
-      "rate_limit_pattern": "(?i)(rate_?limit|429|quota|too many requests|session limit|usage limit)"
+      "rate_limit_pattern": "(?i)(rate[ _-]?limit|429|quota|too many requests|session limit|usage limit|spend limit|credit balance|overloaded)"
     }
   },
   "roles": {
@@ -23,7 +23,7 @@
     "pr_reviewer": {"agents": ["haiku"], "prompt": ".orquestalite/packs/development/5/prompts/pr-reviewer.md", "result_path": ".orquestalite/results/pr_reviewer.json", "timeout_seconds": 1200}
   },
   "resume_sessions": true,
-  "rate_limit_backoff": {"initial_seconds": 30, "factor": 2, "max_seconds": 1800, "default_pattern": "(?i)(rate_?limit|429|quota|too many requests|session limit|usage limit)"},
+  "rate_limit_backoff": {"initial_seconds": 30, "factor": 2, "max_seconds": 1800, "default_pattern": "(?i)(rate[ _-]?limit|429|quota|too many requests|session limit|usage limit|spend limit|credit balance|overloaded)"},
   "conventions_file": "CONVENTIONS.md",
   "lint_argv": ["uv", "run", "ruff", "check", "."],
   "test_argv": ["uv", "run", "pytest", "-q"]

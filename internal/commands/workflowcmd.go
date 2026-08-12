@@ -20,6 +20,7 @@ import (
 	"github.com/lionelchamorro/orquestalite/internal/agenthealth"
 	"github.com/lionelchamorro/orquestalite/internal/artifacts"
 	"github.com/lionelchamorro/orquestalite/internal/config"
+	"github.com/lionelchamorro/orquestalite/internal/contextopt"
 	"github.com/lionelchamorro/orquestalite/internal/doctor"
 	"github.com/lionelchamorro/orquestalite/internal/eventlog"
 	"github.com/lionelchamorro/orquestalite/internal/fallback"
@@ -238,7 +239,15 @@ func newWorkflowDeps(projectDir, teamPath, runID string, compiled *compiledWorkf
 		if defaultPattern == "" {
 			defaultPattern = cfg.RateLimitBackoff.DefaultPattern
 		}
-		invoker = &invoke.RoleInvoker{Specs: specs, Dir: projectDir, Fallback: fallbackCaller, Log: logger, Health: tracker, MemPath: filepath.Join(stateDir, "memory.md"), Runner: invoke.ExecRunner{}, DefaultRateLimitPattern: defaultPattern, AgentHealthThreshold: agentHealthThreshold, ConventionsPath: cfg.ConventionsFile, Sessions: sessions.Load(projectDir), ResumeRoles: resumeRoles, Artifacts: artifactStore, CodeWritingRoles: map[string]bool{}}
+		// Resolve the context-optimization tools once per run and hand the
+		// resulting environment to every agent invocation. Activate never
+		// errors: an unavailable tool is reported and skipped, so a run is
+		// never blocked by an optimization.
+		optStatus := contextopt.Activate(cfg.Runtime.ContextOptimization, projectDir)
+		for _, note := range optStatus.Notes {
+			logger.Log(eventlog.Event{Type: "context_optimization", Fields: map[string]any{"detail": note}})
+		}
+		invoker = &invoke.RoleInvoker{Specs: specs, Dir: projectDir, Fallback: fallbackCaller, Log: logger, Health: tracker, MemPath: filepath.Join(stateDir, "memory.md"), Runner: invoke.ExecRunner{}, DefaultRateLimitPattern: defaultPattern, AgentHealthThreshold: agentHealthThreshold, ConventionsPath: cfg.ConventionsFile, AgentEnv: optStatus.Env(), Sessions: sessions.Load(projectDir), ResumeRoles: resumeRoles, Artifacts: artifactStore, CodeWritingRoles: map[string]bool{}}
 	}
 	validator := func(ref string, raw []byte) error {
 		schema, ok := compiled.IR.Schemas[ref]

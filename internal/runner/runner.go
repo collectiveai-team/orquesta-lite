@@ -31,6 +31,10 @@ type Spec struct {
 	// TemplateVars holds additional {{KEY}} substitutions applied after
 	// {{PROMPT}} is resolved. Keys are the bare names without braces.
 	TemplateVars map[string]string
+	// Env is the full environment for the subprocess. Nil inherits the parent's,
+	// which is the historical behavior. Non-nil is set verbatim, so callers must
+	// include os.Environ() themselves — see contextopt.Status.Env.
+	Env []string
 }
 
 // Result holds the captured output and derived state after RunAgent returns.
@@ -156,6 +160,9 @@ func RunAgent(ctx context.Context, s Spec) (*Result, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(cctx, launch.Args[0], launch.Args[1:]...)
+	if len(s.Env) > 0 {
+		cmd.Env = s.Env
+	}
 	if launch.Stdin != "" {
 		cmd.Stdin = strings.NewReader(launch.Stdin)
 	}
