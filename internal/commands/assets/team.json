@@ -37,7 +37,11 @@
   "runtime": {
     "retention_runs": 20,
     "artifact_max_bytes": 8388608,
-    "provider_backoff": {"initial_seconds": 30, "factor": 2, "max_seconds": 1800, "default_pattern": "(?i)(rate[ _-]?limit|429|quota|too many requests|session limit|usage limit|spend limit|credit balance|overloaded)"}
+    "provider_backoff": {"initial_seconds": 30, "factor": 2, "max_seconds": 1800, "default_pattern": "(?i)(rate[ _-]?limit|429|quota|too many requests|session limit|usage limit|spend limit|credit balance|overloaded)"},
+    "context_optimization": {
+      "compression_proxy": {"enabled": true, "url": "http://127.0.0.1:8787"},
+      "command_filter": {"enabled": true, "binary": "rtk"}
+    }
   },
   "conventions_file": "CONVENTIONS.md",
   "lint_argv": ["go", "vet", "./..."],

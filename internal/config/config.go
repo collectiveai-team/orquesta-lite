@@ -70,6 +70,74 @@ type Runtime struct {
 	RetentionRuns    int              `json:"retention_runs,omitempty"`
 	ArtifactMaxBytes int64            `json:"artifact_max_bytes,omitempty"`
 	ProviderBackoff  RateLimitBackoff `json:"provider_backoff,omitempty"`
+	// ContextOptimization configures the external tools that shrink what an
+	// agent invocation carries. Both default to enabled-when-available: a
+	// missing tool degrades to an unoptimized run and never fails one.
+	ContextOptimization ContextOptimization `json:"context_optimization,omitempty"`
+}
+
+// ContextOptimization holds the two measured context-reduction tools. Neither
+// is vendored with orq-lite, so "enabled" means "used when present" — see
+// GUIDE.md for the install steps and `orq-lite doctor` for what is active.
+type ContextOptimization struct {
+	// CompressionProxy compresses request bodies — chiefly the tool schemas
+	// declared on every invocation — between the agent and the provider API.
+	// Measured at −38% cost on an end-to-end benchmark run.
+	CompressionProxy CompressionProxy `json:"compression_proxy,omitempty"`
+	// CommandFilter rewrites the agent's shell commands so verbose output is
+	// filtered before it becomes a tool result. Measured at −25% cost.
+	CommandFilter CommandFilter `json:"command_filter,omitempty"`
+}
+
+type CompressionProxy struct {
+	// Enabled defaults to true when omitted. A pointer so "absent" and
+	// "false" stay distinguishable.
+	Enabled *bool `json:"enabled,omitempty"`
+	// URL is where the proxy listens. orq-lite does not start or supervise
+	// the daemon; it probes this address and uses it when reachable.
+	URL string `json:"url,omitempty"`
+}
+
+type CommandFilter struct {
+	// Enabled defaults to true when omitted.
+	Enabled *bool `json:"enabled,omitempty"`
+	// Binary is resolved on PATH, or used as-is when it contains a separator.
+	// The hook rewrites commands to `<binary> <cmd>` with no path, so the
+	// binary must be reachable by name in the agent subprocess.
+	Binary string `json:"binary,omitempty"`
+}
+
+// DefaultProxyURL is probed when a project enables the proxy without naming one.
+const DefaultProxyURL = "http://127.0.0.1:8787"
+
+// DefaultFilterBinary is resolved when a project enables the filter without
+// naming a binary.
+const DefaultFilterBinary = "rtk"
+
+func enabled(flag *bool) bool { return flag == nil || *flag }
+
+// ProxyEnabled reports whether the compression proxy should be used. Omitting
+// the block enables it.
+func (c ContextOptimization) ProxyEnabled() bool { return enabled(c.CompressionProxy.Enabled) }
+
+// FilterEnabled reports whether the command filter should be used. Omitting
+// the block enables it.
+func (c ContextOptimization) FilterEnabled() bool { return enabled(c.CommandFilter.Enabled) }
+
+// ProxyURL returns the configured proxy address or the default.
+func (c ContextOptimization) ProxyURL() string {
+	if c.CompressionProxy.URL == "" {
+		return DefaultProxyURL
+	}
+	return c.CompressionProxy.URL
+}
+
+// FilterBinary returns the configured filter binary or the default.
+func (c ContextOptimization) FilterBinary() string {
+	if c.CommandFilter.Binary == "" {
+		return DefaultFilterBinary
+	}
+	return c.CommandFilter.Binary
 }
 
 func (r Runtime) RetentionCeiling() int {

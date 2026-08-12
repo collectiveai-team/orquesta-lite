@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/lionelchamorro/orquestalite/internal/config"
+	"github.com/lionelchamorro/orquestalite/internal/contextopt"
 	"github.com/lionelchamorro/orquestalite/internal/flow"
 	"github.com/lionelchamorro/orquestalite/internal/gitx"
 )
@@ -117,6 +118,35 @@ func Run(ctx context.Context, dir string) []Check {
 			add(StatusOK, "credentials:"+provider, "credentials at ~/"+f)
 		} else {
 			add(StatusWarn, "credentials:"+provider, fmt.Sprintf("no credentials found (~/%s or %s) — log in with the CLI once", cred.files[0], cred.envVar))
+		}
+	}
+
+	// context optimization — external tools that shrink what each invocation
+	// carries. Neither is vendored, so absence is a warning and never a
+	// failure: the run proceeds unoptimized. Reporting them here matters
+	// because a silently skipped optimization looks exactly like one that ran.
+	{
+		co := cfg.Runtime.ContextOptimization
+		st := contextopt.Activate(co, dir)
+		if !st.ProxyEnabled {
+			add(StatusOK, "compression_proxy", "disabled in team.json")
+		} else if st.ProxyReachable {
+			add(StatusOK, "compression_proxy", "reachable at "+st.ProxyURL)
+		} else {
+			add(StatusWarn, "compression_proxy", fmt.Sprintf(
+				"enabled but nothing is listening at %s — runs proceed without it; see GUIDE.md to start it", st.ProxyURL))
+		}
+		switch {
+		case !st.FilterEnabled:
+			add(StatusOK, "command_filter", "disabled in team.json")
+		case st.FilterVerified:
+			add(StatusOK, "command_filter", "verified: "+st.FilterBinary)
+		case st.FilterBinary == "":
+			add(StatusWarn, "command_filter", fmt.Sprintf(
+				"enabled but %q is not on PATH — runs proceed without it; see GUIDE.md to install it", co.FilterBinary()))
+		default:
+			add(StatusWarn, "command_filter", fmt.Sprintf(
+				"%s found but did not verify — runs proceed without it", st.FilterBinary))
 		}
 	}
 
