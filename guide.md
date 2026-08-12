@@ -117,6 +117,22 @@ long run.
 
 Use `url` / `binary` in the same blocks to point at a pinned or vendored install.
 
+### Install the operating skill
+
+You are reading this guide once, from a URL. The skill persists in the project,
+so every later session starts already knowing the flow lifecycle, the `team.json`
+contract, and the runtime behaviour that is expensive to rediscover.
+
+```bash
+npx skills add collectiveai-team/orquesta-lite --skill using-orq-lite
+```
+
+It lands in the project's agent skills directory and is recorded in
+`skills-lock.json`. This guide stays the setup procedure; the skill is the
+reference for operating what you set up. If the CLI is unavailable, copy
+`skills/using-orq-lite/` out of the orq-lite repo instead — nothing about the
+skill depends on the installer.
+
 ## 1. Initialize the project
 
 Run `init` from the project root:

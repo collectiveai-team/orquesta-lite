@@ -85,8 +85,6 @@ orq-lite factory features.md                       # alias equivalent
 ```bash
 orq-lite status [--watch]                          # all durable runs
 orq-lite flow status|events <run-id>               # one run's state / history
-orq-lite log [--role R] [--event T]                # replay agent traffic
-orq-lite cost                                      # spend rollup
 orq-lite flow resume|cancel <run-id>
 orq-lite flow approve <run-id> <approval-id> --decision approve|reject
 ```
