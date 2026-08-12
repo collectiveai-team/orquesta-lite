@@ -4,13 +4,13 @@
       "provider": "claude",
       "model": "claude-sonnet-4-6",
       "dangerously_skip_permissions": true,
-      "rate_limit_pattern": "(?i)(rate_?limit|429|quota|session limit|usage limit)"
+      "rate_limit_pattern": "(?i)(rate[ _-]?limit|429|quota|too many requests|session limit|usage limit|spend limit|credit balance|overloaded)"
     },
     "claude_opus": {
       "provider": "claude",
       "model": "claude-opus-4-8",
       "dangerously_skip_permissions": true,
-      "rate_limit_pattern": "(?i)(rate_?limit|429|quota|session limit|usage limit)"
+      "rate_limit_pattern": "(?i)(rate[ _-]?limit|429|quota|too many requests|session limit|usage limit|spend limit|credit balance|overloaded)"
     },
     "codex_gpt5": {
       "provider": "codex",
@@ -33,11 +33,11 @@
     "pr_reviewer": {"agents": ["claude_opus", "codex_gpt5"], "prompt": ".orquestalite/packs/development/5/prompts/pr-reviewer.md", "result_path": ".orquestalite/results/pr_reviewer.json", "timeout_seconds": 1200}
   },
   "limits": {"resume_sessions": true},
-  "rate_limit_backoff": {"initial_seconds": 30, "factor": 2, "max_seconds": 1800, "default_pattern": "(?i)(rate_?limit|429|quota|too many requests|session limit|usage limit)"},
+  "rate_limit_backoff": {"initial_seconds": 30, "factor": 2, "max_seconds": 1800, "default_pattern": "(?i)(rate[ _-]?limit|429|quota|too many requests|session limit|usage limit|spend limit|credit balance|overloaded)"},
   "runtime": {
     "retention_runs": 20,
     "artifact_max_bytes": 8388608,
-    "provider_backoff": {"initial_seconds": 30, "factor": 2, "max_seconds": 1800, "default_pattern": "(?i)(rate_?limit|429|quota|too many requests|session limit|usage limit)"}
+    "provider_backoff": {"initial_seconds": 30, "factor": 2, "max_seconds": 1800, "default_pattern": "(?i)(rate[ _-]?limit|429|quota|too many requests|session limit|usage limit|spend limit|credit balance|overloaded)"}
   },
   "conventions_file": "CONVENTIONS.md",
   "lint_argv": ["go", "vet", "./..."],
