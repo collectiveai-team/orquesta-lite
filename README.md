@@ -21,13 +21,13 @@ The guide covers installing `orq-lite` when it is not on `PATH`, initializing th
 If you only need the binary, install it directly and continue with the quick start:
 
 ```bash
-go install github.com/lionelchamorro/orquestalite/cmd/orq-lite@latest
+go install github.com/collectiveai-team/orquestalite/cmd/orq-lite@latest
 ```
 
 ## Quick start
 
 ```bash
-go install github.com/lionelchamorro/orquestalite/cmd/orq-lite@latest
+go install github.com/collectiveai-team/orquestalite/cmd/orq-lite@latest
 
 cd your-project
 orq-lite init --lang auto
