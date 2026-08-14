@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lionelchamorro/orquestalite/internal/activity"
+	"github.com/collectiveai-team/orquesta-lite/internal/activity"
 )
 
 func policyFlow(metadataPolicy string) string {

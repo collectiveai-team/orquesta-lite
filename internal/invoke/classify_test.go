@@ -3,7 +3,7 @@ package invoke
 import (
 	"testing"
 
-	"github.com/lionelchamorro/orquestalite/internal/runner"
+	"github.com/collectiveai-team/orquesta-lite/internal/runner"
 )
 
 func TestClassifyFallbackDisposition(t *testing.T) {

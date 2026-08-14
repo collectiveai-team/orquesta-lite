@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lionelchamorro/orquestalite/internal/activity"
-	"github.com/lionelchamorro/orquestalite/internal/flow"
+	"github.com/collectiveai-team/orquesta-lite/internal/activity"
+	"github.com/collectiveai-team/orquesta-lite/internal/flow"
 )
 
 type recoveryExecutor struct {

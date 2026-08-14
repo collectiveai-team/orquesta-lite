@@ -8,8 +8,8 @@ import (
 	"os/signal"
 	"time"
 
-	"github.com/lionelchamorro/orquestalite/internal/commands"
-	"github.com/lionelchamorro/orquestalite/internal/web"
+	"github.com/collectiveai-team/orquesta-lite/internal/commands"
+	"github.com/collectiveai-team/orquesta-lite/internal/web"
 )
 
 var version = "dev"

@@ -1,4 +1,4 @@
-module github.com/lionelchamorro/orquestalite
+module github.com/collectiveai-team/orquesta-lite
 
 go 1.25.0
 

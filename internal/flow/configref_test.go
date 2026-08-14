@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lionelchamorro/orquestalite/internal/activity"
+	"github.com/collectiveai-team/orquesta-lite/internal/activity"
 )
 
 // The config namespace is deliberately flat: exactly one key segment, so a host

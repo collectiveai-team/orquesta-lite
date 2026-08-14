@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lionelchamorro/orquestalite/internal/eventlog"
+	"github.com/collectiveai-team/orquesta-lite/internal/eventlog"
 )
 
 // LogViewOptions controls how `orq-lite log` renders the run.log timeline.

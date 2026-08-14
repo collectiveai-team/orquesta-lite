@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/lionelchamorro/orquestalite/internal/activity"
+	"github.com/collectiveai-team/orquesta-lite/internal/activity"
 )
 
 func (s *Store) EnsureStep(ctx context.Context, runID, scope, stepID, foreachKey, activityRef string, inputs json.RawMessage) (*StepRun, error) {

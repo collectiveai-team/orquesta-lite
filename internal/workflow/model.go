@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/lionelchamorro/orquestalite/internal/activity"
+	"github.com/collectiveai-team/orquesta-lite/internal/activity"
 )
 
 type RunStatus string

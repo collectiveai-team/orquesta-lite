@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lionelchamorro/orquestalite/internal/flow"
-	"github.com/lionelchamorro/orquestalite/internal/workflow"
+	"github.com/collectiveai-team/orquesta-lite/internal/flow"
+	"github.com/collectiveai-team/orquesta-lite/internal/workflow"
 )
 
 func governedPackRoot(t *testing.T) string {

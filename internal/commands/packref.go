@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/lionelchamorro/orquestalite/internal/flow"
+	"github.com/collectiveai-team/orquesta-lite/internal/flow"
 )
 
 // resolvePackFlowRef turns `pack[@version]/flow@version` into the installed

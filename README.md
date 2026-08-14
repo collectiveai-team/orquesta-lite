@@ -13,7 +13,7 @@ For an existing working repository, the recommended installation path is to let 
 Give the agent this instruction:
 
 > Set up Orquesta Lite in this repository by following every instruction in:
-> https://raw.githubusercontent.com/lionelchamorro/orquesta-lite/main/guide.md
+> https://raw.githubusercontent.com/collectiveai-team/orquesta-lite/main/guide.md
 > Do not summarize the guide—perform the steps, verify each gate, and stop to report any blocker that cannot be resolved safely.
 
 The guide covers installing `orq-lite` when it is not on `PATH`, initializing the built-in development pack, configuring `team.json`, proving lint/test gates, selecting a development and review strategy, launching idempotently, and monitoring or resuming the durable run.
@@ -21,19 +21,27 @@ The guide covers installing `orq-lite` when it is not on `PATH`, initializing th
 If you only need the binary, install it directly and continue with the quick start:
 
 ```bash
-go install github.com/collectiveai-team/orquestalite/cmd/orq-lite@latest
+go install github.com/collectiveai-team/orquesta-lite/cmd/orq-lite@latest
 ```
 
 ## Quick start
 
 ```bash
-go install github.com/collectiveai-team/orquestalite/cmd/orq-lite@latest
+go install github.com/collectiveai-team/orquesta-lite/cmd/orq-lite@latest
 
 cd your-project
 orq-lite init --lang auto
 orq-lite doctor
 orq-lite plan features.md
 orq-lite status
+```
+
+## Install the using-orq-lite skill
+
+The `using-orq-lite` skill is the working reference for the flow lifecycle: choosing a flow, writing `team.json`, monitoring and recovering runs, and authoring flows. Install it into an agent-aware repository with:
+
+```bash
+npx skills add collectiveai-team/orquesta-lite --skill using-orq-lite
 ```
 
 `init` creates:

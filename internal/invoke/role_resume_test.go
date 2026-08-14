@@ -8,12 +8,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lionelchamorro/orquestalite/internal/agenthealth"
-	"github.com/lionelchamorro/orquestalite/internal/config"
-	"github.com/lionelchamorro/orquestalite/internal/eventlog"
-	"github.com/lionelchamorro/orquestalite/internal/fallback"
-	"github.com/lionelchamorro/orquestalite/internal/runner"
-	"github.com/lionelchamorro/orquestalite/internal/sessions"
+	"github.com/collectiveai-team/orquesta-lite/internal/agenthealth"
+	"github.com/collectiveai-team/orquesta-lite/internal/config"
+	"github.com/collectiveai-team/orquesta-lite/internal/eventlog"
+	"github.com/collectiveai-team/orquesta-lite/internal/fallback"
+	"github.com/collectiveai-team/orquesta-lite/internal/runner"
+	"github.com/collectiveai-team/orquesta-lite/internal/sessions"
 )
 
 // sessionRunner records the spec of every call (so a test can inspect the

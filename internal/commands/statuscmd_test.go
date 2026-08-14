@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lionelchamorro/orquestalite/internal/workflow"
+	"github.com/collectiveai-team/orquesta-lite/internal/workflow"
 )
 
 func createStatusRun(t *testing.T, dir string) {

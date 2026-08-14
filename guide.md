@@ -31,7 +31,7 @@ Before changing project configuration, verify:
 Install from a release when possible. Building from source is the fallback:
 
 ```bash
-go install github.com/lionelchamorro/orquestalite/cmd/orq-lite@latest
+go install github.com/collectiveai-team/orquesta-lite/cmd/orq-lite@latest
 orq-lite version
 ```
 

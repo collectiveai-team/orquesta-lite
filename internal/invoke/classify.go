@@ -1,6 +1,6 @@
 package invoke
 
-import "github.com/lionelchamorro/orquestalite/internal/runner"
+import "github.com/collectiveai-team/orquesta-lite/internal/runner"
 
 // Classify determines the fallback disposition for a runner result.
 func Classify(r *runner.Result) (shouldFallback bool, reason string) {

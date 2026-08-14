@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lionelchamorro/orquestalite/internal/providers"
+	"github.com/collectiveai-team/orquesta-lite/internal/providers"
 )
 
 // Spec describes how to invoke an agent subprocess.

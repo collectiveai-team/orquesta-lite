@@ -27,7 +27,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lionelchamorro/orquestalite/internal/config"
+	"github.com/collectiveai-team/orquesta-lite/internal/config"
 )
 
 // Status describes what was activated, for logging and for `doctor`.

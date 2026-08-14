@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/lionelchamorro/orquestalite/internal/artifacts"
-	"github.com/lionelchamorro/orquestalite/internal/memory"
-	"github.com/lionelchamorro/orquestalite/internal/prompts"
+	"github.com/collectiveai-team/orquesta-lite/internal/artifacts"
+	"github.com/collectiveai-team/orquesta-lite/internal/memory"
+	"github.com/collectiveai-team/orquesta-lite/internal/prompts"
 )
 
 // ErrInvalidContract marks fallback exhaustion where every usable agent wrote

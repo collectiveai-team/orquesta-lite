@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lionelchamorro/orquestalite/internal/doctor"
+	"github.com/collectiveai-team/orquesta-lite/internal/doctor"
 )
 
 // TestInitScaffoldsEveryGateConfigKey ties the scaffold to the whitelist.

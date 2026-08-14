@@ -12,7 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/lionelchamorro/orquestalite/internal/activity"
+	"github.com/collectiveai-team/orquesta-lite/internal/activity"
 )
 
 const defaultMaxMessage = 8 << 20

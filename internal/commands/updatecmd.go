@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	updateRepoOwner = "lionelchamorro"
+	updateRepoOwner = "collectiveai-team"
 	updateRepoName  = "orquesta-lite"
 	updateBinary    = "orq-lite"
 )
