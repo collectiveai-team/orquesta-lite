@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/lionelchamorro/orquestalite/internal/doctor"
+	"github.com/collectiveai-team/orquesta-lite/internal/doctor"
 )
 
 // handleDoctor exposes the CLI's preflight checks so a companion app can

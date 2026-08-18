@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lionelchamorro/orquestalite/internal/watch"
+	"github.com/collectiveai-team/orquesta-lite/internal/watch"
 )
 
 func TestWatch_V2FailsFastOnMissingFlow(t *testing.T) {

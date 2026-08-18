@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lionelchamorro/orquestalite/internal/providers"
+	"github.com/collectiveai-team/orquesta-lite/internal/providers"
 )
 
 type Agent struct {

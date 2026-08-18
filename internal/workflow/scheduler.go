@@ -13,9 +13,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lionelchamorro/orquestalite/internal/activity"
-	"github.com/lionelchamorro/orquestalite/internal/flow"
-	"github.com/lionelchamorro/orquestalite/internal/runid"
+	"github.com/collectiveai-team/orquesta-lite/internal/activity"
+	"github.com/collectiveai-team/orquesta-lite/internal/flow"
+	"github.com/collectiveai-team/orquesta-lite/internal/runid"
 )
 
 var ErrNeedsHuman = errors.New("workflow needs human input")

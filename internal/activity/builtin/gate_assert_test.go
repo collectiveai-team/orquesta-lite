@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lionelchamorro/orquestalite/internal/activity"
+	"github.com/collectiveai-team/orquesta-lite/internal/activity"
 )
 
 func assertGate(t *testing.T, inputs string) (activity.Result, error) {

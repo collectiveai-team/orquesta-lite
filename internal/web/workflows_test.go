@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/lionelchamorro/orquestalite/internal/workflow"
+	"github.com/collectiveai-team/orquesta-lite/internal/workflow"
 )
 
 func TestWorkflowAPI(t *testing.T) {

@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"github.com/lionelchamorro/orquestalite/internal/workflow"
+	"github.com/collectiveai-team/orquesta-lite/internal/workflow"
 )
 
 func (s *Server) openWorkflowStore() (*workflow.Store, error) {

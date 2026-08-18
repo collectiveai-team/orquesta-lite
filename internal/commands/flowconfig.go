@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/lionelchamorro/orquestalite/internal/flow"
+	"github.com/collectiveai-team/orquesta-lite/internal/flow"
 )
 
 // gateConfigKeys is the explicit whitelist of team.json keys reachable from a

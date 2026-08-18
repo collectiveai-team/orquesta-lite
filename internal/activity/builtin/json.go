@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/lionelchamorro/orquestalite/internal/activity"
+	"github.com/collectiveai-team/orquesta-lite/internal/activity"
 )
 
 func strictJSON(raw []byte, target any) error {

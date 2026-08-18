@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	governedpack "github.com/lionelchamorro/orquestalite/examples/governed-pack"
+	governedpack "github.com/collectiveai-team/orquesta-lite/examples/governed-pack"
 )
 
 //go:embed assets/team.json

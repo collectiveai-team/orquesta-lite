@@ -11,7 +11,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/lionelchamorro/orquestalite/internal/flow"
+	"github.com/collectiveai-team/orquesta-lite/internal/flow"
 )
 
 const packUsage = "usage: orq-lite pack <install <pack-dir> [--force] | list>"

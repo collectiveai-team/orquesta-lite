@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lionelchamorro/orquestalite/internal/config"
-	"github.com/lionelchamorro/orquestalite/internal/flow"
+	"github.com/collectiveai-team/orquesta-lite/internal/config"
+	"github.com/collectiveai-team/orquesta-lite/internal/flow"
 )
 
 func Init(dir string) error {

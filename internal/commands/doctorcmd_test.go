@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lionelchamorro/orquestalite/internal/doctor"
+	"github.com/collectiveai-team/orquesta-lite/internal/doctor"
 )
 
 func TestDoctorMissingTeamJSONFails(t *testing.T) {

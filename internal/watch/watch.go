@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lionelchamorro/orquestalite/internal/eventlog"
+	"github.com/collectiveai-team/orquesta-lite/internal/eventlog"
 )
 
 // ItemType selects which GitHub object a watch operates on.

@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lionelchamorro/orquestalite/internal/eventlog"
-	"github.com/lionelchamorro/orquestalite/internal/watch"
+	"github.com/collectiveai-team/orquesta-lite/internal/eventlog"
+	"github.com/collectiveai-team/orquesta-lite/internal/watch"
 )
 
 // WatchOptions holds the parameters for the watch command.

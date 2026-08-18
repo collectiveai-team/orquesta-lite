@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lionelchamorro/orquestalite/internal/workflow"
+	"github.com/collectiveai-team/orquesta-lite/internal/workflow"
 )
 
 const budgetedPolicy = `{"maxDurationSeconds":28800,"maxAttempts":0,"maxAgentAttempts":0,"maxCostUSD":250,"maxParallelism":1}`

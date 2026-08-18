@@ -7,7 +7,7 @@ import (
 	"io"
 	"path/filepath"
 
-	"github.com/lionelchamorro/orquestalite/internal/cost"
+	"github.com/collectiveai-team/orquesta-lite/internal/cost"
 )
 
 // Cost prints the per-task spend rollup: agent runs from run.log joined

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/lionelchamorro/orquestalite/internal/activity"
+	"github.com/collectiveai-team/orquesta-lite/internal/activity"
 )
 
 const ProtocolV1 = "orq.activity/v1"

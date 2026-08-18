@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/lionelchamorro/orquestalite/internal/doctor"
+	"github.com/collectiveai-team/orquesta-lite/internal/doctor"
 )
 
 // Doctor preflights the whole setup — git state, team.json, prompts, agent

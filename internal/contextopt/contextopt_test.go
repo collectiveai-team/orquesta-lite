@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lionelchamorro/orquestalite/internal/config"
+	"github.com/collectiveai-team/orquesta-lite/internal/config"
 )
 
 // fakeBinary writes an executable that exits 0 for --version, standing in for

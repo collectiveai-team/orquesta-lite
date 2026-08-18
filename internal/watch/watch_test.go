@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lionelchamorro/orquestalite/internal/eventlog"
+	"github.com/collectiveai-team/orquesta-lite/internal/eventlog"
 )
 
 // fakeLister serves pre-baked issues/PRs across ticks and reports a fixed own

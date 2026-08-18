@@ -6,8 +6,8 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/lionelchamorro/orquestalite/internal/activity"
-	"github.com/lionelchamorro/orquestalite/internal/invoke"
+	"github.com/collectiveai-team/orquesta-lite/internal/activity"
+	"github.com/collectiveai-team/orquesta-lite/internal/invoke"
 )
 
 type SchemaValidator func(ref string, raw []byte) error

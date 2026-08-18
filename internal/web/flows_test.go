@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lionelchamorro/orquestalite/internal/commands"
+	"github.com/collectiveai-team/orquesta-lite/internal/commands"
 )
 
 func TestAPIFlowsIgnoresLegacyCatalog(t *testing.T) {

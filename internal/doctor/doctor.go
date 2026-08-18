@@ -14,10 +14,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/lionelchamorro/orquestalite/internal/config"
-	"github.com/lionelchamorro/orquestalite/internal/contextopt"
-	"github.com/lionelchamorro/orquestalite/internal/flow"
-	"github.com/lionelchamorro/orquestalite/internal/gitx"
+	"github.com/collectiveai-team/orquesta-lite/internal/config"
+	"github.com/collectiveai-team/orquesta-lite/internal/contextopt"
+	"github.com/collectiveai-team/orquesta-lite/internal/flow"
+	"github.com/collectiveai-team/orquesta-lite/internal/gitx"
 )
 
 // Status of one check. These exact strings are the GET /api/doctor contract;
