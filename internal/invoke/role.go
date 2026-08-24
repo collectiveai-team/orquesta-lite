@@ -21,6 +21,7 @@ import (
 	"github.com/collectiveai-team/orquesta-lite/internal/providers"
 	"github.com/collectiveai-team/orquesta-lite/internal/runner"
 	"github.com/collectiveai-team/orquesta-lite/internal/skills"
+	"github.com/collectiveai-team/orquesta-lite/internal/usageguard"
 )
 
 type AgentRunner interface {
@@ -52,7 +53,10 @@ type RoleInvoker struct {
 	Runner                  AgentRunner
 	DefaultRateLimitPattern string
 	AgentHealthThreshold    int
-	OnAgentSuccess          func(role, agent string)
+	// UsageGuard checks provider subscription consumption immediately before an
+	// agent starts. Nil retains the historical no-preflight behaviour.
+	UsageGuard     usageguard.Checker
+	OnAgentSuccess func(role, agent string)
 	// ConventionsPath is a project-relative path to a house-style document.
 	// When set and readable, its contents are injected into every role prompt
 	// as {{CONVENTIONS}}. Read fresh per call so edits take effect mid-run.
@@ -296,7 +300,16 @@ func (inv *RoleInvoker) runValidated(ctx context.Context, roleName string, role 
 		// agent finds no entry and starts fresh (the desired "switch provider →
 		// from scratch" behaviour).
 		spec.ResumeSessionID = inv.resumeSessionID(roleName, agentName, rc.TaskID)
+		usageRequest := usageguard.Request{Provider: ag.Provider, Env: spec.Env}
+		if blocked := inv.usageBlocked(ctx, roleName, agentName, usageRequest); blocked.Allowed == false {
+			lastFallbackReason = "usage_threshold"
+			lastErr = usageBlockedError(agentName, roleName, blocked)
+			return fallback.Outcome{ShouldFallback: true, FallbackReason: "usage_threshold"}, nil
+		}
 		r, err := inv.runner().Run(ctx, spec)
+		if inv.UsageGuard != nil && ag.Provider != "" {
+			inv.UsageGuard.Invalidate(usageRequest)
+		}
 		if err != nil {
 			return fallback.Outcome{}, err
 		}
@@ -340,8 +353,18 @@ func (inv *RoleInvoker) runValidated(ctx context.Context, roleName string, role 
 			cSpec := spec
 			cSpec.Prompt = correctivePrompt(roleName, absResultPath, fallbackReason, lastValidationErr)
 			cSpec.ResumeSessionID = r.SessionID // ephemeral: the attempt that just failed
+			if blocked := inv.usageBlocked(ctx, roleName, agentName, usageRequest); !blocked.Allowed {
+				shouldFallback = true
+				fallbackReason = "usage_threshold"
+				lastFallbackReason = fallbackReason
+				lastErr = usageBlockedError(agentName, roleName, blocked)
+				break
+			}
 
 			cr, cErr := inv.runner().Run(ctx, cSpec)
+			if inv.UsageGuard != nil && ag.Provider != "" {
+				inv.UsageGuard.Invalidate(usageRequest)
+			}
 			if cErr != nil {
 				return fallback.Outcome{}, cErr
 			}
@@ -422,9 +445,50 @@ func (inv *RoleInvoker) runValidated(ctx context.Context, roleName string, role 
 		if lastFallbackReason == "timeout" {
 			return spend, fmt.Errorf("%w: %s", ErrAgentTimeout, message)
 		}
+		if lastFallbackReason == "usage_threshold" {
+			return spend, fmt.Errorf("%w: %s", ErrUsageThreshold, message)
+		}
 		return spend, fmt.Errorf("%s", message)
 	}
 	return spend, err
+}
+
+func (inv *RoleInvoker) usageBlocked(ctx context.Context, roleName, agentName string, request usageguard.Request) usageguard.Decision {
+	if inv.UsageGuard == nil || request.Provider == "" {
+		return usageguard.Decision{Allowed: true}
+	}
+	decision := inv.UsageGuard.Check(ctx, request)
+	if decision.Allowed {
+		return decision
+	}
+	if inv.Log != nil {
+		fields := map[string]any{
+			"role":        roleName,
+			"agent":       agentName,
+			"provider":    request.Provider,
+			"windows":     decision.Blocked,
+			"unavailable": decision.Unavailable,
+		}
+		if !decision.ResetsAt.IsZero() {
+			fields["resets_at"] = decision.ResetsAt.UTC().Format(time.RFC3339)
+		}
+		if decision.Err != nil {
+			fields["detail"] = decision.Err.Error()
+		}
+		inv.Log.Log(eventlog.Event{Type: "provider_usage_blocked", Fields: fields})
+	}
+	return decision
+}
+
+func usageBlockedError(agentName, roleName string, decision usageguard.Decision) error {
+	if decision.Unavailable {
+		return fmt.Errorf("agent %q (role %q) was skipped because its provider usage is unavailable", agentName, roleName)
+	}
+	message := fmt.Sprintf("agent %q (role %q) was skipped because provider usage reached configured threshold (%s)", agentName, roleName, strings.Join(decision.Blocked, ", "))
+	if !decision.ResetsAt.IsZero() {
+		message += fmt.Sprintf("; earliest reset %s", decision.ResetsAt.Local().Format(time.RFC3339))
+	}
+	return errors.New(message)
 }
 
 // runSpendUSD prices one agent invocation from the token usage its provider

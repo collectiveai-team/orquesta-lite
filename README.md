@@ -115,7 +115,17 @@ The runtime persists runs, step instances, attempts, outputs, approvals, and out
       "timeout_seconds": 1800
     }
   },
-  "limits": {"resume_sessions": true},
+  "limits": {
+    "resume_sessions": true,
+    "usage_guard": {
+      "cache_ttl_seconds": 30,
+      "on_unavailable": "fallback",
+      "providers": {
+        "claude": {"max_used_percent": {"5h": 75, "7d": 60}},
+        "codex": {"max_used_percent": {"5h": 80, "7d": 70}}
+      }
+    }
+  },
   "rate_limit_backoff": {"initial_seconds": 30, "factor": 2, "max_seconds": 1800},
   "lint_argv": ["go", "vet", "./..."],
   "test_argv": ["go", "test", "./..."]
@@ -123,6 +133,20 @@ The runtime persists runs, step instances, attempts, outputs, approvals, and out
 ```
 
 The governed pack obtains project-specific quality gates only through `config.lint_argv` and `config.test_argv`; it does not hardcode Go, Python, or Node commands.
+
+### Provider usage guard
+
+`limits.usage_guard` is optional. Before each configured Claude or Codex agent
+starts (and before a corrective retry), orq-lite reads the account's 5-hour and
+7-day subscription usage. A window at or above `max_used_percent` skips that
+agent and advances to the next role fallback. If every eligible agent is
+skipped, the role fails with a provider-usage-threshold error; it never waits
+for a subscription reset.
+
+The safe default for an unavailable usage source is `"fallback"`. Set
+`"on_unavailable": "allow"` only when preserving execution is more important
+than protecting an external subscription. The reader result is cached for 30
+seconds by default and invalidated after each actual agent execution.
 
 ## Governance loop
 

@@ -53,6 +53,27 @@ type Limits struct {
 	// ResumeSessions lets a role resume its provider session for the same
 	// durable scope. Switching providers always starts a fresh session.
 	ResumeSessions *bool `json:"resume_sessions,omitempty"`
+	// UsageGuard prevents an invocation from consuming a provider subscription
+	// past the configured usage thresholds. It is disabled when Providers is
+	// empty, preserving the historical behaviour for existing projects.
+	UsageGuard UsageGuard `json:"usage_guard,omitempty"`
+}
+
+// UsageGuard configures the pre-invocation provider subscription check. The
+// providers currently supported by the local readers are "claude" and
+// "codex". Thresholds use the provider windows "5h" and "7d" and express
+// used (not remaining) percentage.
+type UsageGuard struct {
+	CacheTTLSeconds int `json:"cache_ttl_seconds,omitempty"`
+	// OnUnavailable controls an unreadable provider usage source: "fallback"
+	// (the safe default) advances to the next configured agent, while "allow"
+	// runs the agent without a reading.
+	OnUnavailable string                         `json:"on_unavailable,omitempty"`
+	Providers     map[string]UsageProviderBudget `json:"providers,omitempty"`
+}
+
+type UsageProviderBudget struct {
+	MaxUsedPercent map[string]float64 `json:"max_used_percent"`
 }
 
 // SessionResumeEnabled reports whether agents may resume a prior provider
@@ -60,6 +81,10 @@ type Limits struct {
 func (l Limits) SessionResumeEnabled() bool {
 	return l.ResumeSessions == nil || *l.ResumeSessions
 }
+
+// UsageGuardEnabled reports whether at least one provider has a configured
+// usage threshold.
+func (l Limits) UsageGuardEnabled() bool { return len(l.UsageGuard.Providers) > 0 }
 
 type RateLimitBackoff struct {
 	InitialSeconds int    `json:"initial_seconds"`
@@ -301,6 +326,41 @@ func (c *Config) Validate() error {
 	}
 	if c.RateLimitBackoff.InitialSeconds <= 0 || c.RateLimitBackoff.Factor < 2 || c.RateLimitBackoff.MaxSeconds < c.RateLimitBackoff.InitialSeconds {
 		return fmt.Errorf("invalid rate_limit_backoff")
+	}
+	if err := ValidateUsageGuard(c.Limits.UsageGuard); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ValidateUsageGuard validates the part of team configuration consumed before
+// agent execution. It is exported because dynamic flow configuration defers
+// general validation until it knows which roles are referenced.
+func ValidateUsageGuard(guard UsageGuard) error {
+	if len(guard.Providers) == 0 {
+		return nil
+	}
+	if guard.CacheTTLSeconds < 0 {
+		return fmt.Errorf("limits.usage_guard.cache_ttl_seconds must be >= 0")
+	}
+	if guard.OnUnavailable != "" && guard.OnUnavailable != "fallback" && guard.OnUnavailable != "allow" {
+		return fmt.Errorf("limits.usage_guard.on_unavailable must be fallback or allow")
+	}
+	for provider, budget := range guard.Providers {
+		if provider != "claude" && provider != "codex" {
+			return fmt.Errorf("limits.usage_guard has unsupported provider %q", provider)
+		}
+		if len(budget.MaxUsedPercent) == 0 {
+			return fmt.Errorf("limits.usage_guard provider %q must configure max_used_percent", provider)
+		}
+		for window, percent := range budget.MaxUsedPercent {
+			if window != "5h" && window != "7d" {
+				return fmt.Errorf("limits.usage_guard provider %q has unsupported window %q (use 5h or 7d)", provider, window)
+			}
+			if percent <= 0 || percent > 100 {
+				return fmt.Errorf("limits.usage_guard provider %q window %q max_used_percent must be in (0, 100]", provider, window)
+			}
+		}
 	}
 	return nil
 }

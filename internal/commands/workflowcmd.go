@@ -28,6 +28,7 @@ import (
 	"github.com/collectiveai-team/orquesta-lite/internal/invoke"
 	"github.com/collectiveai-team/orquesta-lite/internal/runid"
 	"github.com/collectiveai-team/orquesta-lite/internal/sessions"
+	"github.com/collectiveai-team/orquesta-lite/internal/usageguard"
 	"github.com/collectiveai-team/orquesta-lite/internal/workflow"
 )
 
@@ -247,7 +248,17 @@ func newWorkflowDeps(projectDir, teamPath, runID string, compiled *compiledWorkf
 		for _, note := range optStatus.Notes {
 			logger.Log(eventlog.Event{Type: "context_optimization", Fields: map[string]any{"detail": note}})
 		}
-		invoker = &invoke.RoleInvoker{Specs: specs, Dir: projectDir, Fallback: fallbackCaller, Log: logger, Health: tracker, MemPath: filepath.Join(stateDir, "memory.md"), Runner: invoke.ExecRunner{}, DefaultRateLimitPattern: defaultPattern, AgentHealthThreshold: agentHealthThreshold, ConventionsPath: cfg.ConventionsFile, AgentEnv: optStatus.Env(), Sessions: sessions.Load(projectDir), ResumeRoles: resumeRoles, Artifacts: artifactStore, CodeWritingRoles: map[string]bool{}}
+		var guard usageguard.Checker
+		if cfg.Limits.UsageGuardEnabled() {
+			builtGuard, guardErr := usageguard.New(cfg.Limits.UsageGuard, nil)
+			if guardErr != nil {
+				logger.Close()
+				store.Close()
+				return nil, guardErr
+			}
+			guard = builtGuard
+		}
+		invoker = &invoke.RoleInvoker{Specs: specs, Dir: projectDir, Fallback: fallbackCaller, Log: logger, Health: tracker, MemPath: filepath.Join(stateDir, "memory.md"), Runner: invoke.ExecRunner{}, DefaultRateLimitPattern: defaultPattern, AgentHealthThreshold: agentHealthThreshold, UsageGuard: guard, ConventionsPath: cfg.ConventionsFile, AgentEnv: optStatus.Env(), Sessions: sessions.Load(projectDir), ResumeRoles: resumeRoles, Artifacts: artifactStore, CodeWritingRoles: map[string]bool{}}
 	}
 	validator := func(ref string, raw []byte) error {
 		schema, ok := compiled.IR.Schemas[ref]

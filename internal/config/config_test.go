@@ -134,3 +134,28 @@ func TestRuntimeAndSessionDefaults(t *testing.T) {
 		t.Fatal("runtime overrides ignored")
 	}
 }
+
+func TestUsageGuardValidation(t *testing.T) {
+	valid := UsageGuard{Providers: map[string]UsageProviderBudget{
+		"claude": {MaxUsedPercent: map[string]float64{"5h": 75, "7d": 60}},
+		"codex":  {MaxUsedPercent: map[string]float64{"5h": 80}},
+	}}
+	if err := ValidateUsageGuard(valid); err != nil {
+		t.Fatalf("valid guard rejected: %v", err)
+	}
+	if !(Limits{UsageGuard: valid}).UsageGuardEnabled() {
+		t.Fatal("usage guard should be enabled with provider budgets")
+	}
+	for name, guard := range map[string]UsageGuard{
+		"unknown provider": {Providers: map[string]UsageProviderBudget{"gemini": {MaxUsedPercent: map[string]float64{"5h": 80}}}},
+		"unknown window":   {Providers: map[string]UsageProviderBudget{"codex": {MaxUsedPercent: map[string]float64{"daily": 80}}}},
+		"bad percentage":   {Providers: map[string]UsageProviderBudget{"codex": {MaxUsedPercent: map[string]float64{"5h": 0}}}},
+		"bad policy":       {OnUnavailable: "wait", Providers: map[string]UsageProviderBudget{"codex": {MaxUsedPercent: map[string]float64{"5h": 80}}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := ValidateUsageGuard(guard); err == nil {
+				t.Fatal("expected validation error")
+			}
+		})
+	}
+}
