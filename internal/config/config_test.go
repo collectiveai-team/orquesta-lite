@@ -159,3 +159,28 @@ func TestUsageGuardValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestCustomCommandUsageProvider(t *testing.T) {
+	for name, agent := range map[string]Agent{
+		"direct Claude command is inferred": {Cmd: []string{"/usr/local/bin/claude", "{{PROMPT}}"}},
+		"wrapper declares Codex":            {Cmd: []string{"agent-wrapper", "{{PROMPT}}"}, UsageProvider: "codex"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			spec, err := resolveAgentSpec("custom", agent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := agent.UsageProvider
+			if want == "" {
+				want = "claude"
+			}
+			if spec.UsageProvider != want {
+				t.Fatalf("usage provider = %q, want %q", spec.UsageProvider, want)
+			}
+		})
+	}
+
+	if _, err := resolveAgentSpec("bad", Agent{Cmd: []string{"wrapper", "{{PROMPT}}"}, UsageProvider: "gemini"}); err == nil {
+		t.Fatal("unsupported usage_provider should fail")
+	}
+}

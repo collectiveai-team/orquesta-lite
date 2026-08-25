@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -23,9 +24,31 @@ const claudeUsageURL = "https://api.anthropic.com/api/oauth/usage"
 type ClaudeReader struct {
 	HTTPClient  *http.Client
 	Credentials func(context.Context, []string) (string, error)
+	// CLI is the resilient fallback used when local OAuth credentials cannot be
+	// read or the usage endpoint rejects them. Nil uses Claude's interactive
+	// /usage panel in a bounded hidden PTY.
+	CLI func(context.Context, []string) (Snapshot, error)
 }
 
 func (r ClaudeReader) Fetch(ctx context.Context, env []string) (Snapshot, error) {
+	snapshot, oauthErr := r.fetchOAuth(ctx, env)
+	if oauthErr == nil {
+		return snapshot, nil
+	}
+	cli := r.CLI
+	if cli == nil {
+		cli = fetchClaudeUsageCLI
+	}
+	snapshot, cliErr := cli(ctx, env)
+	if cliErr == nil {
+		return snapshot, nil
+	}
+	return nil, fmt.Errorf("Claude usage unavailable: %w", errors.Join(oauthErr, cliErr))
+}
+
+func (r ClaudeReader) fetchOAuth(ctx context.Context, env []string) (Snapshot, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	credentials := r.Credentials
 	if credentials == nil {
 		credentials = claudeAccessToken
@@ -34,8 +57,6 @@ func (r ClaudeReader) Fetch(ctx context.Context, env []string) (Snapshot, error)
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, claudeUsageURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build Claude usage request: %w", err)

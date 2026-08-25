@@ -46,8 +46,12 @@ type Decision struct {
 	Allowed     bool
 	Unavailable bool
 	Blocked     []string
-	ResetsAt    time.Time
-	Err         error
+	// Missing lists configured windows the provider did not report. A partial
+	// snapshot remains usable: observed windows are still enforced. The whole
+	// provider is unavailable only when none of its configured windows appear.
+	Missing  []string
+	ResetsAt time.Time
+	Err      error
 }
 
 // Checker is the dependency used by the invoker. Keeping it small makes the
@@ -126,11 +130,14 @@ func (g *Guard) Check(ctx context.Context, req Request) Decision {
 	}
 
 	decision := Decision{Allowed: true}
+	observed := 0
 	for window, limit := range budget.MaxUsedPercent {
 		actual, ok := snapshot[window]
 		if !ok {
-			return g.unavailable(fmt.Errorf("provider %q did not report %s usage", req.Provider, window))
+			decision.Missing = append(decision.Missing, window)
+			continue
 		}
+		observed++
 		if actual.UsedPercent >= limit {
 			decision.Allowed = false
 			decision.Blocked = append(decision.Blocked, window)
@@ -140,6 +147,12 @@ func (g *Guard) Check(ctx context.Context, req Request) Decision {
 		}
 	}
 	sort.Strings(decision.Blocked)
+	sort.Strings(decision.Missing)
+	if observed == 0 {
+		unavailable := g.unavailable(fmt.Errorf("provider %q did not report any configured usage windows", req.Provider))
+		unavailable.Missing = decision.Missing
+		return unavailable
+	}
 	return decision
 }
 

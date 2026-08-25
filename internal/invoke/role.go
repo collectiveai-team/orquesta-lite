@@ -256,6 +256,7 @@ func (inv *RoleInvoker) runValidated(ctx context.Context, roleName string, role 
 	var lastValidationErr error
 	var lastFallbackReason string
 	var triedAgents []string
+	var usageBlockedAgents []string
 	fc := inv.Fallback
 	if fc == nil {
 		fc = fallback.NewCaller(fallback.Config{})
@@ -300,14 +301,15 @@ func (inv *RoleInvoker) runValidated(ctx context.Context, roleName string, role 
 		// agent finds no entry and starts fresh (the desired "switch provider →
 		// from scratch" behaviour).
 		spec.ResumeSessionID = inv.resumeSessionID(roleName, agentName, rc.TaskID)
-		usageRequest := usageguard.Request{Provider: ag.Provider, Env: spec.Env}
-		if blocked := inv.usageBlocked(ctx, roleName, agentName, usageRequest); blocked.Allowed == false {
+		usageRequest := usageguard.Request{Provider: agentUsageProvider(ag), Env: spec.Env}
+		if blocked := inv.usageBlocked(ctx, roleName, agentName, usageRequest); !blocked.Allowed {
 			lastFallbackReason = "usage_threshold"
 			lastErr = usageBlockedError(agentName, roleName, blocked)
+			usageBlockedAgents = append(usageBlockedAgents, agentName)
 			return fallback.Outcome{ShouldFallback: true, FallbackReason: "usage_threshold"}, nil
 		}
 		r, err := inv.runner().Run(ctx, spec)
-		if inv.UsageGuard != nil && ag.Provider != "" {
+		if inv.UsageGuard != nil && usageRequest.Provider != "" {
 			inv.UsageGuard.Invalidate(usageRequest)
 		}
 		if err != nil {
@@ -358,11 +360,12 @@ func (inv *RoleInvoker) runValidated(ctx context.Context, roleName string, role 
 				fallbackReason = "usage_threshold"
 				lastFallbackReason = fallbackReason
 				lastErr = usageBlockedError(agentName, roleName, blocked)
+				usageBlockedAgents = append(usageBlockedAgents, agentName)
 				break
 			}
 
 			cr, cErr := inv.runner().Run(ctx, cSpec)
-			if inv.UsageGuard != nil && ag.Provider != "" {
+			if inv.UsageGuard != nil && usageRequest.Provider != "" {
 				inv.UsageGuard.Invalidate(usageRequest)
 			}
 			if cErr != nil {
@@ -432,20 +435,21 @@ func (inv *RoleInvoker) runValidated(ctx context.Context, roleName string, role 
 
 	if errors.Is(err, fallback.ErrAllAgentsFailed) {
 		tried := strings.Join(triedAgents, ", ")
+		usageBlocked := strings.Join(usageBlockedAgents, ", ")
 		lastErrStr := ""
 		if lastErr != nil {
 			lastErrStr = lastErr.Error()
 		} else if lastResult != nil {
 			lastErrStr = fmt.Sprintf("exit=%d; detail: %s", lastResult.ExitCode, errorDetail(lastResult))
 		}
-		message := fmt.Sprintf("all agents failed for role %q: tried [%s]; last error: %s", roleName, tried, lastErrStr)
+		message := fmt.Sprintf("all agents failed for role %q: tried [%s]; usage-blocked [%s]; last error: %s", roleName, tried, usageBlocked, lastErrStr)
 		if lastFallbackReason == "invalid_contract" {
 			return spend, fmt.Errorf("%w: %s", ErrInvalidContract, message)
 		}
 		if lastFallbackReason == "timeout" {
 			return spend, fmt.Errorf("%w: %s", ErrAgentTimeout, message)
 		}
-		if lastFallbackReason == "usage_threshold" {
+		if len(triedAgents) == 0 && len(usageBlockedAgents) > 0 {
 			return spend, fmt.Errorf("%w: %s", ErrUsageThreshold, message)
 		}
 		return spend, fmt.Errorf("%s", message)
@@ -458,16 +462,19 @@ func (inv *RoleInvoker) usageBlocked(ctx context.Context, roleName, agentName st
 		return usageguard.Decision{Allowed: true}
 	}
 	decision := inv.UsageGuard.Check(ctx, request)
-	if decision.Allowed {
-		return decision
-	}
 	if inv.Log != nil {
+		action := "fallback"
+		if decision.Allowed {
+			action = "allow"
+		}
 		fields := map[string]any{
 			"role":        roleName,
 			"agent":       agentName,
 			"provider":    request.Provider,
 			"windows":     decision.Blocked,
+			"missing":     decision.Missing,
 			"unavailable": decision.Unavailable,
+			"action":      action,
 		}
 		if !decision.ResetsAt.IsZero() {
 			fields["resets_at"] = decision.ResetsAt.UTC().Format(time.RFC3339)
@@ -475,9 +482,24 @@ func (inv *RoleInvoker) usageBlocked(ctx context.Context, roleName, agentName st
 		if decision.Err != nil {
 			fields["detail"] = decision.Err.Error()
 		}
-		inv.Log.Log(eventlog.Event{Type: "provider_usage_blocked", Fields: fields})
+		switch {
+		case decision.Unavailable:
+			inv.Log.Log(eventlog.Event{Type: "provider_usage_unavailable", Fields: fields})
+		case len(decision.Missing) > 0:
+			inv.Log.Log(eventlog.Event{Type: "provider_usage_partial", Fields: fields})
+		}
+		if !decision.Allowed && !decision.Unavailable {
+			inv.Log.Log(eventlog.Event{Type: "provider_usage_blocked", Fields: fields})
+		}
 	}
 	return decision
+}
+
+func agentUsageProvider(agent config.AgentSpec) string {
+	if agent.UsageProvider != "" {
+		return agent.UsageProvider
+	}
+	return agent.Provider
 }
 
 func usageBlockedError(agentName, roleName string, decision usageguard.Decision) error {

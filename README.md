@@ -143,10 +143,29 @@ agent and advances to the next role fallback. If every eligible agent is
 skipped, the role fails with a provider-usage-threshold error; it never waits
 for a subscription reset.
 
+Providers do not always expose every window for every plan. When at least one
+configured window is available, orq-lite enforces the available values and
+emits `provider_usage_partial` for the missing ones. If none of the configured
+windows is available, `on_unavailable` applies. Codex uses the canonical
+`rateLimitsByLimitId.codex` bucket when the installed App Server supplies it,
+with its legacy rate-limit snapshot as a compatibility fallback.
+
 The safe default for an unavailable usage source is `"fallback"`. Set
 `"on_unavailable": "allow"` only when preserving execution is more important
 than protecting an external subscription. The reader result is cached for 30
 seconds by default and invalidated after each actual agent execution.
+
+Registered providers are associated with their usage guard automatically. A
+custom command whose executable is directly named `claude` or `codex` is also
+detected. Wrappers must declare what they consume:
+
+```json
+{"cmd": ["company-agent-wrapper", "{{PROMPT}}"], "usage_provider": "claude"}
+```
+
+Claude first uses the local OAuth subscription reading. If credentials or that
+request are unavailable, it opens Claude's bounded interactive `/usage` panel
+as a fallback and parses the 5-hour and weekly values reported by the CLI.
 
 ## Governance loop
 

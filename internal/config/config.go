@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -11,8 +12,12 @@ import (
 )
 
 type Agent struct {
-	Cmd                        []string `json:"cmd,omitempty"`
-	Provider                   string   `json:"provider,omitempty"`
+	Cmd      []string `json:"cmd,omitempty"`
+	Provider string   `json:"provider,omitempty"`
+	// UsageProvider associates a custom command with the subscription it
+	// consumes. Registered providers infer this automatically; wrappers that
+	// ultimately launch Claude or Codex must declare it explicitly.
+	UsageProvider              string   `json:"usage_provider,omitempty"`
 	Model                      string   `json:"model,omitempty"`
 	Effort                     string   `json:"effort,omitempty"`
 	DangerouslySkipPermissions bool     `json:"dangerously_skip_permissions,omitempty"`
@@ -22,15 +27,16 @@ type Agent struct {
 }
 
 type AgentSpec struct {
-	Name        string
-	Provider    string
-	Model       string
-	Effort      string
-	SkipPerms   bool
-	SafeMode    bool
-	ExtraArgs   []string
-	RatePattern string
-	Cmd         []string
+	Name          string
+	Provider      string
+	UsageProvider string
+	Model         string
+	Effort        string
+	SkipPerms     bool
+	SafeMode      bool
+	ExtraArgs     []string
+	RatePattern   string
+	Cmd           []string
 }
 
 type Role struct {
@@ -370,16 +376,33 @@ func resolveAgentSpec(name string, agent Agent) (AgentSpec, error) {
 		return AgentSpec{}, err
 	}
 	return AgentSpec{
-		Name:        name,
-		Provider:    agent.Provider,
-		Model:       agent.Model,
-		Effort:      agent.Effort,
-		SkipPerms:   agent.DangerouslySkipPermissions,
-		SafeMode:    agent.SafeMode,
-		ExtraArgs:   append([]string(nil), agent.ExtraArgs...),
-		RatePattern: agent.RateLimitPattern,
-		Cmd:         append([]string(nil), agent.Cmd...),
+		Name:          name,
+		Provider:      agent.Provider,
+		UsageProvider: agentUsageProvider(agent),
+		Model:         agent.Model,
+		Effort:        agent.Effort,
+		SkipPerms:     agent.DangerouslySkipPermissions,
+		SafeMode:      agent.SafeMode,
+		ExtraArgs:     append([]string(nil), agent.ExtraArgs...),
+		RatePattern:   agent.RateLimitPattern,
+		Cmd:           append([]string(nil), agent.Cmd...),
 	}, nil
+}
+
+func agentUsageProvider(agent Agent) string {
+	if agent.Provider != "" {
+		return agent.Provider
+	}
+	if agent.UsageProvider != "" {
+		return agent.UsageProvider
+	}
+	if len(agent.Cmd) > 0 {
+		binary := strings.TrimSuffix(strings.ToLower(filepath.Base(agent.Cmd[0])), ".exe")
+		if binary == "claude" || binary == "codex" {
+			return binary
+		}
+	}
+	return ""
 }
 
 func validateAgentInvocation(name string, agent Agent) error {
@@ -390,6 +413,12 @@ func validateAgentInvocation(name string, agent Agent) error {
 	}
 	if !hasCmd && !hasProvider {
 		return fmt.Errorf("agent %q must declare cmd or provider", name)
+	}
+	if hasProvider && agent.UsageProvider != "" {
+		return fmt.Errorf("agent %q cannot specify usage_provider with provider; it is inferred", name)
+	}
+	if agent.UsageProvider != "" && agent.UsageProvider != "claude" && agent.UsageProvider != "codex" {
+		return fmt.Errorf("agent %q has unsupported usage_provider %q", name, agent.UsageProvider)
 	}
 	if len(agent.ExtraArgs) > 0 && !hasProvider {
 		return fmt.Errorf("agent %q extra_args requires provider", name)

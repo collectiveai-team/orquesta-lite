@@ -113,36 +113,29 @@ func awaitRPC(scanner *bufio.Scanner, id int) (json.RawMessage, error) {
 
 func parseCodexRateLimits(raw json.RawMessage) (Snapshot, error) {
 	var response struct {
-		RateLimits *struct {
-			Primary *struct {
-				UsedPercent        float64 `json:"usedPercent"`
-				WindowDurationMins int     `json:"windowDurationMins"`
-				ResetsAt           int64   `json:"resetsAt"`
-			} `json:"primary"`
-			Secondary *struct {
-				UsedPercent        float64 `json:"usedPercent"`
-				WindowDurationMins int     `json:"windowDurationMins"`
-				ResetsAt           int64   `json:"resetsAt"`
-			} `json:"secondary"`
-		} `json:"rateLimits"`
+		RateLimits          *codexRateLimitSnapshot            `json:"rateLimits"`
+		RateLimitsByLimitID map[string]*codexRateLimitSnapshot `json:"rateLimitsByLimitId"`
 	}
 	if err := json.Unmarshal(raw, &response); err != nil {
 		return nil, fmt.Errorf("decode Codex rate limits: %w", err)
 	}
-	if response.RateLimits == nil {
+	limits := response.RateLimitsByLimitID["codex"]
+	if limits == nil {
+		limits = response.RateLimits
+	}
+	if limits == nil {
 		return nil, fmt.Errorf("Codex did not return rate limits for the current account")
 	}
 	out := Snapshot{}
-	add := func(limit *struct {
-		UsedPercent        float64 `json:"usedPercent"`
-		WindowDurationMins int     `json:"windowDurationMins"`
-		ResetsAt           int64   `json:"resetsAt"`
-	}) {
+	add := func(limit *codexRateLimitWindow) {
 		if limit == nil {
 			return
 		}
 		window := ""
-		switch limit.WindowDurationMins {
+		if limit.WindowDurationMins == nil {
+			return
+		}
+		switch *limit.WindowDurationMins {
 		case 300:
 			window = WindowFiveHour
 		case 10080:
@@ -151,12 +144,27 @@ func parseCodexRateLimits(raw json.RawMessage) (Snapshot, error) {
 		if window == "" {
 			return
 		}
-		out[window] = Window{UsedPercent: limit.UsedPercent, ResetsAt: time.Unix(limit.ResetsAt, 0)}
+		var resetsAt time.Time
+		if limit.ResetsAt != nil {
+			resetsAt = time.Unix(*limit.ResetsAt, 0)
+		}
+		out[window] = Window{UsedPercent: limit.UsedPercent, ResetsAt: resetsAt}
 	}
-	add(response.RateLimits.Primary)
-	add(response.RateLimits.Secondary)
+	add(limits.Primary)
+	add(limits.Secondary)
 	if len(out) == 0 {
 		return nil, fmt.Errorf("Codex did not return supported 5h or 7d rate limit windows")
 	}
 	return out, nil
+}
+
+type codexRateLimitSnapshot struct {
+	Primary   *codexRateLimitWindow `json:"primary"`
+	Secondary *codexRateLimitWindow `json:"secondary"`
+}
+
+type codexRateLimitWindow struct {
+	UsedPercent        float64 `json:"usedPercent"`
+	WindowDurationMins *int64  `json:"windowDurationMins"`
+	ResetsAt           *int64  `json:"resetsAt"`
 }

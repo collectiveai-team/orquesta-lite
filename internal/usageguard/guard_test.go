@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
@@ -20,6 +22,10 @@ type fakeReader struct {
 	err      error
 	calls    int
 }
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) { return fn(request) }
 
 func (r *fakeReader) Fetch(context.Context, []string) (Snapshot, error) {
 	r.calls++
@@ -80,6 +86,27 @@ func TestGuardUnavailableFollowsPolicy(t *testing.T) {
 	}
 }
 
+func TestGuardEnforcesAvailableWindowsAndReportsMissingOnes(t *testing.T) {
+	reader := &fakeReader{snapshot: Snapshot{WindowSevenDay: {UsedPercent: 40}}}
+	guard, err := New(config.UsageGuard{Providers: map[string]config.UsageProviderBudget{
+		"codex": {MaxUsedPercent: map[string]float64{WindowFiveHour: 80, WindowSevenDay: 70}},
+	}}, map[string]Reader{"codex": reader})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decision := guard.Check(context.Background(), Request{Provider: "codex"})
+	if !decision.Allowed || decision.Unavailable || strings.Join(decision.Missing, ",") != WindowFiveHour {
+		t.Fatalf("partial decision = %+v, want allowed with missing 5h", decision)
+	}
+
+	reader.snapshot = Snapshot{"1d": {UsedPercent: 10}}
+	guard.Invalidate(Request{Provider: "codex"})
+	decision = guard.Check(context.Background(), Request{Provider: "codex"})
+	if decision.Allowed || !decision.Unavailable || len(decision.Missing) != 2 {
+		t.Fatalf("unobserved decision = %+v, want unavailable", decision)
+	}
+}
+
 func TestParseProviderUsage(t *testing.T) {
 	codex, err := parseCodexRateLimits([]byte(`{"rateLimits":{"primary":{"usedPercent":41,"windowDurationMins":300,"resetsAt":1787590800},"secondary":{"usedPercent":72,"windowDurationMins":10080,"resetsAt":1788195600}}}`))
 	if err != nil {
@@ -94,6 +121,88 @@ func TestParseProviderUsage(t *testing.T) {
 	}
 	if claude[WindowFiveHour].UsedPercent != 31 || claude[WindowSevenDay].UsedPercent != 65 {
 		t.Fatalf("Claude snapshot = %+v", claude)
+	}
+}
+
+func TestParseCodexRateLimitsPrefersCanonicalBucketAndAllowsPartialWindows(t *testing.T) {
+	raw := []byte(`{
+      "rateLimits":{"primary":{"usedPercent":99,"windowDurationMins":300,"resetsAt":1787590800}},
+      "rateLimitsByLimitId":{"codex":{"primary":{"usedPercent":37,"windowDurationMins":10080,"resetsAt":null},"secondary":null}}
+    }`)
+	snapshot, err := parseCodexRateLimits(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := snapshot[WindowFiveHour]; exists {
+		t.Fatalf("snapshot = %+v, legacy window should not override canonical codex bucket", snapshot)
+	}
+	weekly, exists := snapshot[WindowSevenDay]
+	if !exists || weekly.UsedPercent != 37 || !weekly.ResetsAt.IsZero() {
+		t.Fatalf("weekly = %+v, exists=%v", weekly, exists)
+	}
+}
+
+func TestClaudeCLIFallbackAndUsageParser(t *testing.T) {
+	want := Snapshot{WindowFiveHour: {UsedPercent: 52}, WindowSevenDay: {UsedPercent: 25}}
+	cliCalls := 0
+	reader := ClaudeReader{
+		Credentials: func(context.Context, []string) (string, error) { return "", errors.New("keychain unavailable") },
+		CLI: func(context.Context, []string) (Snapshot, error) {
+			cliCalls++
+			return want, nil
+		},
+	}
+	got, err := reader.Fetch(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cliCalls != 1 || got[WindowFiveHour].UsedPercent != 52 {
+		t.Fatalf("CLI calls=%d snapshot=%+v", cliCalls, got)
+	}
+
+	parsed, err := parseClaudeCLIUsage("Current session\n 48% remaining\nCurrent week (all models)\n25% used\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed[WindowFiveHour].UsedPercent != 52 || parsed[WindowSevenDay].UsedPercent != 25 {
+		t.Fatalf("parsed CLI snapshot = %+v", parsed)
+	}
+}
+
+func TestClaudeFallsBackToCLIWhenOAuthTokenIsRejected(t *testing.T) {
+	cliCalls := 0
+	reader := ClaudeReader{
+		Credentials: func(context.Context, []string) (string, error) { return "expired-token", nil },
+		HTTPClient: &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+			if request.Header.Get("Authorization") != "Bearer expired-token" {
+				t.Fatalf("authorization header was not set")
+			}
+			return &http.Response{StatusCode: http.StatusUnauthorized, Body: io.NopCloser(strings.NewReader(`{"error":"expired"}`))}, nil
+		})},
+		CLI: func(context.Context, []string) (Snapshot, error) {
+			cliCalls++
+			return Snapshot{WindowSevenDay: {UsedPercent: 45}}, nil
+		},
+	}
+	snapshot, err := reader.Fetch(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cliCalls != 1 || snapshot[WindowSevenDay].UsedPercent != 45 {
+		t.Fatalf("CLI calls=%d snapshot=%+v", cliCalls, snapshot)
+	}
+}
+
+func TestClaudeCLIUsageLive(t *testing.T) {
+	if os.Getenv("ORQ_LIVE_CLAUDE_USAGE") != "1" {
+		t.Skip("set ORQ_LIVE_CLAUDE_USAGE=1 to exercise the installed Claude CLI")
+	}
+	snapshot, err := fetchClaudeUsageCLI(context.Background(), os.Environ())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot) == 0 {
+		t.Fatal("Claude CLI returned no usage windows")
 	}
 }
 
