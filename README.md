@@ -119,6 +119,7 @@ The runtime persists runs, step instances, attempts, outputs, approvals, and out
     "resume_sessions": true,
     "usage_guard": {
       "cache_ttl_seconds": 30,
+      "max_reading_age_seconds": 900,
       "on_unavailable": "fallback",
       "providers": {
         "claude": {"max_used_percent": {"5h": 75, "7d": 60}},
@@ -162,6 +163,31 @@ detected. Wrappers must declare what they consume:
 ```json
 {"cmd": ["company-agent-wrapper", "{{PROMPT}}"], "usage_provider": "claude"}
 ```
+
+Every provider reports consumption on the same canonical scale: percent of the
+window already used, from 0 to 100. Each reader converts at its own parse
+boundary, because the scale cannot be inferred from a value alone - `0.04` is
+equally valid as "0.04% used" and as a fraction meaning "4% used". A provider
+with no converter is rejected rather than guessed at, and a reading off the
+declared scale is treated as no reading rather than clamped into range.
+
+Readings also carry when they were measured, which is not the same as when they
+were read. `max_reading_age_seconds` (default 900) bounds how old a measurement
+may be and still be enforced; anything older is reported as a stale window and
+excluded, exactly like a window the provider never sent. This matters because
+the providers differ sharply:
+
+| | Codex | Claude |
+| --- | --- | --- |
+| Primary source | local `codex app-server` RPC | `GET /api/oauth/usage` |
+| Local fallback | `~/.codex/sessions/**/rollout-*.jsonl`, written every turn | none - the CLI records only a breach flag, not a percentage |
+| Throttling | none; the RPC is a local process | the endpoint rate-limits repeated polling |
+
+Because Claude has no local percentage to fall back on, the guard keeps its
+last successful reading and reuses it when a lookup fails, subject to the same
+age limit. A rate-limited lookup is recognised as such and does **not** escalate
+to Claude's interactive `/usage` panel: that panel is backed by the same account
+and the same endpoint, so it would spend its timeout only to fail identically.
 
 Claude first uses the local OAuth subscription reading. If credentials or that
 request are unavailable, it opens Claude's bounded interactive `/usage` panel

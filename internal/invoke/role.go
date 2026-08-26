@@ -473,6 +473,7 @@ func (inv *RoleInvoker) usageBlocked(ctx context.Context, roleName, agentName st
 			"provider":    request.Provider,
 			"windows":     decision.Blocked,
 			"missing":     decision.Missing,
+			"stale":       decision.Stale,
 			"unavailable": decision.Unavailable,
 			"action":      action,
 		}
@@ -485,7 +486,7 @@ func (inv *RoleInvoker) usageBlocked(ctx context.Context, roleName, agentName st
 		switch {
 		case decision.Unavailable:
 			inv.Log.Log(eventlog.Event{Type: "provider_usage_unavailable", Fields: fields})
-		case len(decision.Missing) > 0:
+		case len(decision.Missing) > 0 || len(decision.Stale) > 0:
 			inv.Log.Log(eventlog.Event{Type: "provider_usage_partial", Fields: fields})
 		}
 		if !decision.Allowed && !decision.Unavailable {

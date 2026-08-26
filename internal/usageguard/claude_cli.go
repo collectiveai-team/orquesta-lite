@@ -24,7 +24,7 @@ const (
 var (
 	claudeSessionLabel = regexp.MustCompile(`(?i)current\s*session`)
 	claudeWeeklyLabel  = regexp.MustCompile(`(?i)(?:current\s*week|weekly\s*(?:limits?|usage|rate\s*limits?)|7\s*[- ]?\s*day)`)
-	claudePercent      = regexp.MustCompile(`(?i)(\d{1,3})(?:\.\d+)?\s*%\s*(used|consumed|left|remaining|available)`)
+	claudePercent      = regexp.MustCompile(`(?i)(\d{1,3}(?:\.\d+)?)\s*%\s*(used|consumed|left|remaining|available)`)
 	claudeTrustPrompt  = regexp.MustCompile(`(?i)(?:do you trust|trust the files|safety check)`)
 	claudeUsagePalette = regexp.MustCompile(`(?i)(?:show plan|usage limits)`)
 	terminalCSI        = regexp.MustCompile("\\x1b\\[[0-9;?]*[ -/]*[@-~]")
@@ -196,7 +196,7 @@ func parseClaudeCLIUsage(output string) (Snapshot, error) {
 	return out, nil
 }
 
-func percentAfterLabel(lines []string, label *regexp.Regexp, excludeFable bool) (float64, bool) {
+func percentAfterLabel(lines []string, label *regexp.Regexp, excludeFable bool) (Percent, bool) {
 	for i, line := range lines {
 		if !label.MatchString(line) || (excludeFable && strings.Contains(strings.ToLower(line), "fable")) {
 			continue
@@ -209,15 +209,23 @@ func percentAfterLabel(lines []string, label *regexp.Regexp, excludeFable bool) 
 			if len(match) != 3 {
 				continue
 			}
-			percent, err := strconv.ParseFloat(match[1], 64)
+			raw, err := strconv.ParseFloat(match[1], 64)
 			if err != nil {
 				continue
 			}
-			word := strings.ToLower(match[2])
-			if word == "left" || word == "remaining" || word == "available" {
-				percent = 100 - percent
+			// The panel labels the number as either consumption or headroom;
+			// the label decides which converter applies.
+			var percent Percent
+			switch strings.ToLower(match[2]) {
+			case "left", "remaining", "available":
+				percent, err = Remaining(raw)
+			default:
+				percent, err = Used(raw)
 			}
-			return max(0, min(100, percent)), true
+			if err != nil {
+				continue
+			}
+			return percent, true
 		}
 	}
 	return 0, false

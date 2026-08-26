@@ -71,6 +71,12 @@ type Limits struct {
 // used (not remaining) percentage.
 type UsageGuard struct {
 	CacheTTLSeconds int `json:"cache_ttl_seconds,omitempty"`
+	// MaxReadingAgeSeconds bounds how old a provider measurement may be and
+	// still be enforced. Providers differ sharply here: Codex writes a fresh
+	// percentage every turn, while Claude's local cache can be a day behind.
+	// A reading past this age is treated as no reading, not as a low one.
+	// Defaults to 900 (15 minutes).
+	MaxReadingAgeSeconds int `json:"max_reading_age_seconds,omitempty"`
 	// OnUnavailable controls an unreadable provider usage source: "fallback"
 	// (the safe default) advances to the next configured agent, while "allow"
 	// runs the agent without a reading.
@@ -348,6 +354,9 @@ func ValidateUsageGuard(guard UsageGuard) error {
 	}
 	if guard.CacheTTLSeconds < 0 {
 		return fmt.Errorf("limits.usage_guard.cache_ttl_seconds must be >= 0")
+	}
+	if guard.MaxReadingAgeSeconds < 0 {
+		return fmt.Errorf("limits.usage_guard.max_reading_age_seconds must be >= 0")
 	}
 	if guard.OnUnavailable != "" && guard.OnUnavailable != "fallback" && guard.OnUnavailable != "allow" {
 		return fmt.Errorf("limits.usage_guard.on_unavailable must be fallback or allow")

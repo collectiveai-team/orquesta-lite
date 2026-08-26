@@ -52,9 +52,9 @@ func liveGuard(t *testing.T, limit float64) *usageguard.Guard {
 // budget, so the role must skip Claude and complete on Codex.
 func TestLiveUsageGuardSwitchesWhenThresholdJustBelowCurrent(t *testing.T) {
 	live := liveClaudeFiveHour(t)
-	limit := live.UsedPercent - 0.5
+	limit := float64(live.UsedPercent) - 0.5
 	if limit <= 0 {
-		limit = math.Nextafter(live.UsedPercent, 0)
+		limit = math.Nextafter(float64(live.UsedPercent), 0)
 	}
 	if limit <= 0 {
 		t.Skip("live 5h usage is 0%; cannot pin a threshold below it")
@@ -92,7 +92,7 @@ func TestLiveUsageGuardBlocksAtExactlyCurrentUsage(t *testing.T) {
 
 	r := &scriptedContractRunner{}
 	inv, _ := contractRetryInvoker(t, r, []config.AgentSpec{{Name: "claude-only", Provider: "claude"}}, nil)
-	inv.UsageGuard = liveGuard(t, live.UsedPercent)
+	inv.UsageGuard = liveGuard(t, float64(live.UsedPercent))
 
 	_, err := Raw(context.Background(), inv, "coder", RoleCall{}, RunContext{TaskID: "T-live-exact"}, statusOKValidate)
 	if !errors.Is(err, ErrUsageThreshold) {
@@ -108,7 +108,7 @@ func TestLiveUsageGuardBlocksAtExactlyCurrentUsage(t *testing.T) {
 // unconditionally.
 func TestLiveUsageGuardAllowsWhenThresholdJustAboveCurrent(t *testing.T) {
 	live := liveClaudeFiveHour(t)
-	limit := live.UsedPercent + 0.5
+	limit := float64(live.UsedPercent) + 0.5
 	if limit > 100 {
 		t.Skip("live 5h usage is at 100%; cannot pin a threshold above it")
 	}

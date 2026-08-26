@@ -148,7 +148,12 @@ func parseCodexRateLimits(raw json.RawMessage) (Snapshot, error) {
 		if limit.ResetsAt != nil {
 			resetsAt = time.Unix(*limit.ResetsAt, 0)
 		}
-		out[window] = Window{UsedPercent: limit.UsedPercent, ResetsAt: resetsAt}
+		// Codex reports `usedPercent` as percent-consumed on the 0-100 scale.
+		used, err := Used(limit.UsedPercent)
+		if err != nil {
+			return
+		}
+		out[window] = Window{UsedPercent: used, ResetsAt: resetsAt}
 	}
 	add(limits.Primary)
 	add(limits.Secondary)

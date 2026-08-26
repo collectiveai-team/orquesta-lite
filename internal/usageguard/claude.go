@@ -18,6 +18,12 @@ import (
 
 const claudeUsageURL = "https://api.anthropic.com/api/oauth/usage"
 
+// ErrProviderRateLimited marks a usage source that refused the query because it
+// is being polled too often. It is deliberately distinct from an unreadable
+// source: the account is fine, only this lookup was throttled, so the caller
+// should reuse a recent reading rather than pay for an alternative route.
+var ErrProviderRateLimited = errors.New("provider usage lookup was rate limited")
+
 // ClaudeReader reads the OAuth credential already used by Claude Code and
 // requests its subscription usage. Credential material never leaves this
 // package in errors, logs, or returned values.
@@ -28,12 +34,21 @@ type ClaudeReader struct {
 	// read or the usage endpoint rejects them. Nil uses Claude's interactive
 	// /usage panel in a bounded hidden PTY.
 	CLI func(context.Context, []string) (Snapshot, error)
+	// usageURL is a test seam; empty uses the real endpoint.
+	usageURL string
 }
 
 func (r ClaudeReader) Fetch(ctx context.Context, env []string) (Snapshot, error) {
 	snapshot, oauthErr := r.fetchOAuth(ctx, env)
 	if oauthErr == nil {
 		return snapshot, nil
+	}
+	// The interactive panel is backed by the same account and the same usage
+	// endpoint, so retrying there under a rate limit cannot succeed - it only
+	// spends the PTY timeout before failing identically. Surface the throttle
+	// immediately so the guard can fall back to its previous reading.
+	if errors.Is(oauthErr, ErrProviderRateLimited) {
+		return nil, oauthErr
 	}
 	cli := r.CLI
 	if cli == nil {
@@ -57,7 +72,11 @@ func (r ClaudeReader) fetchOAuth(ctx context.Context, env []string) (Snapshot, e
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, claudeUsageURL, nil)
+	endpoint := r.usageURL
+	if endpoint == "" {
+		endpoint = claudeUsageURL
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, fmt.Errorf("build Claude usage request: %w", err)
 	}
@@ -73,6 +92,10 @@ func (r ClaudeReader) fetchOAuth(ctx context.Context, env []string) (Snapshot, e
 		return nil, fmt.Errorf("request Claude usage: %w", err)
 	}
 	defer response.Body.Close()
+	if response.StatusCode == http.StatusTooManyRequests {
+		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
+		return nil, fmt.Errorf("Claude usage request returned HTTP 429: %w", ErrProviderRateLimited)
+	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
 		return nil, fmt.Errorf("Claude usage request returned HTTP %d", response.StatusCode)
@@ -110,7 +133,14 @@ func parseClaudeUsage(body io.Reader) (Snapshot, error) {
 				return fmt.Errorf("decode Claude %s reset time: %w", window, err)
 			}
 		}
-		out[window] = Window{UsedPercent: usage.Utilization, ResetsAt: resetsAt}
+		// Anthropic reports `utilization` as percent-consumed on the 0-100
+		// scale (verified against the live endpoint: five_hour.utilization
+		// tracks the parallel limits[].percent integer).
+		used, err := Used(usage.Utilization)
+		if err != nil {
+			return fmt.Errorf("Claude %s usage: %w", window, err)
+		}
+		out[window] = Window{UsedPercent: used, ResetsAt: resetsAt}
 		return nil
 	}
 	if err := add(WindowFiveHour, response.FiveHour); err != nil {
