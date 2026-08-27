@@ -28,6 +28,17 @@ func init() {
 
 func (*OpenCode) Name() string { return "opencode" }
 
+func (*OpenCode) CLIHelp() CLIHelp {
+	return CLIHelp{Args: []string{"opencode", "run", "--help"}, Synopsis: "opencode run"}
+}
+
+func (*OpenCode) ValidateExtraArgs(args []string) error {
+	return validateExtraArgs("opencode", args, []string{
+		"--format", "--print-logs", "-m", "--model", "--variant", "--auto",
+		"-s", "--session", "--fork", "-c", "--continue", "--command", "-i", "--interactive",
+	})
+}
+
 func (*OpenCode) Build(_ context.Context, prompt string, opts Options) (Launch, error) {
 	model := opts.Model
 	if model == "" {
@@ -43,7 +54,7 @@ func (*OpenCode) Build(_ context.Context, prompt string, opts Options) (Launch, 
 		args = append(args, "--variant", opts.Effort)
 	}
 	if opts.DangerouslySkipPerms {
-		args = append(args, "--dangerously-skip-permissions")
+		args = append(args, "--auto")
 	}
 	if opts.ResumeSessionID != "" {
 		args = append(args, "-s", opts.ResumeSessionID)
@@ -51,6 +62,7 @@ func (*OpenCode) Build(_ context.Context, prompt string, opts Options) (Launch, 
 			args = append(args, "--fork")
 		}
 	}
+	args = append(args, opts.ExtraArgs...)
 
 	// opencode run takes the message as the final positional argument (not
 	// stdin). exec passes argv without a shell, so spaces/newlines are safe.

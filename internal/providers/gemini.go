@@ -25,6 +25,16 @@ func init() {
 
 func (*Gemini) Name() string { return "gemini" }
 
+func (*Gemini) CLIHelp() CLIHelp {
+	return CLIHelp{Args: []string{"gemini", "--help"}, Synopsis: "Usage: gemini"}
+}
+
+func (*Gemini) ValidateExtraArgs(args []string) error {
+	return validateExtraArgs("gemini", args, []string{
+		"--output-format", "-o", "--model", "-m", "--yolo", "-y", "--resume", "-r",
+	})
+}
+
 func (*Gemini) Build(_ context.Context, prompt string, opts Options) (Launch, error) {
 	model := opts.Model
 	if model == "" {
@@ -43,6 +53,7 @@ func (*Gemini) Build(_ context.Context, prompt string, opts Options) (Launch, er
 	if opts.ResumeSessionID != "" {
 		args = append(args, "--resume", opts.ResumeSessionID)
 	}
+	args = append(args, opts.ExtraArgs...)
 
 	return Launch{Args: args, Stdin: prompt}, nil
 }

@@ -18,6 +18,23 @@ func TestCodexBuildFreshResumeAndFork(t *testing.T) {
 	if fresh.Stdin != "prompt" {
 		t.Fatalf("fresh stdin = %q", fresh.Stdin)
 	}
+	for _, arg := range fresh.Args {
+		if arg == "--dangerously-bypass-approvals-and-sandbox" {
+			t.Fatalf("SkipPerms=false emitted bypass flag in %v", fresh.Args)
+		}
+	}
+
+	unsafe, err := (Codex{}).Build(context.Background(), "prompt", Options{DangerouslySkipPerms: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundBypass := false
+	for _, arg := range unsafe.Args {
+		foundBypass = foundBypass || arg == "--dangerously-bypass-approvals-and-sandbox"
+	}
+	if !foundBypass {
+		t.Fatalf("SkipPerms=true args = %v, want bypass flag", unsafe.Args)
+	}
 
 	resume, err := (Codex{}).Build(context.Background(), "prompt", Options{ResumeSessionID: "sess"})
 	if err != nil {

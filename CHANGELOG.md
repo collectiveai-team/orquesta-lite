@@ -22,8 +22,36 @@ tags cut as GitHub releases (the binary's `--version` is stamped from the tag).
 
 ## Unreleased
 
+### Fixed
+
+- **`dangerously_skip_permissions` was a silent no-op on `provider: opencode`.**
+  The adapter emitted `--dangerously-skip-permissions`, which is Claude's
+  spelling; `opencode run` calls it `--auto`. Because opencode's argument parser
+  ignores unknown flags and still exits 0, nothing surfaced the mistake: the
+  team declared auto-approval, orq-lite believed it had applied it, and the
+  agent ran with permission prompts active until the role timed out. The
+  adapter now emits `--auto`.
+- **`provider: codex` ignored `dangerously_skip_permissions` entirely** and
+  always emitted `--dangerously-bypass-approvals-and-sandbox`, so an agent that
+  explicitly declared `false` still ran fully unsandboxed. The flag is now
+  emitted only when the field is true.
+
 ### Added
 
+- **`extra_args` per agent** — provider-only argv suffix, appended after the
+  adapter's own flags (and before OpenCode's positional prompt). Unlike `cmd`,
+  it keeps the provider contract intact: session resume, usage accounting,
+  rate-limit detection, and JSON parsing all keep working. Flags the adapter
+  owns (output format, model, session, permission mode) are rejected, since
+  overriding them breaks the parser rather than the CLI call.
+- **`orq-lite doctor` verifies every flag a provider will emit** against the
+  installed CLI's own `--help`, for the agents the config actually references.
+  This is what makes the two fixes above detectable instead of silent: opencode
+  accepts unknown flags and exits 0, so drift between an adapter and a CLI
+  release cannot be caught by running the command. Parsing is exact-token and
+  declaration-anchored (a flag merely mentioned in prose does not count); an
+  unreadable or unrecognizable help page reports "could not verify" rather than
+  passing, and only a timeout degrades to a warning.
 - **`orq-lite pack install <dir>`** — verifies a pack against its `pack.json`
   manifest (digests, no unlisted files, no symlinks) and installs it to
   `.orquestalite/packs/<name>/<version>/`, replacing the manual `cp -R`.
@@ -39,6 +67,13 @@ tags cut as GitHub releases (the binary's `--version` is stamped from the tag).
 
 ### Changed
 
+- **Scaffolded and benchmark `team.json` now declare
+  `"dangerously_skip_permissions": true` on the codex agent.** This keeps the
+  shipped defaults behaving exactly as before the codex fix above. **Existing
+  projects must do the same:** `codex exec` runs with `approval: never` and
+  `sandbox: read-only`, so a codex agent that does not declare the field can no
+  longer write files and will fail every implementation ticket. Review-only
+  codex roles (`critic`, `gov_reviewer`) can be left read-only deliberately.
 - **`orq-lite doctor`** no longer fails pack-only projects: a `team.json`
   without the legacy `parser`/`tester`/`reviewer` roles now resolves, with a
   `legacy roles` warn noting that only `plan`/`run`/`factory` need them.

@@ -22,6 +22,7 @@ type Spec struct {
 	Effort                     string
 	DangerouslySkipPermissions bool
 	SafeMode                   bool
+	ExtraArgs                  []string
 	ResumeSessionID            string
 	ForkSession                bool
 	Prompt                     string
@@ -141,7 +142,7 @@ func parseCodexHeader(stdout string) map[string]string {
 }
 
 // RunAgent executes the agent described by s. Legacy cmd agents still receive
-// {{PROMPT}} argv substitution; provider agents receive the prompt on stdin.
+// {{PROMPT}} argv substitution; each provider owns its prompt transport.
 // The existing result file (if any) is removed first so callers can reliably
 // detect "agent did not write". The subprocess is killed when s.Timeout elapses.
 //
@@ -231,6 +232,7 @@ func buildLaunch(ctx context.Context, s Spec) (providers.Launch, providers.Provi
 			Effort:               s.Effort,
 			DangerouslySkipPerms: s.DangerouslySkipPermissions,
 			SafeMode:             s.SafeMode,
+			ExtraArgs:            s.ExtraArgs,
 			ResumeSessionID:      s.ResumeSessionID,
 			ForkSession:          s.ForkSession,
 		})

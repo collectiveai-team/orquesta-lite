@@ -68,6 +68,47 @@ func TestLoadDynamicValidatesOnlyReferencedRoles(t *testing.T) {
 	}
 }
 
+func TestExtraArgsResolveOnlyForProviderAgents(t *testing.T) {
+	path := writeConfig(t, `{
+      "agents":{"ok":{"provider":"opencode","extra_args":["--thinking"]}},
+      "roles":{"used":{"agents":["ok"],"prompt":"used.md","result_path":"used.json","timeout_seconds":1}},
+      "rate_limit_backoff":{"initial_seconds":1,"factor":2,"max_seconds":2}
+    }`)
+	config, err := LoadDynamic(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roles, err := config.ResolveRoles([]string{"used"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := roles["used"].Agents[0].ExtraArgs; len(got) != 1 || got[0] != "--thinking" {
+		t.Fatalf("extra args = %v", got)
+	}
+}
+
+func TestLoadDynamicRejectsInvalidReferencedCommand(t *testing.T) {
+	for name, agent := range map[string]string{
+		"missing prompt marker": `{"cmd":["fake"]}`,
+		"cmd with extra args":   `{"cmd":["fake","{{PROMPT}}"],"extra_args":["--verbose"]}`,
+		"cmd and provider":      `{"cmd":["fake","{{PROMPT}}"],"provider":"opencode"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := writeConfig(t, `{
+          "agents":{"bad":`+agent+`},
+          "roles":{"used":{"agents":["bad"],"prompt":"used.md","result_path":"used.json","timeout_seconds":1}}
+        }`)
+			config, err := LoadDynamic(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := config.ResolveRoles([]string{"used"}); err == nil {
+				t.Fatal("expected referenced agent validation error")
+			}
+		})
+	}
+}
+
 func TestValidationRejectsInvalidAgentAndBackoff(t *testing.T) {
 	for name, body := range map[string]string{
 		"unknown provider":      `{"agents":{"a":{"provider":"bogus"}},"roles":{"r":{"agents":["a"],"prompt":"p","result_path":"r","timeout_seconds":1}},"rate_limit_backoff":{"initial_seconds":1,"factor":2,"max_seconds":2}}`,

@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/collectiveai-team/orquesta-lite/internal/contextopt"
 	"github.com/collectiveai-team/orquesta-lite/internal/flow"
 	"github.com/collectiveai-team/orquesta-lite/internal/gitx"
+	"github.com/collectiveai-team/orquesta-lite/internal/providers"
 )
 
 // Status of one check. These exact strings are the GET /api/doctor contract;
@@ -52,8 +54,7 @@ var credentialPaths = map[string]struct {
 // Run executes all preflight checks against dir and returns one Check per
 // concern. ctx is the budget for checks that shell out — callers may pass a
 // ~2 s timeout and such checks must degrade to StatusWarn on ctx.Err() rather
-// than block. Today every check is exec.LookPath + stat + env reads, so none
-// consult ctx yet; it is reserved for future exec-based checks.
+// than block.
 func Run(ctx context.Context, dir string) []Check {
 	var checks []Check
 	add := func(status Status, name, detail string) {
@@ -99,25 +100,32 @@ func Run(ctx context.Context, dir string) []Check {
 	}
 
 	// agent binaries + credentials, per provider actually used
-	for _, provider := range usedProviders(cfg) {
-		if _, err := exec.LookPath(provider); err != nil {
-			add(StatusError, "provider:"+provider, "not on PATH")
+	for _, providerName := range usedProviders(cfg) {
+		path, err := exec.LookPath(providerName)
+		if err != nil {
+			add(StatusError, "provider:"+providerName, "not on PATH")
 			continue
 		}
-		add(StatusOK, "provider:"+provider, "on PATH")
+		provider, err := providers.New(providerName)
+		if err != nil {
+			add(StatusError, "provider:"+providerName, err.Error())
+			continue
+		}
+		status, detail := checkProviderCLI(ctx, path, provider, usedAgents(cfg, providerName), cfg.Limits.SessionResumeEnabled())
+		add(status, "provider:"+providerName, detail)
 
-		cred, ok := credentialPaths[provider]
+		cred, ok := credentialPaths[providerName]
 		if !ok {
 			continue
 		}
 		if os.Getenv(cred.envVar) != "" {
-			add(StatusOK, "credentials:"+provider, "via "+cred.envVar)
+			add(StatusOK, "credentials:"+providerName, "via "+cred.envVar)
 			continue
 		}
 		if f := firstExistingHomeFile(cred.files); f != "" {
-			add(StatusOK, "credentials:"+provider, "credentials at ~/"+f)
+			add(StatusOK, "credentials:"+providerName, "credentials at ~/"+f)
 		} else {
-			add(StatusWarn, "credentials:"+provider, fmt.Sprintf("no credentials found (~/%s or %s) — log in with the CLI once", cred.files[0], cred.envVar))
+			add(StatusWarn, "credentials:"+providerName, fmt.Sprintf("no credentials found (~/%s or %s) — log in with the CLI once", cred.files[0], cred.envVar))
 		}
 	}
 
@@ -239,6 +247,124 @@ func usedProviders(cfg *config.Config) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+func usedAgents(cfg *config.Config, providerName string) []config.Agent {
+	seen := map[string]bool{}
+	var agents []config.Agent
+	for _, role := range cfg.Roles {
+		for _, name := range append(append([]string{}, role.Agents...), role.EscalationLadder...) {
+			agent, ok := cfg.Agents[name]
+			if !ok || seen[name] || agent.Provider != providerName {
+				continue
+			}
+			seen[name] = true
+			agents = append(agents, agent)
+		}
+	}
+	return agents
+}
+
+var (
+	ansiEscape = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
+	helpFlag   = regexp.MustCompile(`--?[A-Za-z][A-Za-z0-9-]*`)
+	helpGap    = regexp.MustCompile(`\s{2,}`)
+)
+
+func checkProviderCLI(ctx context.Context, executable string, provider providers.Provider, agents []config.Agent, resume bool) (Status, string) {
+	required := map[string]bool{}
+	for _, agent := range agents {
+		if err := provider.ValidateExtraArgs(agent.ExtraArgs); err != nil {
+			return StatusError, err.Error()
+		}
+		opts := providers.Options{
+			Model:                agent.Model,
+			Effort:               agent.Effort,
+			DangerouslySkipPerms: agent.DangerouslySkipPermissions,
+			SafeMode:             agent.SafeMode,
+			ExtraArgs:            agent.ExtraArgs,
+		}
+		if resume {
+			opts.ResumeSessionID = "doctor-session"
+		}
+		launch, err := provider.Build(ctx, "doctor prompt", opts)
+		if err != nil {
+			return StatusError, "cannot build provider argv: " + err.Error()
+		}
+		for _, arg := range launch.Args[1:] {
+			if flag := emittedFlag(arg); flag != "" {
+				required[flag] = true
+			}
+		}
+	}
+
+	help := provider.CLIHelp()
+	if len(help.Args) < 2 {
+		return StatusError, "provider has no CLI help contract"
+	}
+	cmd := exec.CommandContext(ctx, executable, help.Args[1:]...)
+	raw, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		return StatusWarn, "could not verify CLI flags before timeout: " + ctx.Err().Error()
+	}
+	if err != nil {
+		return StatusError, fmt.Sprintf("could not verify CLI flags with %q: %v", strings.Join(help.Args, " "), err)
+	}
+	text := ansiEscape.ReplaceAllString(strings.ReplaceAll(string(raw), "\r\n", "\n"), "")
+	if help.Synopsis != "" && !strings.Contains(text, help.Synopsis) {
+		return StatusError, fmt.Sprintf("could not verify CLI flags: %q help did not contain synopsis %q", strings.Join(help.Args, " "), help.Synopsis)
+	}
+	declared := declaredHelpFlags(text)
+	if len(declared) == 0 {
+		return StatusError, fmt.Sprintf("could not verify CLI flags: %q produced no parseable options", strings.Join(help.Args, " "))
+	}
+	var missing []string
+	for flag := range required {
+		if !declared[flag] {
+			missing = append(missing, flag)
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return StatusError, "CLI help does not declare emitted flags: " + strings.Join(missing, ", ")
+	}
+	return StatusOK, "on PATH; emitted flags verified against --help"
+}
+
+func emittedFlag(arg string) string {
+	if arg == "-" || len(arg) < 2 || arg[0] != '-' {
+		return ""
+	}
+	if i := strings.IndexByte(arg, '='); i >= 0 {
+		arg = arg[:i]
+	}
+	if len(arg) >= 3 && arg[1] != '-' {
+		if (arg[1] >= 'A' && arg[1] <= 'Z') || (arg[1] >= 'a' && arg[1] <= 'z') {
+			return arg[:2]
+		}
+		return ""
+	}
+	if len(arg) < 3 || !((arg[2] >= 'A' && arg[2] <= 'Z') || (arg[2] >= 'a' && arg[2] <= 'z')) {
+		return ""
+	}
+	return arg
+}
+
+func declaredHelpFlags(help string) map[string]bool {
+	flags := map[string]bool{}
+	for _, line := range strings.Split(help, "\n") {
+		declaration := strings.TrimSpace(line)
+		if !strings.HasPrefix(declaration, "-") {
+			continue
+		}
+		if i := helpGap.FindStringIndex(declaration); i != nil {
+			declaration = declaration[:i[0]]
+		}
+		for _, flag := range helpFlag.FindAllString(declaration, -1) {
+			flags[flag] = true
+		}
+	}
+	return flags
 }
 
 // ProviderHasUsableCredentials reports whether a provider can authenticate

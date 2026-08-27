@@ -96,9 +96,10 @@ func TestInit_TeamJSONHasCodexProviderPrimary(t *testing.T) {
 
 	var cfg struct {
 		Agents map[string]struct {
-			Provider string `json:"provider"`
-			Model    string `json:"model"`
-			Effort   string `json:"effort"`
+			Provider  string `json:"provider"`
+			Model     string `json:"model"`
+			Effort    string `json:"effort"`
+			SkipPerms bool   `json:"dangerously_skip_permissions"`
 		} `json:"agents"`
 		Roles map[string]struct {
 			Agents []string `json:"agents"`
@@ -121,6 +122,12 @@ func TestInit_TeamJSONHasCodexProviderPrimary(t *testing.T) {
 	}
 	if codexAgent.Effort != "medium" {
 		t.Errorf("codex_gpt5.effort = %q, want medium", codexAgent.Effort)
+	}
+	// codex exec defaults to `sandbox: read-only`, and the provider emits the
+	// bypass flag only when this field is set. A scaffolded coder that cannot
+	// write files fails every ticket, so the scaffold must declare it.
+	if !codexAgent.SkipPerms {
+		t.Error("codex_gpt5.dangerously_skip_permissions = false, want true: the primary coder cannot write files in codex's read-only sandbox")
 	}
 
 	// Verify coder role: primary = codex_gpt5, fallback = claude_sonnet.

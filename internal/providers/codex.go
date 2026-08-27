@@ -13,6 +13,16 @@ func init() {
 
 func (Codex) Name() string { return "codex" }
 
+func (Codex) CLIHelp() CLIHelp {
+	return CLIHelp{Args: []string{"codex", "exec", "--help"}, Synopsis: "Usage: codex exec"}
+}
+
+func (Codex) ValidateExtraArgs(args []string) error {
+	return validateExtraArgs("codex", args, []string{
+		"--json", "--dangerously-bypass-approvals-and-sandbox", "-m", "--model", "-c", "--config",
+	})
+}
+
 func (Codex) Build(_ context.Context, prompt string, opts Options) (Launch, error) {
 	model := opts.Model
 	if model == "" {
@@ -28,15 +38,16 @@ func (Codex) Build(_ context.Context, prompt string, opts Options) (Launch, erro
 		}
 	}
 
-	args = append(args,
-		"--json",
-		"--dangerously-bypass-approvals-and-sandbox",
-		"-m", model,
-	)
+	args = append(args, "--json")
+	if opts.DangerouslySkipPerms {
+		args = append(args, "--dangerously-bypass-approvals-and-sandbox")
+	}
+	args = append(args, "-m", model)
 
 	if opts.Effort != "" {
 		args = append(args, "-c", `model_reasoning_effort="`+opts.Effort+`"`)
 	}
+	args = append(args, opts.ExtraArgs...)
 
 	return Launch{Args: args, Stdin: prompt}, nil
 }

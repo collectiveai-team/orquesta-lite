@@ -17,6 +17,7 @@ type Agent struct {
 	Effort                     string   `json:"effort,omitempty"`
 	DangerouslySkipPermissions bool     `json:"dangerously_skip_permissions,omitempty"`
 	SafeMode                   bool     `json:"safe_mode,omitempty"`
+	ExtraArgs                  []string `json:"extra_args,omitempty"`
 	RateLimitPattern           string   `json:"rate_limit_pattern,omitempty"`
 }
 
@@ -27,6 +28,7 @@ type AgentSpec struct {
 	Effort      string
 	SkipPerms   bool
 	SafeMode    bool
+	ExtraArgs   []string
 	RatePattern string
 	Cmd         []string
 }
@@ -293,29 +295,8 @@ func (c *Config) Validate() error {
 	}
 	// Second pass: validate agent invocation shape.
 	for name, a := range c.Agents {
-		hasCmd := len(a.Cmd) > 0
-		hasProvider := a.Provider != ""
-		if hasCmd && hasProvider {
-			return fmt.Errorf("agent %q cannot specify both cmd and provider", name)
-		}
-		if !hasCmd && !hasProvider {
-			return fmt.Errorf("agent %q must declare cmd or provider", name)
-		}
-		if hasProvider {
-			if !providers.IsKnown(a.Provider) {
-				return fmt.Errorf("agent %q has unknown provider %q", name, a.Provider)
-			}
-			continue
-		}
-		hasMarker := false
-		for _, tok := range a.Cmd {
-			if strings.Contains(tok, "{{PROMPT}}") {
-				hasMarker = true
-				break
-			}
-		}
-		if !hasMarker {
-			return fmt.Errorf("agent %q cmd is missing {{PROMPT}} marker", name)
+		if err := validateAgentInvocation(name, a); err != nil {
+			return err
 		}
 	}
 	if c.RateLimitBackoff.InitialSeconds <= 0 || c.RateLimitBackoff.Factor < 2 || c.RateLimitBackoff.MaxSeconds < c.RateLimitBackoff.InitialSeconds {
@@ -325,11 +306,8 @@ func (c *Config) Validate() error {
 }
 
 func resolveAgentSpec(name string, agent Agent) (AgentSpec, error) {
-	if agent.Provider != "" && !providers.IsKnown(agent.Provider) {
-		return AgentSpec{}, fmt.Errorf("agent %q has unknown provider %q", name, agent.Provider)
-	}
-	if agent.Provider == "" && len(agent.Cmd) == 0 {
-		return AgentSpec{}, fmt.Errorf("agent %q must declare registered provider or cmd", name)
+	if err := validateAgentInvocation(name, agent); err != nil {
+		return AgentSpec{}, err
 	}
 	return AgentSpec{
 		Name:        name,
@@ -338,9 +316,36 @@ func resolveAgentSpec(name string, agent Agent) (AgentSpec, error) {
 		Effort:      agent.Effort,
 		SkipPerms:   agent.DangerouslySkipPermissions,
 		SafeMode:    agent.SafeMode,
+		ExtraArgs:   append([]string(nil), agent.ExtraArgs...),
 		RatePattern: agent.RateLimitPattern,
 		Cmd:         append([]string(nil), agent.Cmd...),
 	}, nil
+}
+
+func validateAgentInvocation(name string, agent Agent) error {
+	hasCmd := len(agent.Cmd) > 0
+	hasProvider := agent.Provider != ""
+	if hasCmd && hasProvider {
+		return fmt.Errorf("agent %q cannot specify both cmd and provider", name)
+	}
+	if !hasCmd && !hasProvider {
+		return fmt.Errorf("agent %q must declare cmd or provider", name)
+	}
+	if len(agent.ExtraArgs) > 0 && !hasProvider {
+		return fmt.Errorf("agent %q extra_args requires provider", name)
+	}
+	if hasProvider {
+		if !providers.IsKnown(agent.Provider) {
+			return fmt.Errorf("agent %q has unknown provider %q", name, agent.Provider)
+		}
+		return nil
+	}
+	for _, tok := range agent.Cmd {
+		if strings.Contains(tok, "{{PROMPT}}") {
+			return nil
+		}
+	}
+	return fmt.Errorf("agent %q cmd is missing {{PROMPT}} marker", name)
 }
 
 func resolveRoleSpec(name string, role Role, agents map[string]AgentSpec) (RoleSpec, error) {

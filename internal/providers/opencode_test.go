@@ -36,11 +36,24 @@ func TestOpenCodeBuildFreshResumeAndFork(t *testing.T) {
 		"opencode", "run", "--format", "json", "--print-logs=false",
 		"-m", "openai/gpt-5.4",
 		"--variant", "high",
-		"--dangerously-skip-permissions",
+		"--auto",
 		"prompt",
 	}
 	if !reflect.DeepEqual(full.Args, wantFull) {
 		t.Fatalf("full args = %v, want %v", full.Args, wantFull)
+	}
+	for _, arg := range full.Args {
+		if arg == "--dangerously-skip-permissions" {
+			t.Fatalf("OpenCode emitted unsupported flag in %v", full.Args)
+		}
+	}
+
+	extra, err := (&OpenCode{}).Build(context.Background(), "prompt", Options{ExtraArgs: []string{"--thinking"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := extra.Args[len(extra.Args)-2:], []string{"--thinking", "prompt"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("extra args suffix = %v, want %v", got, want)
 	}
 
 	resume, err := (&OpenCode{}).Build(context.Background(), "prompt", Options{ResumeSessionID: "ses_abc"})

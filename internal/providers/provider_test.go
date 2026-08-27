@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -15,6 +16,10 @@ func (registeredTestProvider) Build(context.Context, string, Options) (Launch, e
 }
 
 func (registeredTestProvider) ParseLine(string) []Event { return nil }
+
+func (registeredTestProvider) CLIHelp() CLIHelp { return CLIHelp{} }
+
+func (registeredTestProvider) ValidateExtraArgs([]string) error { return nil }
 
 func TestNewUsesRegisteredProvider(t *testing.T) {
 	registerProvider("test-provider", func() Provider { return registeredTestProvider{} })
@@ -64,5 +69,46 @@ func TestNewRegisteredProviders(t *testing.T) {
 func TestNewRejectsUnregisteredProvider(t *testing.T) {
 	if _, err := New("ghost"); err == nil {
 		t.Fatal(`New("ghost") error = nil, want unknown provider error`)
+	}
+}
+
+func TestProvidersRejectControlledExtraArgs(t *testing.T) {
+	tests := map[string]string{
+		"claude":   "--output-format=text",
+		"codex":    "-moverride",
+		"gemini":   "--resume=latest",
+		"opencode": "--format=text",
+	}
+	for name, arg := range tests {
+		t.Run(name, func(t *testing.T) {
+			provider, err := New(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := provider.ValidateExtraArgs([]string{arg}); err == nil {
+				t.Fatalf("ValidateExtraArgs(%q) = nil", arg)
+			}
+		})
+	}
+}
+
+func TestProvidersAppendExtraArgsAfterControlledFlags(t *testing.T) {
+	for _, name := range []string{"claude", "codex", "gemini", "opencode"} {
+		t.Run(name, func(t *testing.T) {
+			provider, err := New(name)
+			if err != nil {
+				t.Fatal(err)
+			}
+			launch, err := provider.Build(context.Background(), "prompt", Options{ExtraArgs: []string{"--custom", "value"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(strings.Join(launch.Args, " "), "--custom value") {
+				t.Fatalf("args = %v, missing extras", launch.Args)
+			}
+			if name == "opencode" && !reflect.DeepEqual(launch.Args[len(launch.Args)-3:], []string{"--custom", "value", "prompt"}) {
+				t.Fatalf("OpenCode prompt is not last: %v", launch.Args)
+			}
+		})
 	}
 }

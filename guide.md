@@ -252,7 +252,8 @@ role set.
     "reviewer": {
       "provider": "claude",
       "model": "claude-opus-4-8",
-      "dangerously_skip_permissions": true
+      "dangerously_skip_permissions": true,
+      "extra_args": ["--allowedTools", "Read,Grep,Glob"]
     }
   },
   "roles": {
@@ -278,6 +279,12 @@ For each agent:
 - test authentication with a small non-interactive invocation;
 - use a second provider in important role chains so a provider failure has a
   real fallback path.
+
+`extra_args` is available only for provider-backed agents. The provider appends
+these arguments after its own flags (and, for OpenCode, before the positional
+prompt). Provider-owned flags such as output format, model, session resume, and
+permission mode cannot be overridden; `orq-lite doctor` rejects those conflicts
+and verifies every emitted flag against the installed CLI's `--help` output.
 
 Contract failures get bounded same-agent corrective retries. Timeouts,
 provider exits, exhausted quotas, and other operational failures move through
