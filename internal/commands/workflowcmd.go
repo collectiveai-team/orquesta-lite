@@ -26,6 +26,7 @@ import (
 	"github.com/collectiveai-team/orquesta-lite/internal/fallback"
 	"github.com/collectiveai-team/orquesta-lite/internal/flow"
 	"github.com/collectiveai-team/orquesta-lite/internal/invoke"
+	"github.com/collectiveai-team/orquesta-lite/internal/opencodeattach"
 	"github.com/collectiveai-team/orquesta-lite/internal/runid"
 	"github.com/collectiveai-team/orquesta-lite/internal/sessions"
 	"github.com/collectiveai-team/orquesta-lite/internal/workflow"
@@ -247,7 +248,18 @@ func newWorkflowDeps(projectDir, teamPath, runID string, compiled *compiledWorkf
 		for _, note := range optStatus.Notes {
 			logger.Log(eventlog.Event{Type: "context_optimization", Fields: map[string]any{"detail": note}})
 		}
-		invoker = &invoke.RoleInvoker{Specs: specs, Dir: projectDir, Fallback: fallbackCaller, Log: logger, Health: tracker, MemPath: filepath.Join(stateDir, "memory.md"), Runner: invoke.ExecRunner{}, DefaultRateLimitPattern: defaultPattern, AgentHealthThreshold: agentHealthThreshold, ConventionsPath: cfg.ConventionsFile, AgentEnv: optStatus.Env(), Sessions: sessions.Load(projectDir), ResumeRoles: resumeRoles, Artifacts: artifactStore, CodeWritingRoles: map[string]bool{}}
+		// Attach mode is verified here, before the run exists. The server
+		// belongs to the user, so orq-lite cannot start one; the only honest
+		// options on an unreachable server are to fail now or to silently run
+		// detached, and the latter would leave team.json claiming a session
+		// tree the run never built.
+		attachManager, attachErr := newAttachManager(cfg.Attach, projectDir, runID, compiled.Ref)
+		if attachErr != nil {
+			logger.Close()
+			store.Close()
+			return nil, attachErr
+		}
+		invoker = &invoke.RoleInvoker{Specs: specs, Dir: projectDir, Fallback: fallbackCaller, Log: logger, Health: tracker, MemPath: filepath.Join(stateDir, "memory.md"), Runner: invoke.ExecRunner{}, DefaultRateLimitPattern: defaultPattern, AgentHealthThreshold: agentHealthThreshold, ConventionsPath: cfg.ConventionsFile, AgentEnv: optStatus.Env(), Sessions: sessions.Load(projectDir), ResumeRoles: resumeRoles, Artifacts: artifactStore, Attach: attachManager, CodeWritingRoles: map[string]bool{}}
 	}
 	validator := func(ref string, raw []byte) error {
 		schema, ok := compiled.IR.Schemas[ref]
@@ -270,6 +282,30 @@ func newWorkflowDeps(projectDir, teamPath, runID string, compiled *compiledWorkf
 }
 
 func durationSeconds(value int) time.Duration { return time.Duration(value) * time.Second }
+
+// newAttachManager builds the session-tree manager for a run, or returns nil
+// when attach is not configured. Reachability is proven up front so a wedged or
+// absent server fails at startup with a clear message instead of surfacing as a
+// per-agent error partway through a long run.
+func newAttachManager(attach config.Attach, projectDir, runID, flowRef string) (*opencodeattach.Manager, error) {
+	if !attach.Enabled() {
+		return nil, nil
+	}
+	client, err := opencodeattach.NewClient(attach.URL)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), opencodeattach.DefaultTimeout)
+	defer cancel()
+	if err := client.Ping(ctx); err != nil {
+		return nil, fmt.Errorf("attach.url is configured but not usable: %w (start one with `opencode serve`, or remove attach.url from team.json)", err)
+	}
+	absDir, err := filepath.Abs(projectDir)
+	if err != nil {
+		return nil, err
+	}
+	return opencodeattach.NewManager(client, absDir, runID, flowRef), nil
+}
 
 func registerExternalActivities(compiled *compiledWorkflow, registry *activity.Registry, artifactRoot string) error {
 	seen := map[string]bool{}

@@ -17,6 +17,7 @@ import (
 	"github.com/collectiveai-team/orquesta-lite/internal/fallback"
 	"github.com/collectiveai-team/orquesta-lite/internal/gitx"
 	"github.com/collectiveai-team/orquesta-lite/internal/memory"
+	"github.com/collectiveai-team/orquesta-lite/internal/opencodeattach"
 	"github.com/collectiveai-team/orquesta-lite/internal/prompts"
 	"github.com/collectiveai-team/orquesta-lite/internal/providers"
 	"github.com/collectiveai-team/orquesta-lite/internal/runner"
@@ -93,6 +94,12 @@ type RoleInvoker struct {
 	// of every agent invocation under .orquestalite/runs/<run_id>/agents/. Nil
 	// disables persistence (compat for callers that do not need it).
 	Artifacts *artifacts.Store
+	// Attach, when set, routes opencode-provider agents through a running
+	// opencode server and arranges their sessions into a per-run tree. Each
+	// invocation's session is created up front and handed to the CLI, inverting
+	// the usual flow where the id is scraped from stdout afterwards. Nil leaves
+	// every agent launching a detached `opencode run`.
+	Attach *opencodeattach.Manager
 	// CodeWritingRoles is the set of roles whose work mutates the work tree and
 	// therefore should have a per-attempt diff captured into the artifacts dir
 	// (attempt.diff) and surfaced as an agent_diff event. Defaults to coder and
@@ -295,7 +302,20 @@ func (inv *RoleInvoker) runValidated(ctx context.Context, roleName string, role 
 		// Only the same agent on the same task resumes; a fallback to a different
 		// agent finds no entry and starts fresh (the desired "switch provider →
 		// from scratch" behaviour).
-		spec.ResumeSessionID = inv.resumeSessionID(roleName, agentName, rc.TaskID)
+		// storedSession is the genuine resume: a session this agent used on an
+		// earlier invocation of this task. Attach may additionally mint a
+		// session below, which is not a resume and must not be logged as one.
+		storedSession := inv.resumeSessionID(roleName, agentName, rc.TaskID)
+		spec.ResumeSessionID = storedSession
+		// In attach mode the session is created before the agent runs, so it
+		// can be given a parent and a title. A resume already names a session
+		// (minted by an earlier invocation, still parented), so only a fresh
+		// conversation needs a new child. A failure here stops the run: attach
+		// was declared, and quietly falling back to a detached run would put
+		// the runtime at odds with the config.
+		if err := inv.applyAttach(ctx, &spec, ag, roleName, agentName, rc.TaskID); err != nil {
+			return fallback.Outcome{}, err
+		}
 		r, err := inv.runner().Run(ctx, spec)
 		if err != nil {
 			return fallback.Outcome{}, err
@@ -322,7 +342,20 @@ func (inv *RoleInvoker) runValidated(ctx context.Context, roleName string, role 
 		}
 
 		artifactsDir := inv.saveArtifacts(roleName, agentName, ag, spec, prompt, r, rc)
-		inv.logAgentRun(roleName, agentName, ag, spec, r, fallbackReason, rc, artifactsDir)
+		inv.logAgentRun(roleName, agentName, ag, spec, r, fallbackReason, rc, artifactsDir, storedSession)
+
+		// A deliberate cancellation is terminal. It is checked after the
+		// artifacts and event are written — the aborted attempt still happened
+		// and should stay on the record — but before any retry, because every
+		// path below this point would restart the work the user just stopped:
+		// the corrective loop would relaunch the same prompt, and returning a
+		// plain fallback outcome would hand it to the next agent in the chain.
+		// Returning an error is what makes it terminal; fallback.Call
+		// propagates it instead of advancing the chain.
+		if r.Aborted {
+			return fallback.Outcome{}, fmt.Errorf("%w: role %q agent %q was aborted (session %s)",
+				ErrAgentAborted, roleName, agentName, r.SessionID)
+		}
 
 		// A missing/invalid result is often a cheap-to-fix slip, not a genuine
 		// failure: the benchmark evidence motivating this loop showed agents
@@ -368,7 +401,9 @@ func (inv *RoleInvoker) runValidated(ctx context.Context, roleName string, role 
 			crc := rc
 			crc.Attempt = rc.Attempt + attempt + 1
 			cArtifactsDir := inv.saveArtifacts(roleName, agentName, ag, cSpec, cSpec.Prompt, cr, crc)
-			inv.logAgentRun(roleName, agentName, ag, cSpec, cr, fallbackReason, crc, cArtifactsDir)
+			// A corrective attempt always continues the attempt that just
+			// failed, so this one really is a resume.
+			inv.logAgentRun(roleName, agentName, ag, cSpec, cr, fallbackReason, crc, cArtifactsDir, cSpec.ResumeSessionID)
 		}
 
 		inv.recordHealth(roleName, agentName, shouldFallback, fallbackReason)
@@ -462,6 +497,31 @@ func (inv *RoleInvoker) sessionTaskKey(taskID string) string {
 	return inv.SessionNamespace + "/" + taskID
 }
 
+// applyAttach points a spec at the attach server and, when the run is starting
+// a fresh conversation, creates the session it will use.
+//
+// Only the opencode provider understands attach, so a chain that falls back to
+// a codex or claude agent is left untouched and runs normally. Nothing is
+// created for a resume either: the stored id already names a child session from
+// an earlier invocation, and reusing it is what keeps a resumed conversation in
+// one place in the tree instead of scattering it across siblings.
+func (inv *RoleInvoker) applyAttach(ctx context.Context, spec *runner.Spec, ag config.AgentSpec, roleName, agentName, taskID string) error {
+	if inv.Attach == nil || ag.Provider != "opencode" {
+		return nil
+	}
+	spec.AttachURL = inv.Attach.URL()
+	spec.AttachDir = inv.Attach.Dir()
+	if spec.ResumeSessionID != "" {
+		return nil
+	}
+	id, err := inv.Attach.ChildSession(ctx, taskID, roleName, agentName)
+	if err != nil {
+		return fmt.Errorf("attach: create session for role %q agent %q: %w", roleName, agentName, err)
+	}
+	spec.ResumeSessionID = id
+	return nil
+}
+
 // resumeSessionID returns the stored session for (task, role, agent) when
 // session resume is enabled for the role, else "".
 func (inv *RoleInvoker) resumeSessionID(role, agent, taskID string) string {
@@ -515,7 +575,12 @@ func (inv *RoleInvoker) recordHealth(roleName, agentName string, shouldFallback 
 	}
 }
 
-func (inv *RoleInvoker) logAgentRun(roleName, agentName string, ag config.AgentSpec, spec runner.Spec, r *runner.Result, fallbackReason string, rc RunContext, artifactsDir string) {
+// logAgentRun records one invocation. resumedFrom is the session this run
+// continued, or "" when it started a fresh conversation. It is passed in rather
+// than read off spec.ResumeSessionID because attach mode also populates that
+// field with a session it just created — reporting that as a resume would make
+// every first invocation claim to continue a conversation that never happened.
+func (inv *RoleInvoker) logAgentRun(roleName, agentName string, ag config.AgentSpec, spec runner.Spec, r *runner.Result, fallbackReason string, rc RunContext, artifactsDir, resumedFrom string) {
 	if inv.Log == nil {
 		return
 	}
@@ -555,9 +620,15 @@ func (inv *RoleInvoker) logAgentRun(roleName, agentName string, ag config.AgentS
 	if usage.Reasoning > 0 {
 		fields["reasoning_tokens"] = usage.Reasoning
 	}
-	if spec.ResumeSessionID != "" {
+	if resumedFrom != "" {
 		fields["resumed"] = true
-		fields["resumed_from"] = spec.ResumeSessionID
+		fields["resumed_from"] = resumedFrom
+	}
+	// In attach mode the session existed before the agent started, so record
+	// which one the work landed in — that id is how an operator finds this
+	// invocation in the opencode TUI.
+	if spec.AttachURL != "" {
+		fields["attach_session"] = spec.ResumeSessionID
 	}
 	if cmdLine := redactedCmdLine(ag.Cmd, spec.TemplateVars); cmdLine != "" {
 		fields["cmd_line"] = cmdLine

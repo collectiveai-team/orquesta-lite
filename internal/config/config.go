@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/collectiveai-team/orquesta-lite/internal/opencodeattach"
 	"github.com/collectiveai-team/orquesta-lite/internal/providers"
 )
 
@@ -181,7 +182,28 @@ type Config struct {
 	// prompts as {{CONVENTIONS}} so agent output matches the team's style.
 	// Empty = agents infer conventions from the existing codebase instead.
 	ConventionsFile string `json:"conventions_file,omitempty"`
+	// Attach points opencode-provider agents at a running opencode server so
+	// their sessions can be created up front and arranged into a per-run tree.
+	// Omitted (the default) leaves every agent launching a detached
+	// `opencode run`, exactly as before.
+	Attach Attach `json:"attach,omitempty"`
 }
+
+// Attach configures the opencode server that agent sessions are created on.
+//
+// The server is the user's to run (`opencode serve`, or the one behind an open
+// TUI); orq-lite only connects to it. That is why there is no "enabled" flag: a
+// URL is the enablement. And because a declared-but-unreachable server would
+// otherwise degrade into ordinary detached runs — config saying one thing while
+// the runtime does another — reachability is enforced rather than probed.
+type Attach struct {
+	// URL is the opencode server base URL, e.g. "http://127.0.0.1:4096".
+	// Empty disables attach mode.
+	URL string `json:"url,omitempty"`
+}
+
+// Enabled reports whether attach mode is configured.
+func (a Attach) Enabled() bool { return strings.TrimSpace(a.URL) != "" }
 
 func Load(path string) (*Config, error) {
 	raw, err := os.ReadFile(path)
@@ -301,6 +323,21 @@ func (c *Config) Validate() error {
 	}
 	if c.RateLimitBackoff.InitialSeconds <= 0 || c.RateLimitBackoff.Factor < 2 || c.RateLimitBackoff.MaxSeconds < c.RateLimitBackoff.InitialSeconds {
 		return fmt.Errorf("invalid rate_limit_backoff")
+	}
+	if err := c.Attach.Validate(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Validate rejects a malformed attach URL at config load, so a typo shows up
+// before a run starts rather than as a connection failure inside one.
+func (a Attach) Validate() error {
+	if !a.Enabled() {
+		return nil
+	}
+	if _, err := opencodeattach.NormalizeURL(a.URL); err != nil {
+		return fmt.Errorf("invalid attach.url: %w", err)
 	}
 	return nil
 }

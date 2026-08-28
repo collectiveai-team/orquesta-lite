@@ -109,3 +109,23 @@ func TestClassifyFallbackDisposition(t *testing.T) {
 		})
 	}
 }
+
+func TestClassifyAborted(t *testing.T) {
+	// A cancelled opencode run exits 0 and writes nothing, which is
+	// indistinguishable from an agent that simply failed to produce its
+	// artifact — hence the dedicated reason, which callers treat as terminal
+	// rather than feeding it to the corrective-retry loop.
+	fallback, reason := classify(&runner.Result{Aborted: true, ExitCode: 0})
+	if !fallback || reason != "aborted" {
+		t.Fatalf("classify(aborted) = (%v, %q), want (true, \"aborted\")", fallback, reason)
+	}
+}
+
+func TestClassifyAbortLosesToWrittenResult(t *testing.T) {
+	// An abort that lands after the agent already wrote its result must not
+	// discard that work: the durable artifact is the checkpoint.
+	fallback, reason := classify(&runner.Result{Aborted: true, ResultExists: true})
+	if fallback || reason != "" {
+		t.Fatalf("classify() = (%v, %q), want (false, \"\")", fallback, reason)
+	}
+}

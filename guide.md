@@ -117,6 +117,40 @@ long run.
 
 Use `url` / `binary` in the same blocks to point at a pinned or vendored install.
 
+### Group a run's opencode sessions (optional)
+
+Every `opencode run` creates a session, so a twenty-ticket factory run leaves
+sixty-odd flat, near-identical entries in the opencode session list. Point
+orq-lite at a running opencode server and it will create those sessions itself,
+as one root per run with a child per agent invocation:
+
+```json
+{
+  "attach": { "url": "http://127.0.0.1:4096" }
+}
+```
+
+Start the server yourself — `opencode serve --hostname 127.0.0.1 --port 4096`,
+or use the one behind an open TUI. orq-lite never starts or supervises it, since
+the whole point is for the tree to appear in a TUI you already have open.
+
+The session list then shows one entry per run (`orq-lite flow:factory-fast@1
+r2026…`), with `coder · T001`, `qa · T001` and so on nested inside it. Sessions
+are scoped to the project directory, so you see this in the project you ran in.
+
+Two consequences worth knowing before you enable it:
+
+- **An unreachable server fails the run at startup**, rather than quietly
+  falling back to detached runs. A config that says "attach" while the runtime
+  does something else is the failure this feature exists to avoid. `orq-lite
+  doctor` reports reachability so you find out before a run, not during one.
+- **Aborting a session from the TUI stops that role.** orq-lite treats the
+  cancellation as terminal instead of retrying, so the work you stopped stays
+  stopped. The run itself then fails with an aborted-agent error.
+
+Omit the `attach` block entirely and nothing changes: every agent launches a
+detached `opencode run`, exactly as before.
+
 ### Install the operating skill
 
 You are reading this guide once, from a URL. The skill persists in the project,

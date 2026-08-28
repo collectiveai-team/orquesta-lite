@@ -24,6 +24,15 @@ tags cut as GitHub releases (the binary's `--version` is stamped from the tag).
 
 ### Fixed
 
+- **A cancelled opencode run was retried instead of respected.** Aborting a
+  session makes the CLI exit 0 having written no result — indistinguishable from
+  an agent that simply produced nothing, which is the condition that triggers
+  the corrective-retry loop. Aborts are now detected from the event stream and
+  treated as terminal, so cancelling a session no longer relaunches the work.
+- **The run log reported first-time attach invocations as resumes.** `resumed`
+  was derived from the presence of a session id, which attach mode populates
+  before the agent starts. It now reflects an actual prior conversation, and the
+  minted session is recorded separately as `attach_session`.
 - **`dangerously_skip_permissions` was a silent no-op on `provider: opencode`.**
   The adapter emitted `--dangerously-skip-permissions`, which is Claude's
   spelling; `opencode run` calls it `--auto`. Because opencode's argument parser
@@ -38,6 +47,16 @@ tags cut as GitHub releases (the binary's `--version` is stamped from the tag).
 
 ### Added
 
+- **opencode attach mode and per-run session trees.** Setting `attach.url` in
+  `team.json` points opencode-provider agents at a server you already run.
+  orq-lite then creates each session up front — one root per run, one child per
+  `(task, role, agent)`, with readable titles and `orq_*` metadata — instead of
+  scraping the session id out of stdout afterwards. Because the TUI's session
+  list shows roots only, a run that previously left dozens of flat sessions now
+  collapses to a single navigable entry. A configured-but-unreachable server
+  fails the run at startup rather than silently degrading to detached runs;
+  `orq-lite doctor` reports reachability so the failure is diagnosable
+  beforehand. Omitting `attach` leaves behaviour unchanged.
 - **`extra_args` per agent** — provider-only argv suffix, appended after the
   adapter's own flags (and before OpenCode's positional prompt). Unlike `cmd`,
   it keeps the provider contract intact: session resume, usage accounting,
