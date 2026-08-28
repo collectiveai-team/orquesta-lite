@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 )
 
 // OpenCode drives the opencode CLI (`opencode run`) in JSON streaming mode.
@@ -36,6 +37,9 @@ func (*OpenCode) ValidateExtraArgs(args []string) error {
 	return validateExtraArgs("opencode", args, []string{
 		"--format", "--print-logs", "-m", "--model", "--variant", "--auto",
 		"-s", "--session", "--fork", "-c", "--continue", "--command", "-i", "--interactive",
+		// Owned by attach mode: the session tree only holds together if
+		// orq-lite decides which server and project the run targets.
+		"--attach", "--dir",
 	})
 }
 
@@ -43,6 +47,10 @@ func (*OpenCode) Build(_ context.Context, prompt string, opts Options) (Launch, 
 	model := opts.Model
 	if model == "" {
 		model = "anthropic/claude-sonnet-4-6"
+	}
+
+	if opts.AttachURL != "" && opts.AttachDir == "" {
+		return Launch{}, errors.New("opencode attach requires a directory: the server resolves paths on its own side")
 	}
 
 	args := []string{"opencode", "run", "--format", "json", "--print-logs=false"}
@@ -55,6 +63,9 @@ func (*OpenCode) Build(_ context.Context, prompt string, opts Options) (Launch, 
 	}
 	if opts.DangerouslySkipPerms {
 		args = append(args, "--auto")
+	}
+	if opts.AttachURL != "" {
+		args = append(args, "--attach", opts.AttachURL, "--dir", opts.AttachDir)
 	}
 	if opts.ResumeSessionID != "" {
 		args = append(args, "-s", opts.ResumeSessionID)
@@ -104,7 +115,15 @@ func (o *OpenCode) ParseLine(line string) []Event {
 			events = append(events, Event{Type: EventUsage, Usage: usage})
 		}
 	case "error":
-		if msg := o.parseError(obj); msg != "" {
+		msg := o.parseError(obj)
+		if openCodeAborted(obj) {
+			if msg == "" {
+				msg = "aborted"
+			}
+			events = append(events, Event{Type: EventAborted, Result: msg})
+			break
+		}
+		if msg != "" {
 			events = append(events, Event{Type: EventError, Result: msg})
 		}
 	}
@@ -222,6 +241,20 @@ func (o *OpenCode) parseUsage(obj map[string]any) (map[string]int, bool) {
 		return nil, false
 	}
 	return usage, true
+}
+
+// openCodeAborted reports whether an error event is opencode's cancellation
+// signal. The server emits {"type":"error","error":{"name":"MessageAbortedError"}}
+// when a session is aborted (POST /session/{id}/abort, which is what the TUI's
+// cancel does) and the CLI then exits 0 — the same exit code as success. The
+// event name is therefore the only thing that distinguishes the two.
+func openCodeAborted(obj map[string]any) bool {
+	errObj, ok := obj["error"].(map[string]any)
+	if !ok {
+		return false
+	}
+	name, _ := errObj["name"].(string)
+	return name == "MessageAbortedError"
 }
 
 func (o *OpenCode) parseError(obj map[string]any) string {

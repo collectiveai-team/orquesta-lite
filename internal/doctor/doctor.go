@@ -19,6 +19,7 @@ import (
 	"github.com/collectiveai-team/orquesta-lite/internal/contextopt"
 	"github.com/collectiveai-team/orquesta-lite/internal/flow"
 	"github.com/collectiveai-team/orquesta-lite/internal/gitx"
+	"github.com/collectiveai-team/orquesta-lite/internal/opencodeattach"
 	"github.com/collectiveai-team/orquesta-lite/internal/providers"
 )
 
@@ -129,6 +130,8 @@ func Run(ctx context.Context, dir string) []Check {
 		}
 	}
 
+	checks = append(checks, checkAttach(ctx, cfg.Attach)...)
+
 	// context optimization — external tools that shrink what each invocation
 	// carries. Neither is vendored, so absence is a warning and never a
 	// failure: the run proceeds unoptimized. Reporting them here matters
@@ -228,6 +231,28 @@ func missingPromptFiles(dir string, cfg *config.Config) []string {
 	}
 	sort.Strings(missing)
 	return missing
+}
+
+// checkAttach reports whether a configured opencode attach server is reachable.
+//
+// Attach failures are fatal at run start by design, so the whole point of this
+// check is to move that failure somewhere diagnosable: `doctor` before the run,
+// not minute twelve of one. It is deliberately a standalone function rather than
+// inline in Run — a future provider-CLI check would want to absorb it, and a
+// move is a cheaper merge than a rewrite.
+func checkAttach(ctx context.Context, attach config.Attach) []Check {
+	if !attach.Enabled() {
+		return nil
+	}
+	client, err := opencodeattach.NewClient(attach.URL)
+	if err != nil {
+		return []Check{{Status: StatusError, Name: "attach", Detail: err.Error()}}
+	}
+	if err := client.Ping(ctx); err != nil {
+		return []Check{{Status: StatusError, Name: "attach", Detail: fmt.Sprintf(
+			"%v — runs will fail to start; run `opencode serve` or remove attach.url from team.json", err)}}
+	}
+	return []Check{{Status: StatusOK, Name: "attach", Detail: "opencode server reachable at " + client.URL()}}
 }
 
 // usedProviders returns the sorted set of providers referenced by any role's

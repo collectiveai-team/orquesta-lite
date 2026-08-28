@@ -25,10 +25,15 @@ type Spec struct {
 	ExtraArgs                  []string
 	ResumeSessionID            string
 	ForkSession                bool
-	Prompt                     string
-	ResultPath                 string
-	Timeout                    time.Duration
-	RateLimitPattern           string
+	// AttachURL/AttachDir route a provider run through an already-running
+	// agent server rather than a private one. Only the opencode provider
+	// consumes them today; other providers ignore them.
+	AttachURL        string
+	AttachDir        string
+	Prompt           string
+	ResultPath       string
+	Timeout          time.Duration
+	RateLimitPattern string
 	// TemplateVars holds additional {{KEY}} substitutions applied after
 	// {{PROMPT}} is resolved. Keys are the bare names without braces.
 	TemplateVars map[string]string
@@ -48,7 +53,13 @@ type Result struct {
 	// (e.g. opened a browser OAuth flow) instead of running headless — a sign
 	// its cached credentials are missing or expired. Such an agent will keep
 	// failing this session, so it is treated as non-recoverable and skipped.
-	AuthFailed   bool
+	AuthFailed bool
+	// Aborted is set when the run was cancelled externally — someone aborting
+	// the session from the opencode TUI while orq-lite was waiting on it. The
+	// CLI exits 0 in that case, so without this flag the cancellation reads as
+	// an ordinary "agent wrote no result" and gets retried, restarting the
+	// work the user just stopped.
+	Aborted      bool
 	ResultExists bool
 	ExitCode     int
 	Duration     time.Duration
@@ -235,6 +246,8 @@ func buildLaunch(ctx context.Context, s Spec) (providers.Launch, providers.Provi
 			ExtraArgs:            s.ExtraArgs,
 			ResumeSessionID:      s.ResumeSessionID,
 			ForkSession:          s.ForkSession,
+			AttachURL:            s.AttachURL,
+			AttachDir:            s.AttachDir,
 		})
 		if err != nil {
 			return providers.Launch{}, nil, err
@@ -282,6 +295,11 @@ func scanStdout(r io.Reader, p providers.Provider, res *Result, done chan<- stru
 			case providers.EventSessionID:
 				res.SessionID = ev.SessionID
 			case providers.EventError:
+				if ev.Result != "" {
+					res.FinalText = ev.Result
+				}
+			case providers.EventAborted:
+				res.Aborted = true
 				if ev.Result != "" {
 					res.FinalText = ev.Result
 				}

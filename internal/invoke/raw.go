@@ -20,6 +20,12 @@ var ErrInvalidContract = errors.New("all agent outputs violated the contract")
 // preserve timeout semantics across the generic agent.invoke boundary.
 var ErrAgentTimeout = errors.New("all usable agents timed out")
 
+// ErrAgentAborted marks a run cancelled outside orq-lite — someone aborting the
+// agent's session from the opencode TUI. Unlike a timeout or a missing result it
+// is never retried: the cancellation was the point. It is a distinct sentinel so
+// callers can tell "a human stopped this" apart from "the agent failed".
+var ErrAgentAborted = errors.New("agent run was aborted")
+
 // RawValidator validates the exact JSON bytes written by an agent. Returning
 // an error classifies that agent attempt as invalid_contract and advances the
 // configured fallback chain.

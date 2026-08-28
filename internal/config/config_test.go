@@ -123,6 +123,38 @@ func TestValidationRejectsInvalidAgentAndBackoff(t *testing.T) {
 	}
 }
 
+func TestConfigRejectsBadAttachURL(t *testing.T) {
+	// A typo'd attach URL has to fail at load. Attach failures are fatal at run
+	// start by design, so the cost of deferring this is a run that dies on
+	// startup with a connection error instead of a config file that says why.
+	body := `{"agents":{"a":{"provider":"opencode"}},"roles":{"r":{"agents":["a"],"prompt":"p","result_path":"r","timeout_seconds":1}},"rate_limit_backoff":{"initial_seconds":1,"factor":2,"max_seconds":2},"attach":{"url":"127.0.0.1:4096"}}`
+	if _, err := Load(writeConfig(t, body)); err == nil {
+		t.Fatal("a scheme-less attach.url was accepted")
+	}
+}
+
+func TestConfigAcceptsValidAttachURL(t *testing.T) {
+	body := `{"agents":{"a":{"provider":"opencode"}},"roles":{"r":{"agents":["a"],"prompt":"p","result_path":"r","timeout_seconds":1}},"rate_limit_backoff":{"initial_seconds":1,"factor":2,"max_seconds":2},"attach":{"url":"http://127.0.0.1:4096"}}`
+	cfg, err := Load(writeConfig(t, body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Attach.Enabled() {
+		t.Fatal("attach.url set but Enabled() is false")
+	}
+}
+
+// Attach is opt-in: a team.json that says nothing about it must stay valid and
+// leave every agent running detached, exactly as before.
+func TestConfigAttachDisabledByDefault(t *testing.T) {
+	if (Attach{}).Enabled() {
+		t.Fatal("attach enabled with no url")
+	}
+	if err := (Attach{}).Validate(); err != nil {
+		t.Fatalf("empty attach failed validation: %v", err)
+	}
+}
+
 func TestRuntimeAndSessionDefaults(t *testing.T) {
 	if !(Limits{}).SessionResumeEnabled() {
 		t.Fatal("session resume should default on")

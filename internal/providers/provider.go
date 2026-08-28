@@ -16,6 +16,13 @@ const (
 	EventSessionID EventType = "session_id"
 	EventUsage     EventType = "usage"
 	EventError     EventType = "error"
+	// EventAborted marks a run cancelled out from under the CLI — in practice,
+	// someone hitting abort on the session in the opencode TUI. It is separate
+	// from EventError because the CLI exits 0 either way: without a distinct
+	// signal, a deliberate cancellation is indistinguishable from a clean run
+	// that happened to write no result, and the corrective-retry loop
+	// immediately relaunches the very work the user just stopped.
+	EventAborted EventType = "aborted"
 )
 
 type Event struct {
@@ -41,6 +48,12 @@ type Options struct {
 	ResumeSessionID      string
 	ForkSession          bool
 	ExtraArgs            []string
+	// AttachURL, when set, points the CLI at an already-running opencode server
+	// instead of the private one it would otherwise start. AttachDir is then
+	// mandatory: the server resolves paths on its own side, so the launching
+	// process's working directory stops being enough to locate the project.
+	AttachURL string
+	AttachDir string
 }
 
 // CLIHelp describes the provider CLI help page that declares the flags emitted

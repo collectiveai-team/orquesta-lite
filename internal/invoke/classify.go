@@ -19,6 +19,12 @@ func classify(r *runner.Result) (shouldFallback bool, reason string) {
 		return true, "rate_limit"
 	case r.TimedOut:
 		return true, "timeout"
+	case r.Aborted:
+		// Someone cancelled this session by hand. Retrying or falling back to
+		// another agent would restart exactly the work they stopped, so this
+		// reason is terminal — see RoleInvoker, which turns it into an error
+		// rather than another attempt.
+		return true, "aborted"
 	default:
 		if r.AuthFailed {
 			return true, "auth_failed"
