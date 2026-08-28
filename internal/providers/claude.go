@@ -14,6 +14,17 @@ func init() {
 
 func (Claude) Name() string { return "claude" }
 
+func (Claude) CLIHelp() CLIHelp {
+	return CLIHelp{Args: []string{"claude", "--help"}, Synopsis: "Usage: claude"}
+}
+
+func (Claude) ValidateExtraArgs(args []string) error {
+	return validateExtraArgs("claude", args, []string{
+		"--print", "-p", "--verbose", "--output-format", "--model", "--effort",
+		"--dangerously-skip-permissions", "--safe-mode", "--resume", "-r", "--fork-session",
+	})
+}
+
 func (Claude) Build(_ context.Context, prompt string, opts Options) (Launch, error) {
 	model := opts.Model
 	if model == "" {
@@ -43,6 +54,11 @@ func (Claude) Build(_ context.Context, prompt string, opts Options) (Launch, err
 		if opts.ForkSession {
 			args = append(args[:len(args)-2], "--fork-session", "-p", "-")
 		}
+	}
+	if len(opts.ExtraArgs) > 0 {
+		tail := append([]string(nil), opts.ExtraArgs...)
+		tail = append(tail, "-p", "-")
+		args = append(args[:len(args)-2], tail...)
 	}
 
 	return Launch{Args: args, Stdin: prompt}, nil

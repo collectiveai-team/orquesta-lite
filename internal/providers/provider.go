@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 type EventType string
@@ -39,12 +40,22 @@ type Options struct {
 	SafeMode             bool
 	ResumeSessionID      string
 	ForkSession          bool
+	ExtraArgs            []string
+}
+
+// CLIHelp describes the provider CLI help page that declares the flags emitted
+// by Build. Doctor uses it to catch adapter/CLI version drift before a run.
+type CLIHelp struct {
+	Args     []string
+	Synopsis string
 }
 
 type Provider interface {
 	Name() string
 	Build(ctx context.Context, prompt string, opts Options) (Launch, error)
 	ParseLine(line string) []Event
+	CLIHelp() CLIHelp
+	ValidateExtraArgs(args []string) error
 }
 
 var providerRegistry = map[string]func() Provider{}
@@ -73,6 +84,21 @@ func New(name string) (Provider, error) {
 func IsKnown(name string) bool {
 	_, ok := providerRegistry[name]
 	return ok
+}
+
+func validateExtraArgs(provider string, args, controlled []string) error {
+	for _, arg := range args {
+		flag := arg
+		if i := strings.IndexByte(flag, '='); i >= 0 {
+			flag = flag[:i]
+		}
+		for _, reserved := range controlled {
+			if flag == reserved || (len(reserved) == 2 && reserved[0] == '-' && strings.HasPrefix(flag, reserved)) {
+				return fmt.Errorf("provider %q controls flag %q; remove it from extra_args", provider, reserved)
+			}
+		}
+	}
+	return nil
 }
 
 func insertAfter(args []string, after string, values ...string) []string {

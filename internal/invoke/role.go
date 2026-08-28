@@ -280,6 +280,7 @@ func (inv *RoleInvoker) runValidated(ctx context.Context, roleName string, role 
 			Effort:                     ag.Effort,
 			DangerouslySkipPermissions: ag.SkipPerms,
 			SafeMode:                   ag.SafeMode,
+			ExtraArgs:                  ag.ExtraArgs,
 			Prompt:                     prompt,
 			ResultPath:                 absResultPath,
 			Timeout:                    role.Timeout,

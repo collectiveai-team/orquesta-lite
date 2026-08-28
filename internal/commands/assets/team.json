@@ -16,6 +16,7 @@
       "provider": "codex",
       "model": "gpt-5.5",
       "effort": "medium",
+      "dangerously_skip_permissions": true,
       "rate_limit_pattern": "(?i)(429|usage limit reached|rate_?limit_exceeded|quota.*exceeded|usage limit)"
     }
   },

@@ -15,7 +15,8 @@ Two things you need before any flow runs: a `team.json` that maps roles to agent
 
 - at least one agent
 - every role: non-empty `agents`, all resolving to declared agents; non-empty `prompt` and `result_path`; `timeout_seconds > 0`
-- each agent declares **either** `provider` **or** `cmd`, never both
+- each agent declares **either** `provider` **or** `cmd`, never both; `cmd`
+  contains `{{PROMPT}}`, and `extra_args` requires a provider
 
 Minimum viable config for the shipped pack:
 
@@ -43,7 +44,7 @@ Minimum viable config for the shipped pack:
 }
 ```
 
-Providers: `claude`, `codex`, `gemini`, `opencode`. Optional per agent: `effort`, `safe_mode`.
+Providers: `claude`, `codex`, `gemini`, `opencode`. Optional per agent: `effort`, `safe_mode`, `extra_args`. Run `orq-lite doctor` after changing provider arguments; it checks emitted flags against the installed CLI's `--help`.
 
 **A flow only resolves the roles it references** — there is no required role set. Read the flow's steps to know which roles to declare. `factory-governed@2` needs `ticket_planner`, `coder`/`batch_coder`, `ticket_qa`, `qa`, `adversary`, `critic`, `integrator`, `gov_reviewer`.
 
