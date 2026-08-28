@@ -39,6 +39,12 @@ func newAttachServer(t *testing.T) *attachServer {
 			_, _ = io.WriteString(w, "[]")
 			return
 		}
+		// The root's note is also a POST; only session creates are counted, so
+		// that "how many sessions did this run mint?" stays a real assertion.
+		if strings.HasSuffix(r.URL.Path, "/message") {
+			_, _ = io.WriteString(w, "{}")
+			return
+		}
 		s.mu.Lock()
 		s.creates++
 		id := "ses_minted" + string(rune('0'+s.creates))

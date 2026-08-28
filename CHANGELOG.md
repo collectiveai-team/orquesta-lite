@@ -57,6 +57,11 @@ tags cut as GitHub releases (the binary's `--version` is stamped from the tag).
   fails the run at startup rather than silently degrading to detached runs;
   `orq-lite doctor` reports reachability so the failure is diagnosable
   beforehand. Omitting `attach` leaves behaviour unchanged.
+
+  The root carries a short note naming the run, flow, and project, written
+  with the server's `noReply` so it costs no model turn. Without it the root
+  holds zero messages, and the TUI reads a message-less session as a run that
+  started and never finished — showing it as permanently in flight.
 - **`extra_args` per agent** — provider-only argv suffix, appended after the
   adapter's own flags (and before OpenCode's positional prompt). Unlike `cmd`,
   it keeps the provider contract intact: session resume, usage accounting,

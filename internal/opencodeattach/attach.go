@@ -151,6 +151,41 @@ func (c *Client) CreateSession(ctx context.Context, directory string, req Create
 	return decoded.ID, nil
 }
 
+// PostNote writes a text message into a session without provoking a reply.
+//
+// The run's root session is a container: no agent ever runs in it, so without
+// this it holds zero messages. An empty session is not merely uninformative —
+// the TUI counts it as a run that has started and never completes, so it shows
+// as permanently in-flight. `noReply` makes the note free: the server records
+// the message and does not spend a model turn on it.
+func (c *Client) PostNote(ctx context.Context, sessionID, text string) error {
+	body, err := json.Marshal(map[string]any{
+		"noReply": true,
+		"parts":   []map[string]string{{"type": "text", "text": text}},
+	})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.baseURL+"/session/"+url.PathEscape(sessionID)+"/message", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("post note to session %s: %w", sessionID, err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("post note to session %s: HTTP %d: %s",
+			sessionID, resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	return nil
+}
+
 // Manager mints the session tree for a single run: one root, then a child per
 // agent invocation. It is safe for concurrent use because foreach steps run
 // role invocations in parallel.
@@ -163,6 +198,15 @@ type Manager struct {
 	mu     sync.Mutex
 	rootID string
 }
+
+// The run root is deliberately left at the top level rather than nested under
+// the session an operator launched from. Measured in the opencode TUI: it
+// surfaces exactly one level of children, so a run root nested inside a
+// conversation consumes that level and pushes the role sessions to
+// grandchildren, where they become unreachable. Parenting the roles directly to
+// the conversation does render, but a twenty-ticket run would then hang sixty
+// sessions off a single chat — the clutter this package exists to remove,
+// merely relocated.
 
 // NewManager builds a Manager for one run. dir is the absolute project path the
 // server should resolve agent work against; it is also what the CLI is handed
@@ -200,8 +244,38 @@ func (m *Manager) root(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	// Give the container something to show. Failing loudly here is deliberate
+	// and consistent with the rest of attach mode: this is one POST to a server
+	// that just accepted a session create, so a failure means the server is in a
+	// state worth stopping for — and silently leaving an empty root behind is
+	// the exact defect this note exists to prevent.
+	if err := m.client.PostNote(ctx, id, RootNote(m.flowRef, m.runID, m.dir)); err != nil {
+		return "", err
+	}
 	m.rootID = id
 	return id, nil
+}
+
+// RootNote is the body of the run root's single message. It is what an operator
+// sees when they open the run, so it names the run, the flow, and where the work
+// happened, and points at the per-role sessions nested below.
+func RootNote(flowRef, runID, dir string) string {
+	var b strings.Builder
+	b.WriteString("orq-lite run ")
+	b.WriteString(runID)
+	b.WriteString("\n")
+	if flowRef != "" {
+		b.WriteString("flow: ")
+		b.WriteString(flowRef)
+		b.WriteString("\n")
+	}
+	if dir != "" {
+		b.WriteString("project: ")
+		b.WriteString(dir)
+		b.WriteString("\n")
+	}
+	b.WriteString("\nEach role invocation in this run is a session nested below.")
+	return b.String()
 }
 
 // ChildSession creates a session for one agent invocation, parented to the

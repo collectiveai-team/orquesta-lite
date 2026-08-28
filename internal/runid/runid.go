@@ -1,5 +1,5 @@
 // Package runid generates unique, sortable, human-readable run identifiers for
-// orq-lite executions: ``r20060701T193000Z-4f2a`` (compact UTC timestamp + 2
+// orq-lite executions: “r20060701T193000Z-4f2a“ (compact UTC timestamp + 2
 // random hex bytes). The timestamp prefixes sort lexically and let an operator
 // read the start time at a glance; the random suffix disambiguates runs that
 // start within the same second.
