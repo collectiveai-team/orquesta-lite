@@ -80,10 +80,11 @@ func TestInit_IsIdempotent(t *testing.T) {
 	}
 }
 
-// TestInit_TeamJSONHasCodexProviderPrimary verifies that the materialised
-// team.json lists codex_gpt5 as primary coder via the provider config, and
-// claude_sonnet as fallback.
-func TestInit_TeamJSONHasCodexProviderPrimary(t *testing.T) {
+// TestInit_TeamJSONHasClaudePrimaryCodexFallback verifies that the materialised
+// team.json pairs a claude primary with a codex fallback on every role: the
+// review tier runs claude_opus -> codex_sol, the build tier claude_sonnet ->
+// codex_terra.
+func TestInit_TeamJSONHasClaudePrimaryCodexFallback(t *testing.T) {
 	dir := t.TempDir()
 	if err := Init(dir); err != nil {
 		t.Fatal(err)
@@ -109,40 +110,70 @@ func TestInit_TeamJSONHasCodexProviderPrimary(t *testing.T) {
 		t.Fatalf("team.json parse error: %v", err)
 	}
 
-	// Verify codex_gpt5 agent exists with provider launch metadata.
-	codexAgent, ok := cfg.Agents["codex_gpt5"]
-	if !ok {
-		t.Fatal("agents.codex_gpt5 not found in team.json")
+	// Verify every scaffolded agent carries its provider launch metadata.
+	wantAgents := map[string]struct {
+		provider string
+		model    string
+		effort   string
+	}{
+		"claude_opus":   {provider: "claude", model: "claude-opus-5"},
+		"claude_sonnet": {provider: "claude", model: "claude-sonnet-5"},
+		"codex_sol":     {provider: "codex", model: "gpt-5.6-sol", effort: "medium"},
+		"codex_terra":   {provider: "codex", model: "gpt-5.6-terra", effort: "medium"},
 	}
-	if codexAgent.Provider != "codex" {
-		t.Errorf("codex_gpt5.provider = %q, want codex", codexAgent.Provider)
-	}
-	if codexAgent.Model != "gpt-5.5" {
-		t.Errorf("codex_gpt5.model = %q, want gpt-5.5", codexAgent.Model)
-	}
-	if codexAgent.Effort != "medium" {
-		t.Errorf("codex_gpt5.effort = %q, want medium", codexAgent.Effort)
-	}
-	// codex exec defaults to `sandbox: read-only`, and the provider emits the
-	// bypass flag only when this field is set. A scaffolded coder that cannot
-	// write files fails every ticket, so the scaffold must declare it.
-	if !codexAgent.SkipPerms {
-		t.Error("codex_gpt5.dangerously_skip_permissions = false, want true: the primary coder cannot write files in codex's read-only sandbox")
+	for name, want := range wantAgents {
+		agent, ok := cfg.Agents[name]
+		if !ok {
+			t.Errorf("agents.%s not found in team.json", name)
+			continue
+		}
+		if agent.Provider != want.provider {
+			t.Errorf("%s.provider = %q, want %q", name, agent.Provider, want.provider)
+		}
+		if agent.Model != want.model {
+			t.Errorf("%s.model = %q, want %q", name, agent.Model, want.model)
+		}
+		if agent.Effort != want.effort {
+			t.Errorf("%s.effort = %q, want %q", name, agent.Effort, want.effort)
+		}
+		// codex exec defaults to `sandbox: read-only` and claude prompts for
+		// approval; each provider emits its bypass flag only when this field
+		// is set. An agent that cannot write files fails every ticket, so the
+		// scaffold must declare it on all four.
+		if !agent.SkipPerms {
+			t.Errorf("%s.dangerously_skip_permissions = false, want true: the agent cannot write files without it", name)
+		}
 	}
 
-	// Verify coder role: primary = codex_gpt5, fallback = claude_sonnet.
-	coderRole, ok := cfg.Roles["coder"]
-	if !ok {
-		t.Fatal("roles.coder not found in team.json")
+	// Verify the role tiers: claude primary, codex fallback, opus on the
+	// roles that judge work and sonnet on the roles that produce it.
+	wantRoles := map[string][2]string{
+		"ticket_planner":  {"claude_opus", "codex_sol"},
+		"adversary":       {"claude_opus", "codex_sol"},
+		"critic":          {"claude_opus", "codex_sol"},
+		"gov_reviewer":    {"claude_opus", "codex_sol"},
+		"intake":          {"claude_opus", "codex_sol"},
+		"pr_reviewer":     {"claude_opus", "codex_sol"},
+		"qa":              {"claude_opus", "codex_sol"},
+		"coder":           {"claude_sonnet", "codex_terra"},
+		"batch_coder":     {"claude_sonnet", "codex_terra"},
+		"integrator":      {"claude_sonnet", "codex_terra"},
+		"ticket_qa":       {"claude_sonnet", "codex_terra"},
+		"visual_verifier": {"claude_sonnet", "codex_terra"},
 	}
-	if len(coderRole.Agents) < 2 {
-		t.Fatalf("roles.coder.agents has %d entries, want >= 2", len(coderRole.Agents))
-	}
-	if coderRole.Agents[0] != "codex_gpt5" {
-		t.Errorf("roles.coder.agents[0] = %q, want codex_gpt5", coderRole.Agents[0])
-	}
-	if coderRole.Agents[1] != "claude_sonnet" {
-		t.Errorf("roles.coder.agents[1] = %q, want claude_sonnet", coderRole.Agents[1])
+	for name, want := range wantRoles {
+		role, ok := cfg.Roles[name]
+		if !ok {
+			t.Errorf("roles.%s not found in team.json", name)
+			continue
+		}
+		if len(role.Agents) != 2 {
+			t.Errorf("roles.%s.agents = %v, want exactly 2 entries", name, role.Agents)
+			continue
+		}
+		if role.Agents[0] != want[0] || role.Agents[1] != want[1] {
+			t.Errorf("roles.%s.agents = %v, want %v", name, role.Agents, want)
+		}
 	}
 }
 
