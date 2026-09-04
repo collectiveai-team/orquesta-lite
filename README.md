@@ -105,7 +105,7 @@ The runtime persists runs, step instances, attempts, outputs, approvals, and out
 ```json
 {
   "agents": {
-    "codex": {"provider": "codex", "model": "gpt-5.5", "effort": "medium"}
+    "codex": {"provider": "codex", "model": "gpt-5.6-terra", "effort": "medium"}
   },
   "roles": {
     "coder": {

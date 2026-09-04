@@ -28,7 +28,7 @@ func (Claude) ValidateExtraArgs(args []string) error {
 func (Claude) Build(_ context.Context, prompt string, opts Options) (Launch, error) {
 	model := opts.Model
 	if model == "" {
-		model = "claude-sonnet-4-6"
+		model = "claude-sonnet-5"
 	}
 
 	args := []string{

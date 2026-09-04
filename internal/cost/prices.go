@@ -10,17 +10,23 @@ type price struct {
 var embeddedPrices = map[string]price{
 	"claude-sonnet-4":   {InputPerMillion: 3.00, OutputPerMillion: 15.00},
 	"claude-sonnet-4-6": {InputPerMillion: 3.00, OutputPerMillion: 15.00},
+	"claude-sonnet-5":   {InputPerMillion: 2.00, OutputPerMillion: 10.00},
 	"claude-opus-4":     {InputPerMillion: 15.00, OutputPerMillion: 75.00},
-	"claude-opus-4-8":   {InputPerMillion: 15.00, OutputPerMillion: 75.00},
+	"claude-opus-4-8":   {InputPerMillion: 5.00, OutputPerMillion: 25.00},
+	"claude-opus-5":     {InputPerMillion: 5.00, OutputPerMillion: 25.00},
 	"gemini-2.5-pro":    {InputPerMillion: 1.25, OutputPerMillion: 10.00},
 	"gemini-2.5-flash":  {InputPerMillion: 0.30, OutputPerMillion: 2.50},
 	"gpt-5":             {InputPerMillion: 1.25, OutputPerMillion: 10.00},
 }
 
+// Longest prefix first: claude-sonnet-5 must win over claude-sonnet-4 for a
+// dated snapshot id, and claude-opus-4-8 over claude-opus-4.
 var embeddedPricePrefixes = []string{
 	"claude-sonnet-4-6",
+	"claude-sonnet-5",
 	"claude-sonnet-4",
 	"claude-opus-4-8",
+	"claude-opus-5",
 	"claude-opus-4",
 	"gemini-2.5-pro",
 	"gemini-2.5-flash",

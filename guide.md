@@ -246,12 +246,12 @@ role set.
   "agents": {
     "primary": {
       "provider": "codex",
-      "model": "gpt-5.5",
+      "model": "gpt-5.6-terra",
       "effort": "medium"
     },
     "reviewer": {
       "provider": "claude",
-      "model": "claude-opus-4-8",
+      "model": "claude-opus-5",
       "dangerously_skip_permissions": true,
       "extra_args": ["--allowedTools", "Read,Grep,Glob"]
     }

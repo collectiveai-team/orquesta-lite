@@ -22,8 +22,38 @@ tags cut as GitHub releases (the binary's `--version` is stamped from the tag).
 
 ## Unreleased
 
+### Changed
+
+- **The scaffolded `team.json` now defaults to a Claude-primary, Codex-fallback
+  team on the current model generation.** The old scaffold mixed one Claude
+  Sonnet 4.6 agent, one Opus 4.8 agent and a single `codex_gpt5` (`gpt-5.5`)
+  that was the *primary* coder — so a project whose Codex auth could not reach
+  that model failed every coding role before falling back. `init` now writes
+  four agents — `claude_opus` (`claude-opus-5`), `claude_sonnet`
+  (`claude-sonnet-5`), `codex_sol` (`gpt-5.6-sol`) and `codex_terra`
+  (`gpt-5.6-terra`) — and pairs them per role tier: the roles that judge work
+  (`ticket_planner`, `intake`, `qa`, `adversary`, `critic`, `gov_reviewer`,
+  `pr_reviewer`) run `claude_opus` then `codex_sol`; the roles that produce it
+  (`coder`, `batch_coder`, `integrator`, `ticket_qa`, `visual_verifier`) run
+  `claude_sonnet` then `codex_terra`. Every role therefore has a two-provider
+  chain, and `visual_verifier` — shipped in the pack but missing from the old
+  scaffold — is declared. `qa`, `adversary`, `critic` and `integrator` get
+  longer timeouts, since each now reads a whole diff. Existing `team.json`
+  files are untouched: `init` only rewrites the prompt paths of an older pack
+  version, never the agent list.
+- **`provider: claude` falls back to `claude-sonnet-5`** when an agent declares
+  no `model` (was `claude-sonnet-4-6`).
+- `init` also warns when the `claude` CLI is missing, not only `codex`. Claude
+  is now the primary of every scaffolded role, so its absence stops a run
+  before the fallback can help.
+
 ### Fixed
 
+- **The embedded cost table priced Claude Opus 4.8 at the Opus 4 rate**
+  ($15/$75 per MTok instead of $5/$25), overstating the cost of every run that
+  used it by 3x. The rate is corrected, and `claude-opus-5` ($5/$25) and
+  `claude-sonnet-5` ($2/$10) are added, so `orq-lite cost` reports a figure for
+  the new default team instead of nothing.
 - **`dangerously_skip_permissions` was a silent no-op on `provider: opencode`.**
   The adapter emitted `--dangerously-skip-permissions`, which is Claude's
   spelling; `opencode run` calls it `--auto`. Because opencode's argument parser

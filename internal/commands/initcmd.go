@@ -45,8 +45,12 @@ func InitWithOptions(dir string, opts InitOptions) error {
 		return err
 	}
 
+	if _, err := exec.LookPath("claude"); err != nil {
+		fmt.Fprintln(os.Stdout, "warning: claude CLI not found in PATH; the default team.json sets claude_opus and claude_sonnet as the primary agent of every role. Install claude (https://github.com/anthropics/claude-code) or edit team.json to use a different agent.")
+	}
+
 	if _, err := exec.LookPath("codex"); err != nil {
-		fmt.Fprintln(os.Stdout, "warning: codex CLI not found in PATH; the default team.json sets codex_gpt5 as primary coder. Install codex (https://github.com/openai/codex) or edit team.json to use a different agent.")
+		fmt.Fprintln(os.Stdout, "warning: codex CLI not found in PATH; the default team.json sets codex_sol and codex_terra as the fallback agent of every role. Install codex (https://github.com/openai/codex) or edit team.json to drop them.")
 	}
 
 	if err := writeGitignore(filepath.Join(dir, ".gitignore"), lang); err != nil {
