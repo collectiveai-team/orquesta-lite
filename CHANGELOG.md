@@ -20,7 +20,7 @@ tags cut as GitHub releases (the binary's `--version` is stamped from the tag).
   narrowing is driven by the flow's IR rather than an allow-list, so a custom
   watch flow that does declare the generic fields still receives them.
 
-## Unreleased
+## v0.5.0 — Provider usage guard, Claude-primary defaults
 
 ### Changed
 
@@ -49,6 +49,20 @@ tags cut as GitHub releases (the binary's `--version` is stamped from the tag).
 
 ### Fixed
 
+- **The two Codex models that became the default fallback of every role had
+  no price at all.** `gpt-5` was in the price map but not in the prefix list,
+  so `gpt-5.6-sol` and `gpt-5.6-terra` matched nothing. `orq-lite cost`
+  reported every Codex invocation as unpriceable, and `runSpendUSD` returns 0
+  for an unknown model, so those runs contributed nothing to the workflow cost
+  budget — the pack policy's `maxCostUSD` could never trip on a run that fell
+  back to Codex, which is precisely the path the usage guard creates. Both
+  models are now priced ($4/$20 and $2/$12 per MTok) and resolve dated
+  snapshot ids by prefix. A bare `gpt-5` prefix was deliberately not added: it
+  would price an unrecognised future `gpt-5.x` at another model's rate, and a
+  guessed figure feeding a hard budget check is worse than none. A test now
+  ties every model in the scaffolded `team.json` to the price table, so
+  changing a default model cannot silently make it unpriceable again.
+
 - **The embedded cost table priced Claude Opus 4.8 at the Opus 4 rate**
   ($15/$75 per MTok instead of $5/$25), overstating the cost of every run that
   used it by 3x. The rate is corrected, and `claude-opus-5` ($5/$25) and
@@ -67,6 +81,22 @@ tags cut as GitHub releases (the binary's `--version` is stamped from the tag).
   emitted only when the field is true.
 
 ### Added
+
+- **`limits.usage_guard` — a provider subscription guard that runs before an
+  agent starts.** A role used to discover its provider was exhausted only by
+  spending an invocation on it and reading the refusal, which burns the
+  remaining budget to learn there is none. The guard reads local Claude and
+  Codex usage first and skips any agent whose 5-hour or 7-day window is at or
+  above `max_used_percent`, so the role advances to its next agent instead. It
+  never waits for a reset: the decision is which agent to run, not when.
+  Thresholds are per provider and per window, and the feature stays off until
+  at least one provider is configured, so existing projects are unaffected.
+  A partial reading is still enforced on the windows that were reported
+  (`provider_usage_partial`); a reading older than `max_reading_age_seconds` is
+  treated as no reading rather than a low one; and an unreadable source follows
+  `on_unavailable`, which defaults to `fallback`. Custom `cmd` agents that
+  wrap a provider declare it with `usage_provider`. Blocked invocations emit
+  `provider_usage_blocked` with the window and its reset time.
 
 - **`extra_args` per agent** — provider-only argv suffix, appended after the
   adapter's own flags (and before OpenCode's positional prompt). Unlike `cmd`,

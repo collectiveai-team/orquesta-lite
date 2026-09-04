@@ -17,10 +17,15 @@ var embeddedPrices = map[string]price{
 	"gemini-2.5-pro":    {InputPerMillion: 1.25, OutputPerMillion: 10.00},
 	"gemini-2.5-flash":  {InputPerMillion: 0.30, OutputPerMillion: 2.50},
 	"gpt-5":             {InputPerMillion: 1.25, OutputPerMillion: 10.00},
+	"gpt-5.6-sol":       {InputPerMillion: 4.00, OutputPerMillion: 20.00},
+	"gpt-5.6-terra":     {InputPerMillion: 2.00, OutputPerMillion: 12.00},
 }
 
 // Longest prefix first: claude-sonnet-5 must win over claude-sonnet-4 for a
-// dated snapshot id, and claude-opus-4-8 over claude-opus-4.
+// dated snapshot id, and claude-opus-4-8 over claude-opus-4. Only models with
+// a known rate are listed: a bare "gpt-5" prefix would silently price every
+// future gpt-5.x at another model's rate, and a guessed number is worse than
+// none because the result feeds the workflow cost budget.
 var embeddedPricePrefixes = []string{
 	"claude-sonnet-4-6",
 	"claude-sonnet-5",
@@ -30,6 +35,8 @@ var embeddedPricePrefixes = []string{
 	"claude-opus-4",
 	"gemini-2.5-pro",
 	"gemini-2.5-flash",
+	"gpt-5.6-sol",
+	"gpt-5.6-terra",
 }
 
 func estimateUSD(model string, inputTokens, outputTokens int) (float64, bool) {
