@@ -36,3 +36,36 @@ func TestEstimateUSD_Claude5(t *testing.T) {
 		}
 	}
 }
+
+// TestEstimateUSD_Codex56 pins the rates of the two Codex models the
+// scaffolded team.json uses as the fallback of every role. They were
+// unpriceable when they became the default: "gpt-5" sat in the price map but
+// not in the prefix list, so "gpt-5.6-sol" matched nothing, every Codex
+// invocation contributed 0 to the workflow cost budget, and a run that fell
+// back to Codex could never exhaust its cap.
+func TestEstimateUSD_Codex56(t *testing.T) {
+	cases := []struct {
+		model string
+		want  float64
+	}{
+		{"gpt-5.6-sol", 24.00},            // 4.00 input + 20.00 output
+		{"gpt-5.6-terra", 14.00},          // 2.00 input + 12.00 output
+		{"gpt-5.6-sol-2026-04-01", 24.00}, // dated snapshot resolves by prefix
+		{"gpt-5", 11.25},                  // 1.25 input + 10.00 output
+	}
+	for _, tc := range cases {
+		usd, ok := EstimateUSD(tc.model, 1_000_000, 1_000_000)
+		if !ok {
+			t.Errorf("EstimateUSD(%q) reported ok=false; want a price", tc.model)
+			continue
+		}
+		if usd != tc.want {
+			t.Errorf("EstimateUSD(%q) = %v, want %v", tc.model, usd, tc.want)
+		}
+	}
+	// An unknown gpt-5.x must stay unpriced rather than inherit another
+	// model's rate through a bare "gpt-5" prefix.
+	if _, ok := EstimateUSD("gpt-5.7-unknown", 100, 100); ok {
+		t.Error("an unknown gpt-5.x model must report ok=false, not a guessed rate")
+	}
+}
