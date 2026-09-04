@@ -115,7 +115,18 @@ The runtime persists runs, step instances, attempts, outputs, approvals, and out
       "timeout_seconds": 1800
     }
   },
-  "limits": {"resume_sessions": true},
+  "limits": {
+    "resume_sessions": true,
+    "usage_guard": {
+      "cache_ttl_seconds": 30,
+      "max_reading_age_seconds": 900,
+      "on_unavailable": "fallback",
+      "providers": {
+        "claude": {"max_used_percent": {"5h": 75, "7d": 60}},
+        "codex": {"max_used_percent": {"5h": 80, "7d": 70}}
+      }
+    }
+  },
   "rate_limit_backoff": {"initial_seconds": 30, "factor": 2, "max_seconds": 1800},
   "lint_argv": ["go", "vet", "./..."],
   "test_argv": ["go", "test", "./..."]
@@ -123,6 +134,64 @@ The runtime persists runs, step instances, attempts, outputs, approvals, and out
 ```
 
 The governed pack obtains project-specific quality gates only through `config.lint_argv` and `config.test_argv`; it does not hardcode Go, Python, or Node commands.
+
+### Provider usage guard
+
+`limits.usage_guard` is optional. Before each configured Claude or Codex agent
+starts (and before a corrective retry), orq-lite reads the account's 5-hour and
+7-day subscription usage. A window at or above `max_used_percent` skips that
+agent and advances to the next role fallback. If every eligible agent is
+skipped, the role fails with a provider-usage-threshold error; it never waits
+for a subscription reset.
+
+Providers do not always expose every window for every plan. When at least one
+configured window is available, orq-lite enforces the available values and
+emits `provider_usage_partial` for the missing ones. If none of the configured
+windows is available, `on_unavailable` applies. Codex uses the canonical
+`rateLimitsByLimitId.codex` bucket when the installed App Server supplies it,
+with its legacy rate-limit snapshot as a compatibility fallback.
+
+The safe default for an unavailable usage source is `"fallback"`. Set
+`"on_unavailable": "allow"` only when preserving execution is more important
+than protecting an external subscription. The reader result is cached for 30
+seconds by default and invalidated after each actual agent execution.
+
+Registered providers are associated with their usage guard automatically. A
+custom command whose executable is directly named `claude` or `codex` is also
+detected. Wrappers must declare what they consume:
+
+```json
+{"cmd": ["company-agent-wrapper", "{{PROMPT}}"], "usage_provider": "claude"}
+```
+
+Every provider reports consumption on the same canonical scale: percent of the
+window already used, from 0 to 100. Each reader converts at its own parse
+boundary, because the scale cannot be inferred from a value alone - `0.04` is
+equally valid as "0.04% used" and as a fraction meaning "4% used". A provider
+with no converter is rejected rather than guessed at, and a reading off the
+declared scale is treated as no reading rather than clamped into range.
+
+Readings also carry when they were measured, which is not the same as when they
+were read. `max_reading_age_seconds` (default 900) bounds how old a measurement
+may be and still be enforced; anything older is reported as a stale window and
+excluded, exactly like a window the provider never sent. This matters because
+the providers differ sharply:
+
+| | Codex | Claude |
+| --- | --- | --- |
+| Primary source | local `codex app-server` RPC | `GET /api/oauth/usage` |
+| Local fallback | `~/.codex/sessions/**/rollout-*.jsonl`, written every turn | none - the CLI records only a breach flag, not a percentage |
+| Throttling | none; the RPC is a local process | the endpoint rate-limits repeated polling |
+
+Because Claude has no local percentage to fall back on, the guard keeps its
+last successful reading and reuses it when a lookup fails, subject to the same
+age limit. A rate-limited lookup is recognised as such and does **not** escalate
+to Claude's interactive `/usage` panel: that panel is backed by the same account
+and the same endpoint, so it would spend its timeout only to fail identically.
+
+Claude first uses the local OAuth subscription reading. If credentials or that
+request are unavailable, it opens Claude's bounded interactive `/usage` panel
+as a fallback and parses the 5-hour and weekly values reported by the CLI.
 
 ## Governance loop
 

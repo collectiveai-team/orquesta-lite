@@ -14,7 +14,7 @@ type Outcome struct {
 
 	// ShouldFallback signals that the caller wants to advance to the next agent
 	// in the chain. Set FallbackReason to one of: "rate_limit", "result_missing",
-	// "timeout", "invalid_contract".
+	// "timeout", "invalid_contract", "usage_threshold".
 	// Call also normalizes the runner's concise RateLimited signal.
 	ShouldFallback bool
 	FallbackReason string

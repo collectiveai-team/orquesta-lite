@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -11,8 +12,12 @@ import (
 )
 
 type Agent struct {
-	Cmd                        []string `json:"cmd,omitempty"`
-	Provider                   string   `json:"provider,omitempty"`
+	Cmd      []string `json:"cmd,omitempty"`
+	Provider string   `json:"provider,omitempty"`
+	// UsageProvider associates a custom command with the subscription it
+	// consumes. Registered providers infer this automatically; wrappers that
+	// ultimately launch Claude or Codex must declare it explicitly.
+	UsageProvider              string   `json:"usage_provider,omitempty"`
 	Model                      string   `json:"model,omitempty"`
 	Effort                     string   `json:"effort,omitempty"`
 	DangerouslySkipPermissions bool     `json:"dangerously_skip_permissions,omitempty"`
@@ -22,15 +27,16 @@ type Agent struct {
 }
 
 type AgentSpec struct {
-	Name        string
-	Provider    string
-	Model       string
-	Effort      string
-	SkipPerms   bool
-	SafeMode    bool
-	ExtraArgs   []string
-	RatePattern string
-	Cmd         []string
+	Name          string
+	Provider      string
+	UsageProvider string
+	Model         string
+	Effort        string
+	SkipPerms     bool
+	SafeMode      bool
+	ExtraArgs     []string
+	RatePattern   string
+	Cmd           []string
 }
 
 type Role struct {
@@ -53,6 +59,33 @@ type Limits struct {
 	// ResumeSessions lets a role resume its provider session for the same
 	// durable scope. Switching providers always starts a fresh session.
 	ResumeSessions *bool `json:"resume_sessions,omitempty"`
+	// UsageGuard prevents an invocation from consuming a provider subscription
+	// past the configured usage thresholds. It is disabled when Providers is
+	// empty, preserving the historical behaviour for existing projects.
+	UsageGuard UsageGuard `json:"usage_guard,omitempty"`
+}
+
+// UsageGuard configures the pre-invocation provider subscription check. The
+// providers currently supported by the local readers are "claude" and
+// "codex". Thresholds use the provider windows "5h" and "7d" and express
+// used (not remaining) percentage.
+type UsageGuard struct {
+	CacheTTLSeconds int `json:"cache_ttl_seconds,omitempty"`
+	// MaxReadingAgeSeconds bounds how old a provider measurement may be and
+	// still be enforced. Providers differ sharply here: Codex writes a fresh
+	// percentage every turn, while Claude's local cache can be a day behind.
+	// A reading past this age is treated as no reading, not as a low one.
+	// Defaults to 900 (15 minutes).
+	MaxReadingAgeSeconds int `json:"max_reading_age_seconds,omitempty"`
+	// OnUnavailable controls an unreadable provider usage source: "fallback"
+	// (the safe default) advances to the next configured agent, while "allow"
+	// runs the agent without a reading.
+	OnUnavailable string                         `json:"on_unavailable,omitempty"`
+	Providers     map[string]UsageProviderBudget `json:"providers,omitempty"`
+}
+
+type UsageProviderBudget struct {
+	MaxUsedPercent map[string]float64 `json:"max_used_percent"`
 }
 
 // SessionResumeEnabled reports whether agents may resume a prior provider
@@ -60,6 +93,10 @@ type Limits struct {
 func (l Limits) SessionResumeEnabled() bool {
 	return l.ResumeSessions == nil || *l.ResumeSessions
 }
+
+// UsageGuardEnabled reports whether at least one provider has a configured
+// usage threshold.
+func (l Limits) UsageGuardEnabled() bool { return len(l.UsageGuard.Providers) > 0 }
 
 type RateLimitBackoff struct {
 	InitialSeconds int    `json:"initial_seconds"`
@@ -302,6 +339,44 @@ func (c *Config) Validate() error {
 	if c.RateLimitBackoff.InitialSeconds <= 0 || c.RateLimitBackoff.Factor < 2 || c.RateLimitBackoff.MaxSeconds < c.RateLimitBackoff.InitialSeconds {
 		return fmt.Errorf("invalid rate_limit_backoff")
 	}
+	if err := ValidateUsageGuard(c.Limits.UsageGuard); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ValidateUsageGuard validates the part of team configuration consumed before
+// agent execution. It is exported because dynamic flow configuration defers
+// general validation until it knows which roles are referenced.
+func ValidateUsageGuard(guard UsageGuard) error {
+	if len(guard.Providers) == 0 {
+		return nil
+	}
+	if guard.CacheTTLSeconds < 0 {
+		return fmt.Errorf("limits.usage_guard.cache_ttl_seconds must be >= 0")
+	}
+	if guard.MaxReadingAgeSeconds < 0 {
+		return fmt.Errorf("limits.usage_guard.max_reading_age_seconds must be >= 0")
+	}
+	if guard.OnUnavailable != "" && guard.OnUnavailable != "fallback" && guard.OnUnavailable != "allow" {
+		return fmt.Errorf("limits.usage_guard.on_unavailable must be fallback or allow")
+	}
+	for provider, budget := range guard.Providers {
+		if provider != "claude" && provider != "codex" {
+			return fmt.Errorf("limits.usage_guard has unsupported provider %q", provider)
+		}
+		if len(budget.MaxUsedPercent) == 0 {
+			return fmt.Errorf("limits.usage_guard provider %q must configure max_used_percent", provider)
+		}
+		for window, percent := range budget.MaxUsedPercent {
+			if window != "5h" && window != "7d" {
+				return fmt.Errorf("limits.usage_guard provider %q has unsupported window %q (use 5h or 7d)", provider, window)
+			}
+			if percent <= 0 || percent > 100 {
+				return fmt.Errorf("limits.usage_guard provider %q window %q max_used_percent must be in (0, 100]", provider, window)
+			}
+		}
+	}
 	return nil
 }
 
@@ -310,16 +385,33 @@ func resolveAgentSpec(name string, agent Agent) (AgentSpec, error) {
 		return AgentSpec{}, err
 	}
 	return AgentSpec{
-		Name:        name,
-		Provider:    agent.Provider,
-		Model:       agent.Model,
-		Effort:      agent.Effort,
-		SkipPerms:   agent.DangerouslySkipPermissions,
-		SafeMode:    agent.SafeMode,
-		ExtraArgs:   append([]string(nil), agent.ExtraArgs...),
-		RatePattern: agent.RateLimitPattern,
-		Cmd:         append([]string(nil), agent.Cmd...),
+		Name:          name,
+		Provider:      agent.Provider,
+		UsageProvider: agentUsageProvider(agent),
+		Model:         agent.Model,
+		Effort:        agent.Effort,
+		SkipPerms:     agent.DangerouslySkipPermissions,
+		SafeMode:      agent.SafeMode,
+		ExtraArgs:     append([]string(nil), agent.ExtraArgs...),
+		RatePattern:   agent.RateLimitPattern,
+		Cmd:           append([]string(nil), agent.Cmd...),
 	}, nil
+}
+
+func agentUsageProvider(agent Agent) string {
+	if agent.Provider != "" {
+		return agent.Provider
+	}
+	if agent.UsageProvider != "" {
+		return agent.UsageProvider
+	}
+	if len(agent.Cmd) > 0 {
+		binary := strings.TrimSuffix(strings.ToLower(filepath.Base(agent.Cmd[0])), ".exe")
+		if binary == "claude" || binary == "codex" {
+			return binary
+		}
+	}
+	return ""
 }
 
 func validateAgentInvocation(name string, agent Agent) error {
@@ -330,6 +422,12 @@ func validateAgentInvocation(name string, agent Agent) error {
 	}
 	if !hasCmd && !hasProvider {
 		return fmt.Errorf("agent %q must declare cmd or provider", name)
+	}
+	if hasProvider && agent.UsageProvider != "" {
+		return fmt.Errorf("agent %q cannot specify usage_provider with provider; it is inferred", name)
+	}
+	if agent.UsageProvider != "" && agent.UsageProvider != "claude" && agent.UsageProvider != "codex" {
+		return fmt.Errorf("agent %q has unsupported usage_provider %q", name, agent.UsageProvider)
 	}
 	if len(agent.ExtraArgs) > 0 && !hasProvider {
 		return fmt.Errorf("agent %q extra_args requires provider", name)

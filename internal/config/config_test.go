@@ -134,3 +134,53 @@ func TestRuntimeAndSessionDefaults(t *testing.T) {
 		t.Fatal("runtime overrides ignored")
 	}
 }
+
+func TestUsageGuardValidation(t *testing.T) {
+	valid := UsageGuard{Providers: map[string]UsageProviderBudget{
+		"claude": {MaxUsedPercent: map[string]float64{"5h": 75, "7d": 60}},
+		"codex":  {MaxUsedPercent: map[string]float64{"5h": 80}},
+	}}
+	if err := ValidateUsageGuard(valid); err != nil {
+		t.Fatalf("valid guard rejected: %v", err)
+	}
+	if !(Limits{UsageGuard: valid}).UsageGuardEnabled() {
+		t.Fatal("usage guard should be enabled with provider budgets")
+	}
+	for name, guard := range map[string]UsageGuard{
+		"unknown provider": {Providers: map[string]UsageProviderBudget{"gemini": {MaxUsedPercent: map[string]float64{"5h": 80}}}},
+		"unknown window":   {Providers: map[string]UsageProviderBudget{"codex": {MaxUsedPercent: map[string]float64{"daily": 80}}}},
+		"bad percentage":   {Providers: map[string]UsageProviderBudget{"codex": {MaxUsedPercent: map[string]float64{"5h": 0}}}},
+		"bad policy":       {OnUnavailable: "wait", Providers: map[string]UsageProviderBudget{"codex": {MaxUsedPercent: map[string]float64{"5h": 80}}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := ValidateUsageGuard(guard); err == nil {
+				t.Fatal("expected validation error")
+			}
+		})
+	}
+}
+
+func TestCustomCommandUsageProvider(t *testing.T) {
+	for name, agent := range map[string]Agent{
+		"direct Claude command is inferred": {Cmd: []string{"/usr/local/bin/claude", "{{PROMPT}}"}},
+		"wrapper declares Codex":            {Cmd: []string{"agent-wrapper", "{{PROMPT}}"}, UsageProvider: "codex"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			spec, err := resolveAgentSpec("custom", agent)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := agent.UsageProvider
+			if want == "" {
+				want = "claude"
+			}
+			if spec.UsageProvider != want {
+				t.Fatalf("usage provider = %q, want %q", spec.UsageProvider, want)
+			}
+		})
+	}
+
+	if _, err := resolveAgentSpec("bad", Agent{Cmd: []string{"wrapper", "{{PROMPT}}"}, UsageProvider: "gemini"}); err == nil {
+		t.Fatal("unsupported usage_provider should fail")
+	}
+}

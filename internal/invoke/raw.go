@@ -20,6 +20,11 @@ var ErrInvalidContract = errors.New("all agent outputs violated the contract")
 // preserve timeout semantics across the generic agent.invoke boundary.
 var ErrAgentTimeout = errors.New("all usable agents timed out")
 
+// ErrUsageThreshold marks fallback exhaustion where every eligible agent was
+// skipped before execution because its provider subscription is at (or its
+// usage could not safely be checked against) a configured threshold.
+var ErrUsageThreshold = errors.New("all usable agents exceed provider usage thresholds")
+
 // RawValidator validates the exact JSON bytes written by an agent. Returning
 // an error classifies that agent attempt as invalid_contract and advances the
 // configured fallback chain.
