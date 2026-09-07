@@ -3,6 +3,53 @@
 All notable changes to orq-lite are recorded here. Versions follow the git
 tags cut as GitHub releases (the binary's `--version` is stamped from the tag).
 
+## Unreleased
+
+### Added
+
+- **`provider: agy` drives the Antigravity CLI.** The adapter runs `agy` in
+  headless print mode (`--print=<prompt> --output-format stream-json`) and maps
+  the CLI onto the shared agent options: `model` to `--model`, `effort` to
+  `--effort`, `dangerously_skip_permissions` to
+  `--dangerously-skip-permissions`, `safe_mode` to `--sandbox`, and session
+  resume to `--conversation` with the `conversation_id` the `init` event
+  reports. Four shapes of this CLI differ from the sibling providers and are
+  handled deliberately:
+
+  - **The prompt travels in argv, not stdin.** `agy` print mode ignores stdin
+    and wants the prompt attached to the flag, so it goes out as a single
+    `--print=<prompt>` element. Splitting it in two would let a prompt that
+    opens with `--` read as an emitted flag to doctor's CLI drift check.
+  - **`--print-timeout=24h` is always emitted.** The CLI's own print deadline
+    defaults to 5m, far below the 900-2400s role timeouts a flow uses, so
+    every long invocation would be cut short from inside. The runner already
+    kills the subprocess at its own deadline; the invocation keeps one clock.
+  - **Reasoning effort lives in the model id.** `gemini-3.8-flash-high` already
+    selects it, and the CLI rejects a `--effort` that disagrees
+    (`--model gemini-3.8-flash-high conflicts with --effort=low`), while a bare
+    `gemini-3.8-flash` requires the flag. The adapter emits `--effort` only for
+    an unsuffixed model, and fails the build on a contradiction so it surfaces
+    in `doctor` instead of as a dead invocation mid-run.
+  - **`thinking_tokens` is already inside `output_tokens`, and
+    `cache_read_tokens` is outside `input_tokens`.** Measured on a real run:
+    input 5195 + output 472 equals the reported total of 5667, with thinking
+    309 and cache_read 8128 alongside. Adding the first or subtracting the
+    second would misreport the ledger, so the mapping does neither.
+
+  The provider is deliberately absent from doctor's `credentialPaths`: `agy`
+  keeps its login in the OS keychain, and a file probe there would report a
+  PASS it cannot support.
+
+- **Provider names are pinned to their executable.** `doctor` resolves a
+  provider binary with `LookPath(providerName)` and the run preflight resolves
+  it with `binary := agent.Provider`, so a provider whose name differs from
+  its CLI passes every unit test, fails `doctor` with `not on PATH`, and gets
+  marked unreachable at run start — surfacing as `all agents for role X are
+  marked skipped`, which reads as a role misconfiguration and is not one. The
+  invariant was undocumented and is now a test over the whole registry:
+  `CLIHelp().Args[0]` must equal `Name()`. It is why the Antigravity adapter
+  is registered as `agy` rather than `antigravity`.
+
 ## v0.3.5 — Watch v2 reaches the pack flows
 
 ### Fixed
