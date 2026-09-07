@@ -44,6 +44,7 @@ func TestNewRegisteredProviders(t *testing.T) {
 		wantName string
 		wantType any
 	}{
+		"agy":      {wantName: "agy", wantType: Antigravity{}},
 		"claude":   {wantName: "claude", wantType: Claude{}},
 		"codex":    {wantName: "codex", wantType: Codex{}},
 		"gemini":   {wantName: "gemini", wantType: &Gemini{}},
@@ -74,6 +75,7 @@ func TestNewRejectsUnregisteredProvider(t *testing.T) {
 
 func TestProvidersRejectControlledExtraArgs(t *testing.T) {
 	tests := map[string]string{
+		"agy":      "--print=override",
 		"claude":   "--output-format=text",
 		"codex":    "-moverride",
 		"gemini":   "--resume=latest",
@@ -93,7 +95,7 @@ func TestProvidersRejectControlledExtraArgs(t *testing.T) {
 }
 
 func TestProvidersAppendExtraArgsAfterControlledFlags(t *testing.T) {
-	for _, name := range []string{"claude", "codex", "gemini", "opencode"} {
+	for _, name := range []string{"agy", "claude", "codex", "gemini", "opencode"} {
 		t.Run(name, func(t *testing.T) {
 			provider, err := New(name)
 			if err != nil {
@@ -108,6 +110,33 @@ func TestProvidersAppendExtraArgsAfterControlledFlags(t *testing.T) {
 			}
 			if name == "opencode" && !reflect.DeepEqual(launch.Args[len(launch.Args)-3:], []string{"--custom", "value", "prompt"}) {
 				t.Fatalf("OpenCode prompt is not last: %v", launch.Args)
+			}
+		})
+	}
+}
+
+// TestProviderNamesMatchTheirExecutable pins an invariant two call sites rely
+// on without stating it: doctor resolves a provider binary with
+// LookPath(providerName) (doctor.go), and the run preflight resolves it with
+// binary := agent.Provider (workflowcmd.go). A provider whose name differs
+// from its executable passes every unit test, fails doctor with "not on
+// PATH", and gets marked unreachable at run start — surfacing as
+// "all agents for role X are marked skipped", which reads as a role
+// misconfiguration and is not one.
+func TestProviderNamesMatchTheirExecutable(t *testing.T) {
+	for name, factory := range providerRegistry {
+		t.Run(name, func(t *testing.T) {
+			provider := factory()
+			if got := provider.Name(); got != name {
+				t.Fatalf("registry key %q holds a provider named %q", name, got)
+			}
+			help := provider.CLIHelp()
+			if len(help.Args) == 0 {
+				t.Fatalf("provider %q declares no CLI help argv, so its executable is unknown", name)
+			}
+			if help.Args[0] != name {
+				t.Fatalf("provider %q runs executable %q: doctor and the run preflight both look up %q and will not find it",
+					name, help.Args[0], name)
 			}
 		})
 	}
