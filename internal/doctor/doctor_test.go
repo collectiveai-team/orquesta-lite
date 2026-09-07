@@ -126,3 +126,46 @@ func checkByName(checks []Check, name string) Check {
 	}
 	return Check{}
 }
+
+// TestKeychainProvidersStayOutOfCredentialPaths pins the trap this check had to
+// avoid. credentialPaths drives ProviderHasUsableCredentials, which the
+// run-time static preflight uses to skip agents that cannot authenticate. An
+// entry with no file and no env var would therefore mark every agy agent
+// unusable and end a run with "all agents for role X are marked skipped" —
+// a role error for a provider that is in fact logged in.
+func TestKeychainProvidersStayOutOfCredentialPaths(t *testing.T) {
+	for provider := range keychainProviders {
+		if _, listed := credentialPaths[provider]; listed {
+			t.Fatalf("%s is in credentialPaths: the static preflight will skip all of its agents", provider)
+		}
+		if !ProviderHasUsableCredentials(provider) {
+			t.Fatalf("%s must be assumed usable: its session cannot be proven from disk", provider)
+		}
+	}
+}
+
+// TestCredentialCheckReportsKeychainProviders pins that a provider doctor
+// cannot verify gets an explicit warning instead of no check at all. Silence
+// is worse than a warning here: an operator reading a clean doctor report has
+// no way to tell "checked and fine" from "never looked".
+func TestCredentialCheckReportsKeychainProviders(t *testing.T) {
+	status, detail, reportable := credentialCheck("agy")
+	if !reportable {
+		t.Fatal("agy emits no credentials check, so a logged-out session looks like a pass")
+	}
+	if status != StatusWarn {
+		t.Fatalf("status = %v, want %v", status, StatusWarn)
+	}
+	if !strings.Contains(detail, "Keychain") {
+		t.Fatalf("detail does not say where the session lives: %q", detail)
+	}
+}
+
+// TestCredentialCheckIsSilentForUnknownProviders pins that a provider with no
+// declared profile still emits nothing, which is the pre-existing behaviour for
+// a custom cmd agent.
+func TestCredentialCheckIsSilentForUnknownProviders(t *testing.T) {
+	if _, _, reportable := credentialCheck("mystery-provider"); reportable {
+		t.Fatal("an unknown provider must not produce a credentials check")
+	}
+}

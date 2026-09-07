@@ -50,6 +50,17 @@ tags cut as GitHub releases (the binary's `--version` is stamped from the tag).
   `CLIHelp().Args[0]` must equal `Name()`. It is why the Antigravity adapter
   is registered as `agy` rather than `antigravity`.
 
+- **`doctor` reports a credential it cannot verify instead of saying nothing.**
+  A provider absent from `credentialPaths` produced no `credentials:` check at
+  all, and an operator reading a clean report could not tell "checked and fine"
+  from "never looked". Providers whose session lives in the OS keychain are now
+  listed separately and reported as `[WARN] credentials:agy cannot be verified
+  from disk`. They stay out of `credentialPaths` on purpose: an entry there
+  drives `ProviderHasUsableCredentials`, which the run-time static preflight
+  uses to skip agents, so a keychain provider listed there would mark every one
+  of its agents unusable and end a run with `all agents for role X are marked
+  skipped` — against a provider that is in fact logged in.
+
 ## v0.3.5 — Watch v2 reaches the pack flows
 
 ### Fixed

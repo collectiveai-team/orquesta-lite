@@ -51,6 +51,17 @@ var credentialPaths = map[string]struct {
 	"opencode": {files: []string{".local/share/opencode/auth.json"}, envVar: ""},
 }
 
+// keychainProviders names providers whose session lives outside the file
+// system, so no path and no env var can prove it. They are deliberately absent
+// from credentialPaths: an entry there would make ProviderHasUsableCredentials
+// report false, and the run-time static preflight would skip every agent of
+// that provider — surfacing as "all agents for role X are marked skipped",
+// which reads as a role misconfiguration and is not one. doctor reports them
+// as unverifiable rather than staying silent, because silence reads as a pass.
+var keychainProviders = map[string]string{
+	"agy": "the macOS Keychain",
+}
+
 // Run executes all preflight checks against dir and returns one Check per
 // concern. ctx is the budget for checks that shell out — callers may pass a
 // ~2 s timeout and such checks must degrade to StatusWarn on ctx.Err() rather
@@ -114,18 +125,8 @@ func Run(ctx context.Context, dir string) []Check {
 		status, detail := checkProviderCLI(ctx, path, provider, usedAgents(cfg, providerName), cfg.Limits.SessionResumeEnabled())
 		add(status, "provider:"+providerName, detail)
 
-		cred, ok := credentialPaths[providerName]
-		if !ok {
-			continue
-		}
-		if os.Getenv(cred.envVar) != "" {
-			add(StatusOK, "credentials:"+providerName, "via "+cred.envVar)
-			continue
-		}
-		if f := firstExistingHomeFile(cred.files); f != "" {
-			add(StatusOK, "credentials:"+providerName, "credentials at ~/"+f)
-		} else {
-			add(StatusWarn, "credentials:"+providerName, fmt.Sprintf("no credentials found (~/%s or %s) — log in with the CLI once", cred.files[0], cred.envVar))
+		if status, detail, reportable := credentialCheck(providerName); reportable {
+			add(status, "credentials:"+providerName, detail)
 		}
 	}
 
@@ -380,6 +381,26 @@ func ProviderHasUsableCredentials(provider string) bool {
 		return true
 	}
 	return firstExistingHomeFile(cred.files) != ""
+}
+
+// credentialCheck reports how doctor can verify one provider's credentials.
+// reportable is false only for a provider that declares no profile at all, in
+// which case no check is emitted rather than a misleading pass.
+func credentialCheck(provider string) (status Status, detail string, reportable bool) {
+	if store, keychain := keychainProviders[provider]; keychain {
+		return StatusWarn, "cannot be verified from disk (the session lives in " + store + ") — run the CLI once by hand to confirm it is logged in", true
+	}
+	cred, ok := credentialPaths[provider]
+	if !ok {
+		return StatusOK, "", false
+	}
+	if os.Getenv(cred.envVar) != "" {
+		return StatusOK, "via " + cred.envVar, true
+	}
+	if f := firstExistingHomeFile(cred.files); f != "" {
+		return StatusOK, "credentials at ~/" + f, true
+	}
+	return StatusWarn, fmt.Sprintf("no credentials found (~/%s or %s) — log in with the CLI once", cred.files[0], cred.envVar), true
 }
 
 func firstExistingHomeFile(rels []string) string {
