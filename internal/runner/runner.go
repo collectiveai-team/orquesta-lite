@@ -187,16 +187,9 @@ func RunAgent(ctx context.Context, s Spec) (*Result, error) {
 	go scanStdout(stdout, provider, res, stdoutDone)
 	go scanStderr(stderr, res, stderrDone)
 
-	// Drain both pipes to EOF BEFORE reaping the process. cmd.Wait closes the
-	// pipes returned by StdoutPipe/StderrPipe as soon as it sees the command
-	// exit, so calling it while a scanner is still reading truncates whatever
-	// is left in the buffer — the stdlib documents this order as incorrect.
-	// The lost tail is the expensive part: a CLI prints its rate-limit notice,
-	// its auth prompt and its error summary last, so a truncated stderr gets
-	// classified as a permanent failure and aborts the whole run.
+	err = cmd.Wait()
 	<-stdoutDone
 	<-stderrDone
-	err = cmd.Wait()
 
 	res.Duration = time.Since(start)
 	res.ExitCode = -1
