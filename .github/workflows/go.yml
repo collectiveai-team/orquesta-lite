@@ -1,0 +1,51 @@
+name: go
+
+# No branch filter on pull_request: this repository lands work as stacks, so a
+# PR whose base is another feature branch must be checked too. A gate that only
+# runs against main leaves every intermediate PR in a stack unverified.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: gofmt, build, vet, test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # gofmt runs first and prints the diff, not just the file list: a bare
+      # list tells a contributor a file is wrong without telling them what to
+      # change.
+      - name: gofmt
+        run: |
+          set -euo pipefail
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "not gofmt-clean:"
+            echo "$unformatted"
+            echo
+            gofmt -d $unformatted
+            exit 1
+          fi
+
+      - name: build
+        run: go build ./...
+
+      - name: vet
+        run: go vet ./...
+
+      # -race is affordable here (the whole suite runs in ~20s) and it is the
+      # only automated guard over the scheduler, the fallback caller and the
+      # invocation runner, which are all concurrent.
+      - name: test
+        run: go test ./... -count=1 -race

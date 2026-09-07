@@ -167,29 +167,51 @@ func RunAgent(ctx context.Context, s Spec) (*Result, error) {
 	if launch.Stdin != "" {
 		cmd.Stdin = strings.NewReader(launch.Stdin)
 	}
-	stdout, err := cmd.StdoutPipe()
+	// Own the pipes rather than taking cmd.StdoutPipe/StderrPipe. Wait closes
+	// the pipes it hands out the moment it sees the process exit, truncating
+	// whatever a still-reading scanner had left — and the tail is where a CLI
+	// prints its rate-limit notice, its auth prompt and its error summary, so
+	// losing it turns a throttle into a permanent failure that ends the run.
+	//
+	// Draining before Wait is not the fix: Wait is also what reaps the process
+	// the context deadline kills, so blocking on the pipes first means a
+	// timeout never fires and the agent runs to completion. Pipes we own are
+	// invisible to Wait, so the order that keeps cancellation working also
+	// keeps the output whole.
+	outR, outW, err := os.Pipe()
 	if err != nil {
 		return nil, err
 	}
-	stderr, err := cmd.StderrPipe()
+	errR, errW, err := os.Pipe()
 	if err != nil {
+		_, _ = outR.Close(), outW.Close()
 		return nil, err
 	}
+	cmd.Stdout = outW
+	cmd.Stderr = errW
 
 	start := time.Now()
 	if err := cmd.Start(); err != nil {
+		_, _ = outR.Close(), outW.Close()
+		_, _ = errR.Close(), errW.Close()
 		return nil, err
 	}
+	// The child owns its own descriptors now. The parent's copies of the write
+	// ends have to go, or the readers never reach EOF.
+	_, _ = outW.Close(), errW.Close()
 
 	res := &Result{}
 	stdoutDone := make(chan struct{})
 	stderrDone := make(chan struct{})
-	go scanStdout(stdout, provider, res, stdoutDone)
-	go scanStderr(stderr, res, stderrDone)
+	go scanStdout(outR, provider, res, stdoutDone)
+	go scanStderr(errR, res, stderrDone)
 
 	err = cmd.Wait()
-	<-stdoutDone
-	<-stderrDone
+	// One deadline shared by both pipes, not one each: the same grandchild
+	// holds both open, so draining them in sequence would pay the bound twice.
+	drainBy := time.Now().Add(drainGrace)
+	drainOrClose(outR, stdoutDone, drainBy)
+	drainOrClose(errR, stderrDone, drainBy)
 
 	res.Duration = time.Since(start)
 	res.ExitCode = -1
@@ -260,6 +282,25 @@ func buildLaunch(ctx context.Context, s Spec) (providers.Launch, providers.Provi
 		}
 	}
 	return providers.Launch{Args: args}, nil, nil
+}
+
+// drainGrace bounds how long RunAgent waits for a scanner once the process has
+// been reaped. Bytes already in the pipe arrive at once; the only case that
+// does not end is a grandchild that inherited the write end and outlived its
+// parent, and a stalled invocation would hang the whole flow.
+const drainGrace = 2 * time.Second
+
+// drainOrClose waits for one scanner to finish, then releases its pipe. On
+// expiry it closes the read end first, which is what unblocks a scanner still
+// waiting on a write end nobody will close.
+func drainOrClose(r *os.File, done <-chan struct{}, deadline time.Time) {
+	select {
+	case <-done:
+		_ = r.Close()
+	case <-time.After(time.Until(deadline)):
+		_ = r.Close()
+		<-done
+	}
 }
 
 func scanStdout(r io.Reader, p providers.Provider, res *Result, done chan<- struct{}) {
