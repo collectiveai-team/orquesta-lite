@@ -534,3 +534,31 @@ func tail(s string, n int) string {
 	}
 	return s[len(s)-n:]
 }
+
+// TestRunAgent_DoesNotHangOnAnInheritedPipe pins the bound on the drain. The
+// scanners finish when every write end of the pipe closes, and a backgrounded
+// grandchild inherits one: here the shell exits at once while `sleep` holds
+// stderr open for another fifteen seconds. Nothing will close it — the context
+// deadline kills the direct child, which is already gone — so an unbounded wait
+// would stall the invocation, and with it the flow step that made it.
+func TestRunAgent_DoesNotHangOnAnInheritedPipe(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("posix-only test")
+	}
+	start := time.Now()
+	res, err := RunAgent(context.Background(), Spec{
+		Cmd:        []string{"sh", "-c", "sleep 15 & echo 'parent exits now' 1>&2", "{{PROMPT}}"},
+		Prompt:     "x",
+		ResultPath: filepath.Join(t.TempDir(), "out.json"),
+		Timeout:    30 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed > drainGrace+3*time.Second {
+		t.Errorf("waited %v on a pipe a grandchild holds open; the drain must be bounded", elapsed)
+	}
+	if !strings.Contains(res.Stderr, "parent exits now") {
+		t.Errorf("bounded drain dropped output the process did write: %q", tail(res.Stderr, 120))
+	}
+}
