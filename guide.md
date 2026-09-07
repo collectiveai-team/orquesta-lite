@@ -133,6 +133,83 @@ reference for operating what you set up. If the CLI is unavailable, copy
 `skills/using-orq-lite/` out of the orq-lite repo instead — nothing about the
 skill depends on the installer.
 
+## 0.5 Interview the human
+
+A setup decision the repository cannot answer becomes a guess, and a guessed
+gate is worse than a missing one: later roles read green as evidence. Before
+you change any configuration, hold a short interview.
+
+Work in this order on every topic below:
+
+1. Read the repository first — CI workflows, `Makefile`, `pyproject.toml`,
+   `package.json`, existing test directories, `CONTRIBUTING.md`, recent commits.
+2. State what you found and the answer you propose.
+3. Ask the human to confirm or correct it.
+4. Ask an open question only where the repository is silent.
+
+Do not deliver the whole list as a questionnaire. Ask the topics that matter for
+the work at hand, one at a time, and skip whatever you already proved.
+
+### What must be tested
+
+This is the group that decides whether the run can tell success from failure.
+
+- Which single command is the test gate, and does it pass at HEAD from a fresh
+  clone?
+- Which behavior must be verified for this objective to count as done? Ask for
+  outcomes, not files.
+- What is already covered, and what is deliberately left uncovered?
+- Which tests must stay out of the gate — flaky, live-service, secret-bound, or
+  too slow — and how are they excluded?
+- Does verification need a running application or a browser? Which command
+  starts it, and at which URL?
+- Must every ticket add a test, or is the existing suite the bar?
+- In a monorepo, which package or target scopes the gate?
+
+### Lint and formatting
+
+- Which command is the lint gate?
+- Is existing lint debt already excepted centrally, or will every role
+  rediscover it?
+
+### Risk and permissions
+
+- May the agent write to this checkout, or must the work happen in a worktree?
+- May it commit? May it open a pull request?
+- Which paths are out of bounds — migrations, infrastructure, secrets,
+  generated files?
+- May it reach the network or call live services?
+
+### Objective and scope
+
+- What is the user-visible outcome, and what are the non-goals?
+- Which invariants hold across features?
+- What makes the result shippable rather than merely finished?
+
+### Providers and cost
+
+- Which provider CLIs are authenticated on this machine?
+- What is the spend ceiling for this work?
+- Which roles need the strong model, and which ones can run cheaper?
+
+### Conventions
+
+- Which rules already exist — `CONVENTIONS.md`, `CLAUDE.md`, a style guide, an
+  architecture document?
+- Which rules are unwritten and must be captured now?
+
+### Record the answers where the runtime reads them
+
+An answer that stays in the conversation reaches no role. Write every confirmed
+answer into a file before you continue:
+
+| Answer | Destination |
+|---|---|
+| Gate commands and their exclusions | `lint_argv` / `test_argv` in `team.json` |
+| Permissions, model tier, timeouts | `agents` / `roles` in `team.json` |
+| Style, architecture, testing policy, out-of-bounds paths | `CONVENTIONS.md` |
+| Outcome, non-goals, acceptance criteria, required evidence | the objective document |
+
 ## 1. Initialize the project
 
 Run `init` from the project root:
@@ -187,6 +264,11 @@ development@5/task-list@1
 
 ## 2. Prove the baseline is green
 
+> Confirm with the human before you write these arrays: which command is the
+> gate, which tests stay out of it, and whether it passes from a fresh clone.
+> Do not derive the gate from CI alone — CI often runs more than the workflow
+> should. See [§0.5](#05-interview-the-human).
+
 Configure and run the exact commands that the workflow will execute. Gates are
 argv arrays, not shell strings:
 
@@ -236,6 +318,10 @@ more dangerous than a visibly missing gate because later roles treat green as
 evidence.
 
 ## 3. Configure agents and roles
+
+> Confirm with the human: the model tier each role deserves, the spend ceiling
+> for this work, and whether unattended edit permissions are acceptable in this
+> checkout.
 
 `team.json` separates execution providers from workflow roles. A compiled flow
 resolves only the roles it references; Orquesta Lite has no hardcoded required
@@ -306,6 +392,9 @@ invariants, and commands needed for browser/API verification. Concrete rules
 converge better than asking each role to infer the project from nearby files.
 
 ## 4. Choose the development flow
+
+> Confirm with the human: does this run ship the change or only produce a
+> review, and is the objective small enough for one batch (`fast=true`)?
 
 The built-in `development@5` pack contains:
 
@@ -403,6 +492,10 @@ the lighter, non-governed option and should receive a `review-existing@1` run
 before shipping.
 
 ## 5. Write an objective that survives ticket decomposition
+
+> Confirm with the human: the acceptance criteria and the evidence each slice
+> must produce. These are the testing answers from [§0.5](#05-interview-the-human);
+> write them into this document instead of leaving them in the conversation.
 
 The features or plan document is not only input to the planner. It is the
 stable objective carried through implementation and integrated review.
@@ -544,6 +637,7 @@ documents and execute through the same compiler and durable scheduler.
 
 ## Final checklist
 
+- [ ] Setup interview held; every confirmed answer recorded in `team.json`, `CONVENTIONS.md`, or the objective document.
 - [ ] Git baseline understood and clean; toolchain and one package manager pinned.
 - [ ] `orq-lite`, provider CLIs, and required `gh` access authenticated headlessly.
 - [ ] `orq-lite init` completed; built-in pack visible and target flow validates.
