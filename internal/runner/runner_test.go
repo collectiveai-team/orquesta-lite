@@ -491,3 +491,74 @@ func TestResult_CodexHeader_NilWhenAbsent(t *testing.T) {
 		t.Errorf("CodexHeader = %v, want nil for non-codex stdout", res.CodexHeader)
 	}
 }
+
+// TestRunAgent_KeepsTheLastStderrLine pins the pipe drain order. cmd.Wait
+// closes the pipes from StdoutPipe/StderrPipe the moment it sees the command
+// exit, so waiting on it while a scanner is still reading truncates the tail —
+// the stdlib documents that order as incorrect. The tail is where a CLI puts
+// its rate-limit notice, its auth prompt and its error summary, so losing it
+// turns a throttle into a permanent failure that aborts the run.
+//
+// The padding matters: with a short stderr the whole output fits in the pipe
+// buffer and the race almost never loses, which is how this survived as an
+// occasional red test on CI instead of being found. Four thousand lines exceed
+// the buffer and make the truncation deterministic.
+func TestRunAgent_KeepsTheLastStderrLine(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("posix-only test")
+	}
+	res, err := RunAgent(context.Background(), Spec{
+		Cmd: []string{"sh", "-c",
+			"i=0; while [ $i -lt 4000 ]; do echo 'padding line for the pipe buffer' 1>&2; i=$((i+1)); done; " +
+				"echo 'rate limit reached, try again at 1:46 AM' 1>&2; exit 42",
+			"{{PROMPT}}"},
+		Prompt:           "x",
+		ResultPath:       filepath.Join(t.TempDir(), "out.json"),
+		Timeout:          30 * time.Second,
+		RateLimitPattern: "rate_?limit|rate limit",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(res.Stderr, "try again at 1:46 AM") {
+		t.Fatalf("last stderr line lost: captured %d bytes, tail = %q", len(res.Stderr), tail(res.Stderr, 120))
+	}
+	if !res.RateLimited {
+		t.Error("a throttle announced on the last line must still classify as rate-limited")
+	}
+}
+
+func tail(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[len(s)-n:]
+}
+
+// TestRunAgent_DoesNotHangOnAnInheritedPipe pins the bound on the drain. The
+// scanners finish when every write end of the pipe closes, and a backgrounded
+// grandchild inherits one: here the shell exits at once while `sleep` holds
+// stderr open for another fifteen seconds. Nothing will close it — the context
+// deadline kills the direct child, which is already gone — so an unbounded wait
+// would stall the invocation, and with it the flow step that made it.
+func TestRunAgent_DoesNotHangOnAnInheritedPipe(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("posix-only test")
+	}
+	start := time.Now()
+	res, err := RunAgent(context.Background(), Spec{
+		Cmd:        []string{"sh", "-c", "sleep 15 & echo 'parent exits now' 1>&2", "{{PROMPT}}"},
+		Prompt:     "x",
+		ResultPath: filepath.Join(t.TempDir(), "out.json"),
+		Timeout:    30 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(start); elapsed > drainGrace+3*time.Second {
+		t.Errorf("waited %v on a pipe a grandchild holds open; the drain must be bounded", elapsed)
+	}
+	if !strings.Contains(res.Stderr, "parent exits now") {
+		t.Errorf("bounded drain dropped output the process did write: %q", tail(res.Stderr, 120))
+	}
+}

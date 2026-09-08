@@ -366,6 +366,23 @@ For each agent:
 - use a second provider in important role chains so a provider failure has a
   real fallback path.
 
+The registered providers are `claude`, `codex`, `gemini`, `opencode` and `agy`
+(the Antigravity CLI). An agent names one of them in `provider`, or supplies its
+own `cmd` — never both.
+
+`agy` needs two facts that the others do not. Its model ids carry the reasoning
+effort as a suffix, so `gemini-3.8-flash-high` and `effort: "low"` contradict
+each other and the provider refuses the pair at build time rather than mid-run;
+set one or the other. And its session lives in the macOS Keychain, where no file
+and no environment variable can prove it, so `doctor` reports `credentials:agy`
+as unverifiable instead of passing it. Confirm that login by running `agy` once
+by hand before a long flow depends on it.
+
+A last caveat for a single-subscription team: no Antigravity model has a price
+in the cost table, and pricing a subscription makes no sense, so their spend
+counts as zero and a `maxCostUSD` budget can never trip. On an all-`agy` team
+`maxDurationSeconds` is the only remaining brake — set it per run.
+
 `extra_args` is available only for provider-backed agents. The provider appends
 these arguments after its own flags (and, for OpenCode, before the positional
 prompt). Provider-owned flags such as output format, model, session resume, and
