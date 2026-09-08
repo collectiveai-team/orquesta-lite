@@ -3,7 +3,7 @@
 All notable changes to orq-lite are recorded here. Versions follow the git
 tags cut as GitHub releases (the binary's `--version` is stamped from the tag).
 
-## Unreleased
+## v0.6.0 — Antigravity provider, Go CI, and a runner that keeps every line
 
 ### Added
 
@@ -60,6 +60,46 @@ tags cut as GitHub releases (the binary's `--version` is stamped from the tag).
   uses to skip agents, so a keychain provider listed there would mark every one
   of its agents unusable and end a run with `all agents for role X are marked
   skipped` — against a provider that is in fact logged in.
+
+### Fixed
+
+- **The runner dropped the end of an agent's output, and a throttle with it.**
+  `RunAgent` took `cmd.StdoutPipe`/`cmd.StderrPipe` and called `cmd.Wait` while
+  the scanner goroutines were still reading. `Wait` closes those pipes the
+  moment it sees the process exit, so whatever remained in the buffer was lost —
+  roughly 10 KB of tail once the output exceeds the pipe buffer, deterministic
+  and easy to reproduce. The tail is exactly where a CLI prints its rate-limit
+  notice, its auth prompt and its error summary, so a truncated stderr was read
+  as a permanent failure and surfaced as `all agents for role X are marked
+  skipped` against a provider that was merely throttled, ending the run instead
+  of waiting the window out.
+
+  Draining before `Wait` is not the fix and the history records the attempt:
+  `Wait` is also what reaps the process the context deadline kills, so blocking
+  on the pipes first means a timeout never fires. The runner now creates its own
+  `os.Pipe` pair for `cmd.Stdout`/`cmd.Stderr`. Pipes it owns are invisible to
+  `Wait`, so the order that keeps cancellation working keeps the output whole,
+  and the drain runs afterwards under a bounded grace shared by both pipes —
+  the scanners only reach EOF when every write end closes, and a backgrounded
+  grandchild inherits one, so an unbounded wait would stall the flow step.
+
+- **The test suite depended on the developer's `~/.gitconfig`.** Seventeen tests
+  run `orq-lite init`, which creates a repository and makes an initial commit.
+  With no configured identity git guesses one from the OS account — a guess that
+  works on a workstation and fails with `fatal: empty ident name` on a machine
+  whose account has no full name. The suite now sets its own identity.
+
+### Changed
+
+- **Pull requests are gated on `gofmt`, `go build`, `go vet` and
+  `go test ./... -count=1 -race`.** Nothing verified that a pull request compiled
+  before this: the only check was `claude-review`, which failed on every pull
+  request with "Claude Code is not installed on this repository" and was merged
+  over each time. That workflow is removed — a check nobody can act on trains
+  everyone to ignore the column that now carries a real signal. `claude.yml`
+  stays; it only fires on an explicit `@claude` mention. The new gate carries no
+  branch filter on `pull_request`, so a PR based on another feature branch is
+  checked too. It found both defects above on its first two runs.
 
 ## v0.3.5 — Watch v2 reaches the pack flows
 
