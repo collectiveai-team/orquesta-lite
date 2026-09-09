@@ -46,7 +46,7 @@ Minimum viable config for the shipped pack:
 
 Providers: `claude`, `codex`, `gemini`, `opencode`, `agy` (Antigravity). Optional per agent: `effort`, `safe_mode`, `extra_args`. Run `orq-lite doctor` after changing provider arguments; it checks emitted flags against the installed CLI's `--help`.
 
-`agy` differs from the others in two ways that bite at configuration time. Its model ids carry the reasoning effort as a suffix (`gemini-3.8-flash-high`), and the CLI rejects an `effort` that disagrees with one — set the model or the effort, never both. And its session lives in the macOS Keychain, so `doctor` reports `credentials:agy` as **unverifiable** rather than passing or failing it: confirm the login by running `agy` once by hand.
+`agy` differs from the others in two ways that bite at configuration time. Its model ids carry the reasoning effort as a suffix (`gemini-3.8-flash-high`), and the CLI rejects an `effort` that disagrees with one — set the model or the effort, never both. And its session lives in the macOS Keychain, so `doctor` verifies it by running `agy models` (an authenticated call) instead of looking for a file: a pass means the session is live. A failure warns with the CLI's own message and never fails the preflight, because a closed session and a dead network look identical from outside.
 
 **A flow only resolves the roles it references** — there is no required role set. Read the flow's steps to know which roles to declare. `factory-governed@2` needs `ticket_planner`, `coder`/`batch_coder`, `ticket_qa`, `qa`, `adversary`, `critic`, `integrator`, `gov_reviewer`.
 

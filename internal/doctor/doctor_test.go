@@ -2,6 +2,7 @@ package doctor
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -144,20 +145,16 @@ func TestKeychainProvidersStayOutOfCredentialPaths(t *testing.T) {
 	}
 }
 
-// TestCredentialCheckReportsKeychainProviders pins that a provider doctor
-// cannot verify gets an explicit warning instead of no check at all. Silence
-// is worse than a warning here: an operator reading a clean doctor report has
-// no way to tell "checked and fine" from "never looked".
-func TestCredentialCheckReportsKeychainProviders(t *testing.T) {
-	status, detail, reportable := credentialCheck("agy")
-	if !reportable {
-		t.Fatal("agy emits no credentials check, so a logged-out session looks like a pass")
-	}
-	if status != StatusWarn {
-		t.Fatalf("status = %v, want %v", status, StatusWarn)
-	}
-	if !strings.Contains(detail, "Keychain") {
-		t.Fatalf("detail does not say where the session lives: %q", detail)
+// TestEveryKeychainProviderHasASessionProbe pins the rule that replaced the
+// permanent warning. A provider whose credentials cannot be read from disk and
+// that has no probe either can only be reported as "cannot verify" forever,
+// which is the state a reader stops reading. Adding one without the other must
+// break the build's tests, not ship silence.
+func TestEveryKeychainProviderHasASessionProbe(t *testing.T) {
+	for provider := range keychainProviders {
+		if _, ok := sessionProbes[provider]; !ok {
+			t.Fatalf("%s has no session probe, so doctor can only ever say it cannot verify it", provider)
+		}
 	}
 }
 
@@ -165,7 +162,67 @@ func TestCredentialCheckReportsKeychainProviders(t *testing.T) {
 // declared profile still emits nothing, which is the pre-existing behaviour for
 // a custom cmd agent.
 func TestCredentialCheckIsSilentForUnknownProviders(t *testing.T) {
-	if _, _, reportable := credentialCheck("mystery-provider"); reportable {
+	if _, _, reportable := credentialCheck(context.Background(), "mystery-provider", "mystery-provider"); reportable {
 		t.Fatal("an unknown provider must not produce a credentials check")
+	}
+}
+
+// agyProject fabricates a project whose only agent uses agy, with a fake `agy`
+// on PATH whose `models` subcommand exits with the given status. `models` is
+// the real session probe: it posts to loadCodeAssist, so it cannot succeed
+// without credentials.
+func agyProject(t *testing.T, modelsExit int, modelsOutput string) string {
+	t.Helper()
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\ncase \"$1\" in\n  models) echo '" + modelsOutput + "'; exit " +
+		fmt.Sprint(modelsExit) + " ;;\n  *) echo 'Usage of agy:'; echo '  --print string'; exit 0 ;;\nesac\n"
+	if err := os.WriteFile(filepath.Join(bin, "agy"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	team := `{
+  "agents":{"a":{"provider":"agy","model":"gemini-3.8-flash-high","rate_limit_pattern":"429"}},
+  "roles":{"coder":{"agents":["a"],"prompt":"prompt.md","result_path":"result.json","timeout_seconds":1}},
+  "rate_limit_backoff":{"initial_seconds":1,"factor":2,"max_seconds":2},
+  "runtime":{"context_optimization":{"compression_proxy":{"enabled":false},"command_filter":{"enabled":false}}},
+  "lint_argv":["true"],"test_argv":["true"]
+}`
+	if err := os.WriteFile(filepath.Join(dir, "team.json"), []byte(team), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "prompt.md"), []byte("prompt"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// TestAgySessionProbePasses pins that a logged-in machine gets a pass, not a
+// permanent warning. The previous check reported agy as unverifiable on every
+// run, which is the state a reader learns to scroll past — and it did mislead
+// one into concluding the provider was unavailable.
+func TestAgySessionProbePasses(t *testing.T) {
+	checks := Run(context.Background(), agyProject(t, 0, "gemini-3.8-flash-high"))
+	got := checkByName(checks, "credentials:agy")
+	if got.Status != StatusOK {
+		t.Fatalf("status = %v, want %v (detail: %s)", got.Status, StatusOK, got.Detail)
+	}
+}
+
+// TestAgySessionProbeReportsTheCLIsOwnError pins that a failed probe hands back
+// what the CLI said. "cannot be verified" tells an operator nothing to act on;
+// "Eligibility check failed: Post ... connection refused" tells them whether
+// they are logged out or offline.
+func TestAgySessionProbeReportsTheCLIsOwnError(t *testing.T) {
+	dir := agyProject(t, 1, "Error: Eligibility check failed: no credentials")
+	got := checkByName(Run(context.Background(), dir), "credentials:agy")
+	if got.Status != StatusWarn {
+		t.Fatalf("status = %v, want %v", got.Status, StatusWarn)
+	}
+	if !strings.Contains(got.Detail, "Eligibility check failed") {
+		t.Fatalf("detail drops the CLI's own message: %q", got.Detail)
 	}
 }

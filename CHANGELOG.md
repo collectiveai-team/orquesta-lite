@@ -3,6 +3,25 @@
 All notable changes to orq-lite are recorded here. Versions follow the git
 tags cut as GitHub releases (the binary's `--version` is stamped from the tag).
 
+## Unreleased
+
+### Fixed
+
+- **`doctor` verifies the Antigravity session instead of warning that it
+  cannot.** v0.6.0 reported `credentials:agy` as unverifiable on every run,
+  because Antigravity keeps its session in the macOS Keychain and there is no
+  file to stat. A permanent warning is one a reader learns to scroll past, and
+  this one did worse than that: it convinced a reader that a working provider
+  was unavailable. The premise was wrong anyway — `agy models` posts to
+  `loadCodeAssist`, so the CLI can answer the question the file system cannot.
+  `doctor` now runs it, bounded to 8 seconds, and reports
+  `credentials:agy session verified`. A failed probe is still a warning, never
+  a failure, and it quotes the CLI's first line: from outside, a closed session
+  and an unreachable network look the same, and refusing a preflight because
+  the link is down would be worse than the warning it replaces. A test pins
+  that any future provider whose credentials live outside the file system must
+  ship a probe with it, so the silent case cannot come back.
+
 ## v0.6.0 — Antigravity provider, Go CI, and a runner that keeps every line
 
 ### Added
