@@ -1,0 +1,12 @@
+{
+  "type": "object",
+  "properties": {
+    "ticket_id": {"type": "string", "minLength": 1},
+    "approved": {"type": "boolean"},
+    "summary": {"type": "string", "minLength": 1},
+    "findings": {"type": "array", "items": {"type": "string"}},
+    "gates": {"type": "array", "items": {"type": "string"}}
+  },
+  "required": ["ticket_id", "approved", "summary", "findings", "gates"],
+  "additionalProperties": false
+}

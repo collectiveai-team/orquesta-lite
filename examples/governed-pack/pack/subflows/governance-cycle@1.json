@@ -1,110 +1,122 @@
 {
- "apiVersion": "orq.dev/v2",
- "kind": "Subflow",
- "metadata": {
-  "name": "governance-cycle",
-  "version": "1"
- },
- "inputs": {
-  "features_path": {
-   "schema": "schema:path@1"
+  "apiVersion": "orq.dev/v2",
+  "kind": "Subflow",
+  "metadata": {
+    "name": "governance-cycle",
+    "version": "1"
   },
-  "verdict": {
-   "schema": "schema:review-result@1"
-  },
-  "qa_review": {
-   "schema": "schema:review-result@1"
-  },
-  "critic_review": {
-   "schema": "schema:review-result@1"
-  },
-  "adversary_review": {
-   "schema": "schema:review-result@1"
-  },
-  "visual_review": {
-   "schema": "schema:review-result@1"
-  }
- },
- "steps": [
-  {
-   "id": "repair",
-   "uses": "activity:agent.invoke@1",
-   "with": {
-    "role": "integrator",
-    "outputSchema": "schema:iteration-result@1",
-    "context": {
-     "FEATURES_PATH": {
-      "$ref": "inputs.features_path"
-     },
-     "FEEDBACK": {
-      "$ref": "inputs.verdict"
-     },
-     "GOV_REVIEW": {
-      "$ref": "inputs.verdict"
-     },
-     "QA_REVIEW": {
-      "$ref": "inputs.qa_review"
-     },
-     "CRITIC_REVIEW": {
-      "$ref": "inputs.critic_review"
-     },
-     "ADVERSARY_REVIEW": {
-      "$ref": "inputs.adversary_review"
-     },
-     "VISUAL_REVIEW": {
-      "$ref": "inputs.visual_review"
-     }
-    }
-   }
-  },
-  {
-   "id": "lint",
-   "uses": "activity:gate.run@1",
-   "with": {
-    "argv": {"$ref": "config.lint_argv"}
-   }
-  },
-  {
-   "id": "tests",
-   "uses": "activity:gate.run@1",
-   "with": {
-    "argv": {"$ref": "config.test_argv"}
-   }
-  },
-  {
-   "id": "governance",
-   "uses": "activity:agent.invoke@1",
-   "with": {
-    "role": "gov_reviewer",
-    "outputSchema": "schema:review-result@1",
-    "vars": {
-     "FEATURES_PATH": {
-      "$ref": "inputs.features_path"
-     }
+  "inputs": {
+    "features_path": {
+      "schema": "schema:path@1"
     },
-    "context": {
-     "QA_REVIEW": {
-      "$ref": "inputs.qa_review"
-     },
-     "CRITIC_REVIEW": {
-      "$ref": "inputs.critic_review"
-     },
-     "ADVERSARY_REVIEW": {
-      "$ref": "inputs.adversary_review"
-     },
-     "VISUAL_REVIEW": {
-      "$ref": "inputs.visual_review"
-     }
+    "verdict": {
+      "schema": "schema:review-result@2"
+    },
+    "qa_review": {
+      "schema": "schema:review-result@2"
+    },
+    "critic_review": {
+      "schema": "schema:review-result@2"
+    },
+    "adversary_review": {
+      "schema": "schema:review-result@2"
+    },
+    "visual_review": {
+      "schema": "schema:review-result@2"
     }
-   }
-  }
- ],
- "outputs": {
-  "approved": {
-   "$ref": "steps.governance.output.approved"
   },
-  "verdict": {
-   "$ref": "steps.governance.output"
+  "steps": [
+    {
+      "id": "review_evidence",
+      "uses": "activity:review.aggregate@1",
+      "with": {
+        "reviews": [
+          {
+            "$ref": "inputs.verdict"
+          }
+        ]
+      }
+    },
+    {
+      "id": "review_coverage",
+      "uses": "activity:gate.assert@1",
+      "with": {
+        "value": {
+          "$ref": "steps.review_evidence.output.ready"
+        },
+        "equals": true,
+        "message": "Incomplete governance requires review, not product repair"
+      }
+    },
+    {
+      "id": "repair",
+      "uses": "activity:agent.invoke@1",
+      "with": {
+        "role": "integrator",
+        "outputSchema": "schema:iteration-result@1",
+        "context": {
+          "FEATURES_PATH": {
+            "$ref": "inputs.features_path"
+          },
+          "CONFIRMED_FINDINGS": {
+            "$ref": "steps.review_evidence.output.repair_findings"
+          }
+        }
+      },
+      "if": "steps.review_evidence.output.needs_repair == true"
+    },
+    {
+      "id": "lint",
+      "uses": "activity:gate.run@1",
+      "with": {
+        "argv": {
+          "$ref": "config.lint_argv"
+        }
+      }
+    },
+    {
+      "id": "tests",
+      "uses": "activity:gate.run@1",
+      "with": {
+        "argv": {
+          "$ref": "config.test_argv"
+        }
+      }
+    },
+    {
+      "id": "governance",
+      "uses": "activity:agent.invoke@1",
+      "with": {
+        "role": "gov_reviewer",
+        "outputSchema": "schema:review-result@2",
+        "vars": {
+          "FEATURES_PATH": {
+            "$ref": "inputs.features_path"
+          }
+        },
+        "context": {
+          "QA_REVIEW": {
+            "$ref": "inputs.qa_review"
+          },
+          "CRITIC_REVIEW": {
+            "$ref": "inputs.critic_review"
+          },
+          "ADVERSARY_REVIEW": {
+            "$ref": "inputs.adversary_review"
+          },
+          "VISUAL_REVIEW": {
+            "$ref": "inputs.visual_review"
+          }
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "approved": {
+      "$ref": "steps.governance.output.approved"
+    },
+    "verdict": {
+      "$ref": "steps.governance.output"
+    }
   }
- }
 }

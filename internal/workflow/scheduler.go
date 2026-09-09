@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/collectiveai-team/orquesta-lite/internal/activity"
+	"github.com/collectiveai-team/orquesta-lite/internal/execlock"
 	"github.com/collectiveai-team/orquesta-lite/internal/flow"
 	"github.com/collectiveai-team/orquesta-lite/internal/runid"
 )
@@ -57,6 +58,11 @@ func (r *Runtime) Start(ctx context.Context, ir *flow.IR, options StartOptions) 
 	if r.Store == nil || r.Activities == nil || r.Catalog == nil {
 		return nil, fmt.Errorf("workflow runtime is not configured")
 	}
+	release, lockErr := execlock.Acquire(r.Store.executorLock)
+	if lockErr != nil {
+		return nil, lockErr
+	}
+	defer release()
 	if options.RunID == "" {
 		options.RunID = runid.New()
 	}
@@ -96,6 +102,11 @@ func (r *Runtime) Start(ctx context.Context, ir *flow.IR, options StartOptions) 
 }
 
 func (r *Runtime) Resume(ctx context.Context, runID string) (*Run, error) {
+	release, lockErr := execlock.Acquire(r.Store.executorLock)
+	if lockErr != nil {
+		return nil, lockErr
+	}
+	defer release()
 	run, err := r.Store.GetRun(ctx, runID)
 	if err != nil {
 		return nil, err
@@ -129,8 +140,38 @@ func (r *Runtime) Resume(ctx context.Context, runID string) (*Run, error) {
 }
 
 func (r *Runtime) executeRun(ctx context.Context, run *Run, ir *flow.IR, inputs map[string]any, policy Policy) error {
+	parent := ctx
+	ctx, stop := context.WithCancel(ctx)
+	defer stop()
+	if deadline, ok := policy.deadline(run.StartedAt); ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, deadline)
+		defer cancel()
+	}
+	monitorDone := make(chan struct{})
+	go func() {
+		defer close(monitorDone)
+		ticker := time.NewTicker(100 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				latest, err := r.Store.GetRun(ctx, run.ID)
+				if err != nil || latest.Status == RunCancelled {
+					stop()
+					return
+				}
+			}
+		}
+	}()
+	defer func() { stop(); <-monitorDone }()
 	state := newExecutionState(r, run, policy, inputs, ir.Schemas, ir.Policies)
 	_, err := state.executeIR(ctx, ir)
+	if ctx.Err() != nil {
+		err = ctx.Err()
+	}
 	if errors.Is(err, ErrNeedsHuman) {
 		return err
 	}
@@ -138,6 +179,9 @@ func (r *Runtime) executeRun(ctx context.Context, run *Run, ir *flow.IR, inputs 
 		status := RunFailed
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			status = RunCancelled
+			if parent.Err() != nil {
+				status = RunNeedsHuman
+			}
 		}
 		if latest, loadErr := r.Store.GetRun(context.Background(), run.ID); loadErr == nil && latest.Status == RunCancelled {
 			return err
@@ -223,6 +267,9 @@ func (s *executionState) executeIR(ctx context.Context, ir *flow.IR) (map[string
 			output, err = s.executeInstance(ctx, step, "")
 		}
 		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 			original := err
 			var handled *handlerHandledError
 			if errors.As(err, &handled) {
@@ -321,7 +368,7 @@ func (s *executionState) executeForeach(ctx context.Context, step flow.IRStep) (
 				child.index = index
 				child.hasItem = true
 				output, executeErr := child.executeInstance(workerCtx, step, key)
-				if executeErr != nil && !errors.Is(executeErr, ErrNeedsHuman) {
+				if executeErr != nil && workerCtx.Err() == nil && !errors.Is(executeErr, ErrNeedsHuman) {
 					handler := step.OnError
 					kind := "on_error"
 					if errors.Is(executeErr, context.Canceled) || errors.Is(executeErr, context.DeadlineExceeded) {
@@ -350,11 +397,15 @@ func (s *executionState) executeForeach(ctx context.Context, step flow.IRStep) (
 		}
 	}()
 	go func() { workers.Wait(); close(results) }()
+	var firstErr error
 	for result := range results {
-		if result.err != nil {
-			return nil, result.err
+		if result.err != nil && firstErr == nil {
+			firstErr = result.err
 		}
 		outputs[result.index] = result.output
+	}
+	if firstErr != nil {
+		return nil, firstErr
 	}
 	raw, err := marshalAggregate(step.ID, outputs)
 	if err != nil {
@@ -427,7 +478,7 @@ func (s *executionState) executeWhile(ctx context.Context, step flow.IRStep) (an
 		}
 		current, err = child.executeInstance(ctx, step, fmt.Sprintf("while-%06d", index))
 		if err != nil {
-			if !errors.Is(err, ErrNeedsHuman) {
+			if ctx.Err() == nil && !errors.Is(err, ErrNeedsHuman) {
 				handler := step.OnError
 				kind := "on_error"
 				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -698,6 +749,9 @@ func (s *executionState) executeActivity(ctx context.Context, step flow.IRStep, 
 		}
 		result, execErr := executor.Execute(execCtx, request)
 		cancel()
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		if errors.Is(execCtx.Err(), context.DeadlineExceeded) {
 			execErr = &activity.Error{Class: activity.ErrorTimeout, Op: step.Activity.Ref(), Err: context.DeadlineExceeded}
 		}

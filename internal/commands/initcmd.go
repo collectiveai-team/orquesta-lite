@@ -73,8 +73,9 @@ func writeOrMigrateTeam(path string, defaults []byte) error {
 		return err
 	}
 	oldPrefix := []byte(".orquestalite/packs/development/4/prompts/")
-	newPrefix := []byte(".orquestalite/packs/development/5/prompts/")
+	newPrefix := []byte(".orquestalite/packs/development/6/prompts/")
 	migrated := bytes.ReplaceAll(existing, oldPrefix, newPrefix)
+	migrated = bytes.ReplaceAll(migrated, []byte(".orquestalite/packs/development/5/prompts/"), newPrefix)
 	if bytes.Equal(existing, migrated) {
 		return nil
 	}
@@ -86,12 +87,19 @@ func writeOrMigrateTeam(path string, defaults []byte) error {
 }
 
 func installBuiltinDevelopmentPack(projectDir string) error {
-	destination := filepath.Join(projectDir, ".orquestalite", "packs", "development", "5")
-	return fs.WalkDir(governedpack.FS, "pack", func(path string, entry fs.DirEntry, walkErr error) error {
+	if err := installEmbeddedPack(projectDir, "pack-v5", "5"); err != nil {
+		return err
+	}
+	return installEmbeddedPack(projectDir, "pack", "6")
+}
+
+func installEmbeddedPack(projectDir, source, version string) error {
+	destination := filepath.Join(projectDir, ".orquestalite", "packs", "development", version)
+	return fs.WalkDir(governedpack.FS, source, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
-		relative, err := filepath.Rel("pack", path)
+		relative, err := filepath.Rel(source, path)
 		if err != nil {
 			return err
 		}

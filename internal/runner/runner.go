@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"github.com/collectiveai-team/orquesta-lite/internal/processtree"
 	"io"
 	"os"
 	"os/exec"
@@ -161,6 +162,7 @@ func RunAgent(ctx context.Context, s Spec) (*Result, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(cctx, launch.Args[0], launch.Args[1:]...)
+	processtree.Configure(cmd)
 	if len(s.Env) > 0 {
 		cmd.Env = s.Env
 	}

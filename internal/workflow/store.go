@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -13,8 +14,9 @@ import (
 const schemaVersion = 3
 
 type Store struct {
-	db  *sql.DB
-	now func() time.Time
+	db           *sql.DB
+	executorLock string
+	now          func() time.Time
 }
 
 func Open(path string) (*Store, error) {
@@ -26,7 +28,7 @@ func Open(path string) (*Store, error) {
 	// state transitions deterministic while activities themselves may execute
 	// concurrently outside the database.
 	db.SetMaxOpenConns(1)
-	store := &Store{db: db, now: time.Now}
+	store := &Store{db: db, now: time.Now, executorLock: filepath.Join(filepath.Dir(path), "executor.lock")}
 	if err := store.migrate(); err != nil {
 		_ = db.Close()
 		return nil, err

@@ -1,0 +1,30 @@
+{
+ "apiVersion": "orq.dev/v2",
+ "kind": "Flow",
+ "metadata": {
+  "name": "review-existing",
+  "version": "1",
+  "policy": "policy:development@3"
+ },
+ "inputs": {
+  "features_path": {
+   "schema": "schema:path@1"
+  }
+ },
+ "steps": [
+  {
+   "id": "integrated_review",
+   "uses": "subflow:integrated-review@1",
+   "with": {
+    "features_path": {
+     "$ref": "inputs.features_path"
+    }
+   }
+  }
+ ],
+ "outputs": {
+  "review": {
+   "$ref": "steps.integrated_review.output"
+  }
+ }
+}

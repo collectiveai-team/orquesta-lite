@@ -95,7 +95,7 @@ type compiledWorkflow struct {
 }
 
 func builtinSpecs() []activity.Spec {
-	return []activity.Spec{(&builtin.AgentExecutor{}).Spec(), (&builtin.CommandExecutor{}).Spec(), (&builtin.GateExecutor{}).Spec(), (builtin.GateAssertExecutor{}).Spec(), (&builtin.ArtifactExecutor{}).Spec(), (builtin.ApprovalExecutor{}).Spec()}
+	return []activity.Spec{(&builtin.AgentExecutor{}).Spec(), (&builtin.CommandExecutor{}).Spec(), (&builtin.GateExecutor{}).Spec(), (builtin.GateAssertExecutor{}).Spec(), (builtin.ReviewAggregateExecutor{}).Spec(), (&builtin.ArtifactExecutor{}).Spec(), (builtin.ApprovalExecutor{}).Spec()}
 }
 
 func compileWorkflowTarget(projectDir, target string) (*compiledWorkflow, error) {
@@ -202,7 +202,7 @@ func newWorkflowDeps(projectDir, teamPath, runID string, compiled *compiledWorkf
 		runtimeConfig = partial.Runtime
 	}
 	artifactExecutor := &builtin.ArtifactExecutor{Root: filepath.Join(stateDir, "runs", runID), MaxBytes: runtimeConfig.ArtifactLimit(), AllowedReadRoots: []string{projectDir}}
-	for _, executor := range []activity.Executor{command, gate, builtin.GateAssertExecutor{}, artifactExecutor, builtin.ApprovalExecutor{}} {
+	for _, executor := range []activity.Executor{command, gate, builtin.GateAssertExecutor{}, builtin.ReviewAggregateExecutor{}, artifactExecutor, builtin.ApprovalExecutor{}} {
 		if err = registry.Register(executor); err != nil {
 			logger.Close()
 			store.Close()
@@ -223,6 +223,16 @@ func newWorkflowDeps(projectDir, teamPath, runID string, compiled *compiledWorkf
 			logger.Close()
 			store.Close()
 			return nil, resolveErr
+		}
+		// Built-in prompts follow the pinned pack, including resume after init
+		// upgrades team.json. Custom prompt paths remain an explicit live override.
+		if compiled.IR.Pack != nil && compiled.IR.Pack.Name == "development" {
+			for name, spec := range specs {
+				if strings.HasPrefix(filepath.ToSlash(spec.PromptPath), ".orquestalite/packs/development/") {
+					spec.PromptPath = filepath.Join(compiled.Root, "prompts", filepath.Base(spec.PromptPath))
+					specs[name] = spec
+				}
+			}
 		}
 		tracker := agenthealth.New(agentHealthThreshold)
 		runStaticAgentPreflight(cfg, tracker, logger, roles)

@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -190,5 +191,46 @@ func TestAgentInvokeRejectsInvalidFallbackOutput(t *testing.T) {
 	_, err := executor.Execute(context.Background(), activity.Request{Inputs: inputs})
 	if activity.Classify(err) != activity.ErrorInvalidContract {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestAgentInvocationIdentity(t *testing.T) {
+	fake := &foreachSessionRunner{sid: "own-session"}
+	executor := foreachTestExecutor(t, fake)
+	promptPath := filepath.Join(executor.Invoker.Dir, "prompts", "coder.md")
+	if err := os.WriteFile(promptPath, []byte("write .orquestalite/results/coder.json and {{RESULT_PATH}}"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	requests := []activity.Request{
+		{RunID: "r1", ScopePath: "root", StepID: "s", ForeachKey: "0", Attempt: 1},
+		{RunID: "r2", ScopePath: "root", StepID: "s", ForeachKey: "0", Attempt: 1},
+		{RunID: "r1", ScopePath: "root", StepID: "s", ForeachKey: "1", Attempt: 1},
+		{RunID: "r1", ScopePath: "root", StepID: "s", ForeachKey: "0", Attempt: 2},
+	}
+	paths := map[string]bool{}
+	for i, request := range requests {
+		request.Inputs = []byte(`{"role":"coder","outputSchema":"schema:x@1"}`)
+		if _, err := executor.Execute(context.Background(), request); err != nil {
+			t.Fatal(err)
+		}
+		spec := fake.specs[i]
+		if paths[spec.ResultPath] {
+			t.Fatal("result path reused")
+		}
+		paths[spec.ResultPath] = true
+		if i < 3 && spec.ResumeSessionID != "" {
+			t.Fatal("cross-task session contamination")
+		}
+		if i == 3 && spec.ResumeSessionID != "own-session" {
+			t.Fatal("retry lost intentional resume")
+		}
+		if strings.Contains(spec.Prompt, ".orquestalite/results/coder.json") || !strings.Contains(spec.Prompt, spec.ResultPath) {
+			t.Fatalf("wrong prompt destination: %s", spec.Prompt)
+		}
+	}
+	for path := range paths {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatal("previous attempt result missing", err)
+		}
 	}
 }

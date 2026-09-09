@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/collectiveai-team/orquesta-lite/internal/artifacts"
 	"github.com/collectiveai-team/orquesta-lite/internal/memory"
@@ -74,8 +76,18 @@ func Raw(ctx context.Context, inv *RoleInvoker, roleName string, call RoleCall, 
 	if err != nil {
 		return outcome, err
 	}
+	// Older pinned templates spell out the configured role result path.
+	// Rewrite the template before interpolating untrusted context, so their
+	// contract remains readable without sharing writable result files.
+	if call.ResultPath != "" && spec.ResultPath != "" {
+		template = strings.ReplaceAll(template, spec.ResultPath, resultPath)
+	}
+	roleVars["RESULT_PATH"] = absPath(inv.Dir, resultPath)
 	prompt := prompts.Interpolate(template, roleVars)
 	resultAbs := absPath(inv.Dir, resultPath)
+	if err := os.MkdirAll(filepath.Dir(resultAbs), 0700); err != nil {
+		return outcome, err
+	}
 	validatePath := func(path string) error {
 		raw, readErr := os.ReadFile(path)
 		if readErr != nil {
