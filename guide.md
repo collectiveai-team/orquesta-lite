@@ -374,9 +374,12 @@ own `cmd` — never both.
 effort as a suffix, so `gemini-3.8-flash-high` and `effort: "low"` contradict
 each other and the provider refuses the pair at build time rather than mid-run;
 set one or the other. And its session lives in the macOS Keychain, where no file
-and no environment variable can prove it, so `doctor` reports `credentials:agy`
-as unverifiable instead of passing it. Confirm that login by running `agy` once
-by hand before a long flow depends on it.
+and no environment variable can prove it, so `doctor` checks it by asking the
+CLI: it runs `agy models`, an authenticated call, and reports
+`credentials:agy session verified` when it succeeds. A failure is reported as a
+warning quoting the CLI's own message, never as a preflight failure — from
+outside, a closed session and an unreachable network look the same, and refusing
+to run because the link is down would be worse than saying so.
 
 A last caveat for a single-subscription team: no Antigravity model has a price
 in the cost table, and pricing a subscription makes no sense, so their spend

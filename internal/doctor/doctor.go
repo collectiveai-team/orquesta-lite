@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/collectiveai-team/orquesta-lite/internal/config"
 	"github.com/collectiveai-team/orquesta-lite/internal/contextopt"
@@ -61,6 +62,28 @@ var credentialPaths = map[string]struct {
 var keychainProviders = map[string]string{
 	"agy": "the macOS Keychain",
 }
+
+// sessionProbes names, per provider, a cheap non-interactive command that only
+// succeeds with a valid session. It exists for the providers above: their
+// credentials cannot be read from disk, so asking the CLI is the only way to
+// tell a logged-in machine from a logged-out one. Without it the check can
+// only ever say "cannot verify", and a warning that fires on every run is one
+// a reader learns to scroll past — this one already convinced a reader that a
+// working provider was unavailable.
+//
+// `agy models` posts to loadCodeAssist, so it fails without credentials and
+// fails without a network. The two are not reliably distinguishable from
+// outside, which is why a failed probe warns and never fails: refusing a
+// preflight because the link is down would be worse than the warning it
+// replaces.
+var sessionProbes = map[string][]string{
+	"agy": {"models"},
+}
+
+// sessionProbeTimeout bounds a probe. It is a network call inside a preflight,
+// so a slow link degrades to the same warning as a missing one instead of
+// stalling doctor.
+const sessionProbeTimeout = 8 * time.Second
 
 // Run executes all preflight checks against dir and returns one Check per
 // concern. ctx is the budget for checks that shell out — callers may pass a
@@ -125,7 +148,7 @@ func Run(ctx context.Context, dir string) []Check {
 		status, detail := checkProviderCLI(ctx, path, provider, usedAgents(cfg, providerName), cfg.Limits.SessionResumeEnabled())
 		add(status, "provider:"+providerName, detail)
 
-		if status, detail, reportable := credentialCheck(providerName); reportable {
+		if status, detail, reportable := credentialCheck(ctx, providerName, path); reportable {
 			add(status, "credentials:"+providerName, detail)
 		}
 	}
@@ -386,9 +409,9 @@ func ProviderHasUsableCredentials(provider string) bool {
 // credentialCheck reports how doctor can verify one provider's credentials.
 // reportable is false only for a provider that declares no profile at all, in
 // which case no check is emitted rather than a misleading pass.
-func credentialCheck(provider string) (status Status, detail string, reportable bool) {
-	if store, keychain := keychainProviders[provider]; keychain {
-		return StatusWarn, "cannot be verified from disk (the session lives in " + store + ") — run the CLI once by hand to confirm it is logged in", true
+func credentialCheck(ctx context.Context, provider, executable string) (status Status, detail string, reportable bool) {
+	if args, probe := sessionProbes[provider]; probe {
+		return probeSession(ctx, provider, executable, args)
 	}
 	cred, ok := credentialPaths[provider]
 	if !ok {
@@ -401,6 +424,47 @@ func credentialCheck(provider string) (status Status, detail string, reportable 
 		return StatusOK, "credentials at ~/" + f, true
 	}
 	return StatusWarn, fmt.Sprintf("no credentials found (~/%s or %s) — log in with the CLI once", cred.files[0], cred.envVar), true
+}
+
+// probeSession asks the CLI whether it has a session, and reports back what it
+// answered. A failure is always a warning: the probe cannot tell a logged-out
+// machine from an unreachable network, and the CLI's own first line says more
+// about which one it is than any status this function could invent.
+func probeSession(ctx context.Context, provider, executable string, args []string) (Status, string, bool) {
+	pctx, cancel := context.WithTimeout(ctx, sessionProbeTimeout)
+	defer cancel()
+
+	command := executable + " " + strings.Join(args, " ")
+	output, err := exec.CommandContext(pctx, executable, args...).CombinedOutput()
+	if err == nil {
+		return StatusOK, "session verified with `" + command + "`", true
+	}
+
+	reason := firstNonEmptyLine(output)
+	if reason == "" {
+		reason = err.Error()
+	}
+	detail := "`" + command + "` failed: " + reason
+	if store, keychain := keychainProviders[provider]; keychain {
+		detail += " — the session lives in " + store + ", so this probe is the only way to see it; a network failure looks the same from here"
+	}
+	return StatusWarn, detail, true
+}
+
+// firstNonEmptyLine returns the first line with content, trimmed and bounded so
+// a chatty CLI cannot push the rest of the report off the screen.
+func firstNonEmptyLine(raw []byte) string {
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if len(line) > 160 {
+			line = line[:157] + "..."
+		}
+		return line
+	}
+	return ""
 }
 
 func firstExistingHomeFile(rels []string) string {
