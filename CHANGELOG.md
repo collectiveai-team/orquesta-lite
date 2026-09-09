@@ -3,6 +3,28 @@
 All notable changes to orq-lite are recorded here. Versions follow the git
 tags cut as GitHub releases (the binary's `--version` is stamped from the tag).
 
+## Unreleased
+
+### Fixed
+
+- **Agent sessions and result files are isolated per workflow run.** Session
+  task keys now include the run, scope, foreach item, and step identities, and
+  each invocation attempt receives its own result path. Re-running a flow can
+  no longer inherit a Claude or Codex conversation from an earlier run.
+- **Cancellation, deadlines, and executor ownership are enforced end to end.**
+  A workflow observes its durable canceled state, applies its original global
+  deadline after resume, terminates provider subprocess trees, and prevents a
+  second executor from driving the same state database concurrently.
+- **Governed review output is aggregated semantically.** Reviewers now report
+  complete, unavailable, and not-applicable coverage explicitly; incomplete
+  coverage cannot be interpreted as approval or turned into a product defect.
+
+### Changed
+
+- Run IDs use 128 bits of cryptographic randomness and fail closed if entropy
+  is unavailable. The governed pack is upgraded to version 6 while retaining
+  the embedded version 5 assets required by pinned configurations.
+
 ## v0.6.1 — doctor asks the CLI instead of guessing at the Keychain
 
 ### Fixed

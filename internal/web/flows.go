@@ -31,6 +31,7 @@ func webBuiltinSpecs() []activity.Spec {
 	return []activity.Spec{
 		(&builtin.AgentExecutor{}).Spec(), (&builtin.CommandExecutor{}).Spec(),
 		(&builtin.GateExecutor{}).Spec(), (builtin.GateAssertExecutor{}).Spec(),
+		(builtin.ReviewAggregateExecutor{}).Spec(),
 		(&builtin.ArtifactExecutor{}).Spec(), (builtin.ApprovalExecutor{}).Spec(),
 	}
 }

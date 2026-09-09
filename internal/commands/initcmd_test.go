@@ -24,7 +24,7 @@ func TestInit_CreatesScaffolding(t *testing.T) {
 	for _, p := range []string{
 		"team.json",
 		".orquestalite/results",
-		".orquestalite/packs/development/5/pack.json",
+		".orquestalite/packs/development/6/pack.json",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, p)); err != nil {
 			t.Errorf("missing %s: %v", p, err)
@@ -198,13 +198,13 @@ func TestInitScaffoldsV2DevelopmentPack(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "flows.json")); !os.IsNotExist(err) {
 		t.Fatalf("legacy flows.json must not be scaffolded, stat error = %v", err)
 	}
-	packRoot := filepath.Join(dir, ".orquestalite", "packs", "development", "5")
+	packRoot := filepath.Join(dir, ".orquestalite", "packs", "development", "6")
 	pack, err := flow.LoadPack(packRoot)
 	if err != nil {
 		t.Fatalf("scaffolded development pack is invalid: %v", err)
 	}
-	if pack.Name != "development" || pack.Version != "5" {
-		t.Fatalf("scaffolded pack = %s@%s, want development@5", pack.Name, pack.Version)
+	if pack.Name != "development" || pack.Version != "6" {
+		t.Fatalf("scaffolded pack = %s@%s, want development@6", pack.Name, pack.Version)
 	}
 	catalog := flow.NewDirectoryCatalog(packRoot, builtinSpecs())
 	doc, _, err := catalog.ResolveDocument(flow.ResourceRef{Kind: "flow", Name: "factory-governed", Version: "2"})
@@ -246,7 +246,7 @@ func TestInitMigratesBuiltinPromptPathsFromDevelopmentV4(t *testing.T) {
 	dir := t.TempDir()
 	legacyTeam := strings.ReplaceAll(
 		string(mustReadAsset("assets/team.json")),
-		".orquestalite/packs/development/5/prompts/",
+		".orquestalite/packs/development/6/prompts/",
 		".orquestalite/packs/development/4/prompts/",
 	)
 	legacyTeam = strings.Replace(legacyTeam, `"conventions_file": "CONVENTIONS.md"`, `"conventions_file": "CUSTOM.md"`, 1)
@@ -264,8 +264,8 @@ func TestInitMigratesBuiltinPromptPathsFromDevelopmentV4(t *testing.T) {
 	if strings.Contains(team, ".orquestalite/packs/development/4/prompts/") {
 		t.Fatalf("team.json still points to development@4 prompts:\n%s", team)
 	}
-	if !strings.Contains(team, ".orquestalite/packs/development/5/prompts/") {
-		t.Fatalf("team.json does not point to development@5 prompts:\n%s", team)
+	if !strings.Contains(team, ".orquestalite/packs/development/6/prompts/") {
+		t.Fatalf("team.json does not point to development@6 prompts:\n%s", team)
 	}
 	if !strings.Contains(team, `"conventions_file": "CUSTOM.md"`) {
 		t.Fatal("init overwrote unrelated user configuration")

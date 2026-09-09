@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/collectiveai-team/orquesta-lite/internal/processtree"
 	"io"
 	"os"
 	"os/exec"
@@ -80,6 +81,7 @@ func (e *Executor) call(ctx context.Context, envelope requestEnvelope) (*respons
 		return nil, err
 	}
 	command := exec.CommandContext(ctx, e.Manifest.Command[0], e.Manifest.Command[1:]...)
+	processtree.Configure(command)
 	command.Dir = e.Dir
 	command.Env = append(os.Environ(), e.Env...)
 	command.Stdin = bytes.NewReader(append(raw, '\n'))

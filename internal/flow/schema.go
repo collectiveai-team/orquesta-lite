@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/collectiveai-team/orquesta-lite/internal/review"
 	"io"
 	"math"
 	"reflect"
@@ -30,6 +31,7 @@ func (t *Types) UnmarshalJSON(raw []byte) error {
 // Schema is the deliberately small, fail-closed JSON Schema subset supported
 // by the runtime MVP.
 type Schema struct {
+	ReviewContract       int                `json:"x-orq-review-contract,omitempty"`
 	Dialect              string             `json:"$schema,omitempty"`
 	Title                string             `json:"title,omitempty"`
 	Type                 Types              `json:"type,omitempty"`
@@ -62,6 +64,9 @@ func DecodeSchema(r io.Reader) (*Schema, error) {
 }
 
 func (s *Schema) validateDefinition(path string) error {
+	if s.ReviewContract != 0 && s.ReviewContract != 2 {
+		return fmt.Errorf("unsupported review contract %d", s.ReviewContract)
+	}
 	allowed := map[string]bool{"null": true, "boolean": true, "object": true, "array": true, "number": true, "integer": true, "string": true}
 	for _, typ := range s.Type {
 		if !allowed[typ] {
@@ -97,7 +102,20 @@ func (s *Schema) ValidateJSON(raw []byte) error {
 	return s.Validate(value)
 }
 
-func (s *Schema) Validate(value any) error { return s.validateValue("$", value) }
+func (s *Schema) Validate(value any) error {
+	if err := s.validateValue("$", value); err != nil {
+		return err
+	}
+	if s.ReviewContract == 2 {
+		raw, err := json.Marshal(value)
+		if err != nil {
+			return err
+		}
+		_, err = review.Decode(raw)
+		return err
+	}
+	return nil
+}
 
 func (s *Schema) validateValue(path string, value any) error {
 	if len(s.Type) > 0 && !matchesAnyType(s.Type, value) {

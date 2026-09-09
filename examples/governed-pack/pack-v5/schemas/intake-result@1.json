@@ -1,0 +1,11 @@
+{
+  "type": "object",
+  "properties": {
+    "actionable": {"type": "boolean"},
+    "summary": {"type": "string"},
+    "plan": {"type": "string"},
+    "missing_info": {"type": "array", "items": {"type": "string"}}
+  },
+  "required": ["actionable", "summary", "plan", "missing_info"],
+  "additionalProperties": false
+}

@@ -1,0 +1,10 @@
+{
+  "type": "object",
+  "properties": {
+    "continue": {"type": "boolean"},
+    "summary": {"type": "string", "minLength": 1},
+    "remaining": {"type": "array", "items": {"type": "string"}}
+  },
+  "required": ["continue", "summary", "remaining"],
+  "additionalProperties": false
+}

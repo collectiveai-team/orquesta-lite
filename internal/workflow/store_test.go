@@ -122,3 +122,24 @@ func (s *memorySink) Append(raw json.RawMessage) error {
 	s.events = append(s.events, append(json.RawMessage(nil), raw...))
 	return nil
 }
+
+// A deterministic ID collision must not overwrite or adopt another run.
+func TestRunIDCollision(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "collision.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	params := CreateRunParams{ID: "r20260908T120000Z-abcd", FlowRef: "flow:first@1", IR: json.RawMessage(`{}`), Inputs: json.RawMessage(`{}`), Policy: json.RawMessage(`{}`)}
+	if _, _, err := store.CreateRunOnce(context.Background(), params); err != nil {
+		t.Fatal(err)
+	}
+	params.FlowRef = "flow:other@1"
+	if _, _, err := store.CreateRunOnce(context.Background(), params); err == nil {
+		t.Fatal("collision accepted")
+	}
+	run, err := store.GetRun(context.Background(), params.ID)
+	if err != nil || run.FlowRef != "flow:first@1" {
+		t.Fatalf("original changed: %+v %v", run, err)
+	}
+}

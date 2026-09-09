@@ -1,0 +1,51 @@
+{
+  "type": "object",
+  "properties": {
+    "status": {"type": "string", "enum": ["active", "complete"]},
+    "revision": {"type": "number"},
+    "summary": {"type": "string", "minLength": 1},
+    "next_ticket": {
+      "type": ["object", "null"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "title": {"type": "string", "minLength": 1},
+        "objective": {"type": "string", "minLength": 1},
+        "acceptance_criteria": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "minItems": 1
+        },
+        "dependencies": {"type": "array", "items": {"type": "string"}},
+        "files_hint": {"type": "array", "items": {"type": "string"}}
+      },
+      "required": ["id", "title", "objective", "acceptance_criteria", "dependencies", "files_hint"],
+      "additionalProperties": false
+    },
+    "pending": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "title": {"type": "string", "minLength": 1},
+          "objective": {"type": "string", "minLength": 1},
+          "acceptance_criteria": {
+            "type": "array",
+            "items": {"type": "string", "minLength": 1},
+            "minItems": 1
+          },
+          "dependencies": {"type": "array", "items": {"type": "string"}},
+          "files_hint": {"type": "array", "items": {"type": "string"}}
+        },
+        "required": ["id", "title", "objective", "acceptance_criteria", "dependencies", "files_hint"],
+        "additionalProperties": false
+      }
+    },
+    "completed": {"type": "array", "items": {"type": "string"}},
+    "blocked": {"type": "array", "items": {"type": "string"}},
+    "risks": {"type": "array", "items": {"type": "string"}},
+    "history": {"type": "array", "items": {"type": ["string", "object"]}}
+  },
+  "required": ["status", "revision", "summary", "next_ticket", "pending", "completed", "blocked", "risks", "history"],
+  "additionalProperties": false
+}

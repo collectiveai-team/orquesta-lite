@@ -22,7 +22,7 @@ func TestRunDevelopmentAliasRejectsUnknownCommand(t *testing.T) {
 func TestFactoryAliasRunsFactoryGovernedV2(t *testing.T) {
 	dir := t.TempDir()
 	flowRaw := []byte(`{"apiVersion":"orq.dev/v2","kind":"Flow","metadata":{"name":"factory-governed","version":"2"},"steps":[{"id":"done","uses":"activity:command.run@1","with":{"argv":["true"]}}],"outputs":{}}`)
-	flowPath := filepath.Join(dir, ".orquestalite", "packs", "development", "5", "flows", "factory-governed@2.json")
+	flowPath := filepath.Join(dir, ".orquestalite", "packs", "development", "6", "flows", "factory-governed@2.json")
 	if err := os.MkdirAll(filepath.Dir(flowPath), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +41,7 @@ func TestFactoryAliasRunsFactoryGovernedV2(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = os.WriteFile(filepath.Join(dir, ".orquestalite", "packs", "development", "5", "pack.json"), manifestRaw, 0o644); err != nil {
+	if err = os.WriteFile(filepath.Join(dir, ".orquestalite", "packs", "development", "6", "pack.json"), manifestRaw, 0o644); err != nil {
 		t.Fatal(err)
 	}
 

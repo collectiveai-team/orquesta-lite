@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/collectiveai-team/orquesta-lite/internal/processtree"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,6 +28,7 @@ func (ExecRunner) Run(ctx context.Context, dir string, argv []string) ([]byte, [
 		return nil, nil, -1, fmt.Errorf("empty argv")
 	}
 	command := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	processtree.Configure(command)
 	command.Dir = dir
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr

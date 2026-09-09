@@ -2,9 +2,12 @@ package builtin
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/collectiveai-team/orquesta-lite/internal/review"
+	"path/filepath"
 
 	"github.com/collectiveai-team/orquesta-lite/internal/activity"
 	"github.com/collectiveai-team/orquesta-lite/internal/invoke"
@@ -67,17 +70,47 @@ func (a *AgentExecutor) Execute(ctx context.Context, request activity.Request) (
 	// (and inherit its entire accumulated conversation) while retries WITHIN
 	// the same iteration (same ScopePath, different Attempt) still resume
 	// correctly.
-	taskID := request.StepID
-	if request.ScopePath != "" {
-		taskID = request.ScopePath + "/" + request.StepID
-	}
+	identity, _ := json.Marshal([]string{request.RunID, request.ScopePath, request.ForeachKey, request.StepID})
+	taskID := fmt.Sprintf("%x", sha256.Sum256(identity))
+	resultPath := filepath.Join(".orquestalite", "results", "invocations", taskID, fmt.Sprintf("attempt-%d.json", request.Attempt))
+
 	// The spend is attached to the Result on *every* return path below. The
 	// runtime sums attempts.cost_usd into RunUsage.CostUSD, which is what a
 	// policy's maxCostUSD is checked against — so an invocation that failed,
 	// or that fell back to a canned output, still has to report what its agent
 	// chain burned. Dropping it on the failure paths would leave the only
 	// spend-shaped brake blind to precisely the runs that need braking.
-	outcome, err := invoke.Raw(ctx, a.Invoker, input.Role, invoke.RoleCall{Vars: vars, Skills: input.Skills}, invoke.RunContext{TaskID: taskID, Attempt: request.Attempt}, func(raw []byte) error { return a.Validate(input.OutputSchema, raw) })
+	outcome, err := invoke.Raw(ctx, a.Invoker, input.Role, invoke.RoleCall{Vars: vars, Skills: input.Skills, ResultPath: resultPath}, invoke.RunContext{TaskID: taskID, Attempt: request.Attempt}, func(raw []byte) error {
+		if err := a.Validate(input.OutputSchema, raw); err != nil {
+			return err
+		}
+		if input.OutputSchema == "schema:review-result@2" {
+			current, err := review.Decode(raw)
+			if err != nil {
+				return err
+			}
+			previous := []review.Result{}
+			for key, value := range input.Context {
+				switch key {
+				case "QA_REVIEW", "CRITIC_REVIEW", "ADVERSARY_REVIEW", "VISUAL_REVIEW", "GOV_REVIEW":
+					b, _ := json.Marshal(value)
+					if text, ok := value.(string); ok {
+						b = []byte(text)
+					}
+					prior, err := review.Decode(b)
+					if err != nil {
+						return fmt.Errorf("upstream %s: %w", key, err)
+					}
+					previous = append(previous, prior)
+				}
+			}
+			return review.Preserve(current, previous)
+		}
+		return nil
+	})
+	if ctx.Err() != nil {
+		return activity.Result{CostUSD: outcome.CostUSD}, ctx.Err()
+	}
 	if err != nil {
 		if len(input.FallbackOutput) > 0 {
 			if validationErr := a.Validate(input.OutputSchema, input.FallbackOutput); validationErr != nil {
