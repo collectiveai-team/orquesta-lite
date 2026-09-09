@@ -3,7 +3,7 @@
 All notable changes to orq-lite are recorded here. Versions follow the git
 tags cut as GitHub releases (the binary's `--version` is stamped from the tag).
 
-## Unreleased
+## v0.6.1 — doctor asks the CLI instead of guessing at the Keychain
 
 ### Fixed
 
