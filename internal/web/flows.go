@@ -28,12 +28,7 @@ type flowEntry struct {
 }
 
 func webBuiltinSpecs() []activity.Spec {
-	return []activity.Spec{
-		(&builtin.AgentExecutor{}).Spec(), (&builtin.CommandExecutor{}).Spec(),
-		(&builtin.GateExecutor{}).Spec(), (builtin.GateAssertExecutor{}).Spec(),
-		(builtin.ReviewAggregateExecutor{}).Spec(),
-		(&builtin.ArtifactExecutor{}).Spec(), (builtin.ApprovalExecutor{}).Spec(),
-	}
+	return builtin.Specs()
 }
 
 // handleFlows serves only strict v2 flows discovered in local catalogs and

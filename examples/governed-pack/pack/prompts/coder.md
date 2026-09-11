@@ -6,8 +6,15 @@ Durable workflow state:
 {{WORKFLOW_STATE}}
 Current ticket (the only authorized product scope for this invocation):
 {{TICKET}}
+Refused commit (empty unless a commit hook rejected this ticket's work):
+{{COMMIT_FAILURE}}
 
-Inspect the existing code first. Implement only the current ticket and its
+If the refused-commit block above is non-empty, that is your only job this
+invocation: the ticket already passed verification and the commit hooks rejected
+it. Read the hook output, fix exactly what it reports, and change nothing else.
+Do not run `git commit` yourself — the flow retries the commit after you.
+
+Otherwise, inspect the existing code first. Implement only the current ticket and its
 acceptance criteria. Do not implement pending tickets, even when their future
 shape is obvious. A minimal shared prerequisite is allowed only when the current
 ticket cannot work without it; report it explicitly in `files_changed` and do

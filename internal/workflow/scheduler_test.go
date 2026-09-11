@@ -43,9 +43,53 @@ func (e *echoExecutor) Spec() activity.Spec {
 	return activity.Spec{Name: "test.echo", Version: "1", Effect: activity.EffectIdempotent}
 }
 
+// incrementExecutor counts how many invocations overlap.
+//
+// It used to prove overlap with a 10ms sleep, which is not synchronization: on a
+// loaded runner the first worker could enter, sleep and leave before the second
+// started, so maxActive stayed 1 and the test failed for a reason that had
+// nothing to do with the scheduler. expectOverlap replaces the sleep with a
+// rendezvous — each invocation blocks until that many are inside at once — so
+// the test passes only when the scheduler really does run them together, and
+// fails on a bounded timeout rather than hanging when it does not.
 type incrementExecutor struct {
 	mu                sync.Mutex
 	active, maxActive int
+
+	// expectOverlap is how many invocations must be inside at once before any
+	// may leave. Zero disables the rendezvous for tests that only count calls.
+	expectOverlap int
+	rendezvous    chan struct{}
+	once          sync.Once
+}
+
+// overlapTimeout bounds the rendezvous so a scheduler that has stopped running
+// work in parallel fails the assertion instead of hanging the suite.
+const overlapTimeout = 10 * time.Second
+
+func (e *incrementExecutor) enter() {
+	e.mu.Lock()
+	e.active++
+	if e.active > e.maxActive {
+		e.maxActive = e.active
+	}
+	reached := e.expectOverlap > 0 && e.active >= e.expectOverlap
+	e.mu.Unlock()
+	if reached {
+		e.once.Do(func() { close(e.rendezvous) })
+	}
+	if e.expectOverlap > 0 {
+		select {
+		case <-e.rendezvous:
+		case <-time.After(overlapTimeout):
+		}
+	}
+}
+
+func (e *incrementExecutor) leave() {
+	e.mu.Lock()
+	e.active--
+	e.mu.Unlock()
 }
 
 func (e *incrementExecutor) Spec() activity.Spec {
@@ -56,16 +100,8 @@ func (e *incrementExecutor) Execute(_ context.Context, request activity.Request)
 		Value float64 `json:"value"`
 	}
 	_ = json.Unmarshal(request.Inputs, &input)
-	e.mu.Lock()
-	e.active++
-	if e.active > e.maxActive {
-		e.maxActive = e.active
-	}
-	e.mu.Unlock()
-	time.Sleep(10 * time.Millisecond)
-	e.mu.Lock()
-	e.active--
-	e.mu.Unlock()
+	e.enter()
+	defer e.leave()
 	raw, _ := json.Marshal(map[string]any{"value": input.Value + 1})
 	return activity.Result{Output: raw}, nil
 }
@@ -120,7 +156,7 @@ func TestSchedulerParallelForeachHonorsIsolation(t *testing.T) {
 	store, _ := Open(filepath.Join(t.TempDir(), "w.db"))
 	defer store.Close()
 	registry := activity.NewRegistry()
-	executor := &incrementExecutor{}
+	executor := &incrementExecutor{expectOverlap: 2, rendezvous: make(chan struct{})}
 	_ = registry.Register(executor)
 	runtime := &Runtime{Store: store, Activities: registry, Catalog: catalog}
 	policy := DefaultPolicy()

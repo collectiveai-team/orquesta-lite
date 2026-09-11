@@ -11,10 +11,14 @@ import (
 	"sort"
 	"strings"
 
+	governedpack "github.com/collectiveai-team/orquesta-lite/examples/governed-pack"
+	"github.com/collectiveai-team/orquesta-lite/internal/buildinfo"
 	"github.com/collectiveai-team/orquesta-lite/internal/flow"
+	"github.com/collectiveai-team/orquesta-lite/internal/packstate"
+	"github.com/collectiveai-team/orquesta-lite/internal/packsync"
 )
 
-const packUsage = "usage: orq-lite pack <install <pack-dir> [--force] | list>"
+const packUsage = "usage: orq-lite pack <install <pack-dir> [--force] | list | sync [<name>] [--dry-run] | keep [<name>]>"
 
 // PackCLI implements `orq-lite pack <command>`. `install` verifies a pack
 // directory against its pack.json manifest (every file digest, no unlisted
@@ -32,6 +36,27 @@ func PackCLI(_ context.Context, projectDir string, args []string, out io.Writer)
 			return fmt.Errorf("%s", packUsage)
 		}
 		return packList(projectDir, out)
+	case "sync", "keep":
+		name := builtinPackName
+		dryRun := false
+		for _, arg := range args[1:] {
+			switch {
+			case arg == "--dry-run" || arg == "-dry-run":
+				dryRun = true
+			default:
+				name = arg
+			}
+		}
+		if dryRun && args[0] == "keep" {
+			return fmt.Errorf("%s", packUsage)
+		}
+		if name != builtinPackName {
+			return fmt.Errorf("only the built-in pack %q is shipped with this binary; %q is not", builtinPackName, name)
+		}
+		if args[0] == "keep" {
+			return packKeep(projectDir, out)
+		}
+		return packSync(projectDir, dryRun, out)
 	case "install":
 		force := false
 		source := ""
@@ -213,4 +238,58 @@ func packInstall(projectDir, source string, force bool, out io.Writer) error {
 	// not suggest the flow carries the pack's number.
 	fmt.Fprintf(out, "run flows with: orq-lite flow run %s/<flow>@<flow-version>  (pin this pack with %s@%s/<flow>@<flow-version>)\n", pack.Name, pack.Name, pack.Version)
 	return nil
+}
+
+// packSync replaces the installed built-in pack with this binary's copy.
+//
+// It overwrites rather than merges. An installed pack is byte-verified by
+// flow.LoadPack on every run, so a hand-edited one does not load in the first
+// place: there is no supported local edit for this to destroy. Projects that
+// need a different pack fork it under another name and `pack install` it.
+func packSync(projectDir string, dryRun bool, out io.Writer) error {
+	root := builtinPackRoot(projectDir)
+	changes, err := packsync.Diff(root, governedpack.FS, builtinPackSource)
+	if err != nil {
+		return err
+	}
+	for _, change := range changes {
+		fmt.Fprintf(out, "  %-40s %s\n", change.Path, change.Kind)
+	}
+	if dryRun {
+		fmt.Fprintf(out, "%d file(s) would change; re-run without --dry-run to apply\n", len(changes))
+		return nil
+	}
+	if err = packsync.Apply(root, governedpack.FS, builtinPackSource); err != nil {
+		return err
+	}
+	// A sync that left an unloadable pack behind would break every later run,
+	// so prove it verifies before recording the version that wrote it.
+	if err = packVerifies(root); err != nil {
+		return fmt.Errorf("pack %s@%s does not verify after sync: %w", builtinPackName, builtinPackVersion, err)
+	}
+	version := buildinfo.Version
+	if err = packstate.Save(projectDir, builtinPackName, builtinPackVersion, packstate.Stamp{InstalledFrom: version, Acknowledged: version}); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "synced %s@%s to orq-lite %s (%d file(s) changed)\n", builtinPackName, builtinPackVersion, version, len(changes))
+	return nil
+}
+
+// packKeep records that the operator chose to stay on the installed pack until
+// the next orq-lite update. It moves Acknowledged only: InstalledFrom stays a
+// fact about the bytes on disk, so a later report can still say where they came
+// from.
+func packKeep(projectDir string, out io.Writer) error {
+	stamp := packstate.Load(projectDir, builtinPackName, builtinPackVersion)
+	stamp.Acknowledged = buildinfo.Version
+	if err := packstate.Save(projectDir, builtinPackName, builtinPackVersion, stamp); err != nil {
+		return err
+	}
+	fmt.Fprintf(out, "keeping %s@%s as installed; orq-lite %s will not ask again\n", builtinPackName, builtinPackVersion, buildinfo.Version)
+	return nil
+}
+
+func packVerifies(root string) error {
+	_, err := flow.LoadPack(root)
+	return err
 }
