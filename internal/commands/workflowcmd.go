@@ -14,11 +14,13 @@ import (
 	"strings"
 	"time"
 
+	governedpack "github.com/collectiveai-team/orquesta-lite/examples/governed-pack"
 	"github.com/collectiveai-team/orquesta-lite/internal/activity"
 	"github.com/collectiveai-team/orquesta-lite/internal/activity/builtin"
 	activityprocess "github.com/collectiveai-team/orquesta-lite/internal/activity/process"
 	"github.com/collectiveai-team/orquesta-lite/internal/agenthealth"
 	"github.com/collectiveai-team/orquesta-lite/internal/artifacts"
+	"github.com/collectiveai-team/orquesta-lite/internal/buildinfo"
 	"github.com/collectiveai-team/orquesta-lite/internal/config"
 	"github.com/collectiveai-team/orquesta-lite/internal/contextopt"
 	"github.com/collectiveai-team/orquesta-lite/internal/doctor"
@@ -26,6 +28,8 @@ import (
 	"github.com/collectiveai-team/orquesta-lite/internal/fallback"
 	"github.com/collectiveai-team/orquesta-lite/internal/flow"
 	"github.com/collectiveai-team/orquesta-lite/internal/invoke"
+	"github.com/collectiveai-team/orquesta-lite/internal/packstate"
+	"github.com/collectiveai-team/orquesta-lite/internal/packsync"
 	"github.com/collectiveai-team/orquesta-lite/internal/runid"
 	"github.com/collectiveai-team/orquesta-lite/internal/sessions"
 	"github.com/collectiveai-team/orquesta-lite/internal/usageguard"
@@ -95,7 +99,7 @@ type compiledWorkflow struct {
 }
 
 func builtinSpecs() []activity.Spec {
-	return []activity.Spec{(&builtin.AgentExecutor{}).Spec(), (&builtin.CommandExecutor{}).Spec(), (&builtin.GateExecutor{}).Spec(), (builtin.GateAssertExecutor{}).Spec(), (builtin.ReviewAggregateExecutor{}).Spec(), (&builtin.ArtifactExecutor{}).Spec(), (builtin.ApprovalExecutor{}).Spec()}
+	return builtin.Specs()
 }
 
 func compileWorkflowTarget(projectDir, target string) (*compiledWorkflow, error) {
@@ -202,7 +206,7 @@ func newWorkflowDeps(projectDir, teamPath, runID string, compiled *compiledWorkf
 		runtimeConfig = partial.Runtime
 	}
 	artifactExecutor := &builtin.ArtifactExecutor{Root: filepath.Join(stateDir, "runs", runID), MaxBytes: runtimeConfig.ArtifactLimit(), AllowedReadRoots: []string{projectDir}}
-	for _, executor := range []activity.Executor{command, gate, builtin.GateAssertExecutor{}, builtin.ReviewAggregateExecutor{}, artifactExecutor, builtin.ApprovalExecutor{}} {
+	for _, executor := range []activity.Executor{command, gate, builtin.GateAssertExecutor{}, builtin.ReviewAggregateExecutor{}, artifactExecutor, builtin.ApprovalExecutor{}, &builtin.GitCommitExecutor{DefaultDir: projectDir}} {
 		if err = registry.Register(executor); err != nil {
 			logger.Close()
 			store.Close()
@@ -495,8 +499,14 @@ func flowCLIRun(ctx context.Context, projectDir string, args []string, out io.Wr
 	if err != nil {
 		return err
 	}
-	sourceKey, policyTarget, inputArgs, err := splitRunOptions(args[1:])
+	sourceKey, policyTarget, acceptDrift, inputArgs, err := splitRunOptions(args[1:])
 	if err != nil {
+		return err
+	}
+	// Before the run exists, not twenty minutes into it: a pack an older
+	// orq-lite installed is a silently different contract, and the operator is
+	// the only one who can say whether that is intended.
+	if err = checkPackDrift(projectDir, compiled, acceptDrift); err != nil {
 		return err
 	}
 	inputs, err := workflowInputs(compiled.IR, inputArgs)
@@ -544,27 +554,97 @@ func reportUnfinishedRun(ctx context.Context, store *workflow.Store, flowRef str
 	fmt.Fprintf(out, "notice: %s already has an unfinished run %s (status=%s); resume it with: orq-lite flow resume %s\n", flowRef, existing.ID, existing.Status, existing.ID)
 }
 
-func splitRunOptions(args []string) (sourceKey, policyTarget string, inputs []string, err error) {
+func splitRunOptions(args []string) (sourceKey, policyTarget string, acceptDrift bool, inputs []string, err error) {
 	sourceKey, remaining, err := splitSourceKey(args)
 	if err != nil {
-		return "", "", nil, err
+		return "", "", false, nil, err
 	}
 	inputs = make([]string, 0, len(remaining))
 	for _, arg := range remaining {
+		if arg == "--accept-pack-drift" {
+			acceptDrift = true
+			continue
+		}
 		if strings.HasPrefix(arg, "--policy=") {
 			if policyTarget != "" {
-				return "", "", nil, fmt.Errorf("--policy may only be specified once")
+				return "", "", false, nil, fmt.Errorf("--policy may only be specified once")
 			}
 			policyTarget = strings.TrimPrefix(arg, "--policy=")
 			if policyTarget == "" {
-				return "", "", nil, fmt.Errorf("--policy cannot be empty")
+				return "", "", false, nil, fmt.Errorf("--policy cannot be empty")
 			}
 			continue
 		}
 		inputs = append(inputs, arg)
 	}
-	return sourceKey, policyTarget, inputs, nil
+	return sourceKey, policyTarget, acceptDrift, inputs, nil
 }
+
+// checkPackDrift stops a run whose pack this binary no longer ships, unless the
+// operator has already answered for this version.
+//
+// It applies only to the built-in pack installed in this project: a pack the
+// user forked under another name, or a flow loaded from a path, is theirs and
+// this binary has no newer copy to offer.
+func checkPackDrift(projectDir string, compiled *compiledWorkflow, accept bool) error {
+	if compiled.IR.Pack == nil || compiled.IR.Pack.Name != builtinPackName || compiled.IR.Pack.Version != builtinPackVersion {
+		return nil
+	}
+	root := builtinPackRoot(projectDir)
+	resolved, err := filepath.Abs(compiled.Root)
+	if err != nil {
+		return nil
+	}
+	expected, err := filepath.Abs(root)
+	if err != nil || resolved != expected {
+		return nil
+	}
+	changes, err := packsync.Diff(root, governedpack.FS, builtinPackSource)
+	if err != nil {
+		return nil
+	}
+	stamp := packstate.Load(projectDir, builtinPackName, builtinPackVersion)
+	switch packsync.Decide(stamp, buildinfo.Version, len(changes) > 0) {
+	case packsync.Proceed:
+		return nil
+	case packsync.Restamp:
+		// Nothing would change, so there is no question worth asking. Record
+		// this version so the comparison is not repeated on every run.
+		stamp.InstalledFrom = buildinfo.Version
+		_ = packstate.Save(projectDir, builtinPackName, builtinPackVersion, stamp)
+		return nil
+	}
+	if accept {
+		return nil
+	}
+	return packDriftError(stamp, changes)
+}
+
+func packDriftError(stamp packstate.Stamp, changes []packsync.Change) error {
+	from := stamp.InstalledFrom
+	if from == "" {
+		from = "an orq-lite older than this mechanism"
+	}
+	var report strings.Builder
+	fmt.Fprintf(&report, "pack %s@%s was installed by %s; this binary is %s and ships a newer copy of it. %d file(s) differ:\n",
+		builtinPackName, builtinPackVersion, from, buildinfo.Version, len(changes))
+	for index, change := range changes {
+		if index == packDriftReportLimit {
+			fmt.Fprintf(&report, "  ... and %d more\n", len(changes)-packDriftReportLimit)
+			break
+		}
+		fmt.Fprintf(&report, "  %-40s %s\n", change.Path, change.Kind)
+	}
+	report.WriteString("\nchoose one:\n")
+	fmt.Fprintf(&report, "  orq-lite pack sync %s                update the pack to this binary's copy, then re-run\n", builtinPackName)
+	fmt.Fprintf(&report, "  orq-lite pack keep %s                keep the installed pack until the next orq-lite update\n", builtinPackName)
+	report.WriteString("  orq-lite flow run <...> --accept-pack-drift   continue this run only, recording nothing")
+	return fmt.Errorf("%s", report.String())
+}
+
+// packDriftReportLimit caps the per-file listing: a pack-wide rewrite would
+// otherwise bury the three commands that follow it.
+const packDriftReportLimit = 10
 
 // resolvedPolicy records which precedence branch produced the run policy, so
 // `flow run` can print it and an operator never has to infer which budget

@@ -5,7 +5,7 @@
   "files": {
     "flows/factory-fast@1.json": "5e12cdc4bef800771ae66122cee8cacd55a6170cc12afa1e38f492ac22219f18",
     "flows/factory-governed@2.json": "d12a482a67a748f8fd46226947738a4c953e71d24c7bfb9912b82bfda242f6e0",
-    "flows/issue-fix@1.json": "7e29183a318f8592f3f81a9f680339cd10b812d15f92041dcbc24aee0da32b85",
+    "flows/issue-fix@1.json": "5852380fca36d6a9f924da6102ddbf3d31caf36c5649426e4bac1cee6df4ea8f",
     "flows/plan-tickets@1.json": "ee5866989a3db51ec3047fdbaa0a8be10838fbcdb9525924fed2a4307abbdf26",
     "flows/pr-review@1.json": "f7c5ce2fd5e6dd6626f5f532183ebfedb05c00868210c52f499c027ddc114129",
     "flows/review-existing@1.json": "4ccce117c9045a24009e8c6718767113eb5f0c60589f98cbbcf2ef8ff3742a2b",
@@ -14,7 +14,7 @@
     "policies/development@3.json": "290625f7258ddffa5bbaeb31679d31544b5d3051c17a724716c9cfe046d2e312",
     "prompts/adversary.md": "25e1d0f9ad26aa6f9a08ca67dcd8707f424a90e4dde8d4cf2d26cd7c7e633d53",
     "prompts/batch-coder.md": "b7ed4f29f6475c58b6d01334a0858cc62e1b6e438b52a8f0720b56374474884a",
-    "prompts/coder.md": "1b4dccf11f9be2768305a8ffb9ceb85b5e3e68e89103611b43bae7d3f4bdef98",
+    "prompts/coder.md": "3a4d2197b5fca232574d9c35624a411a09a064065bad8c14ca80f9f8dc33c799",
     "prompts/critic.md": "3866f5bb0565c67be5bc64a13c5ebc1f363e3e800a3d0d01e5a7f9516ab129d0",
     "prompts/gov-reviewer.md": "df0d452ce73a22d7c77dec0de51bebc29f61aa1880e9f153ee12dc048a675f1c",
     "prompts/intake.md": "dd8a19875fe0338545c5ab08d2a11734d98598f959a8034b04f03484e9739dfc",
@@ -35,7 +35,7 @@
     "schemas/ticket-verification@1.json": "d2cbab2be691ab0ed27e905598e1ed59b32f1085fad2749fe7cba1de46b0283e",
     "schemas/workflow-state@1.json": "5abcd12542f0c34eba9115ae88023262381068c16565ec0613dc5f3b4e2e5104",
     "schemas/workflow-state@2.json": "3ddabdbbbe13b5658b037f465049bc5e510b54474213419d46e5ddb124931acf",
-    "subflows/develop-ticket@1.json": "6486af65bc7307d1993cbd70c882ab2269ca7a77f760ebf69fc6a4f1d34db51f",
+    "subflows/develop-ticket@1.json": "9d9935e71e0292d68cbe46c917dd7522505b84ec65ec5d268db1857ba2793969",
     "subflows/fast-batch@1.json": "e3d37077920c6cc45dc7df3da73f3e6ef8fb11f215db22e580678c04af168ed8",
     "subflows/governance-cycle@1.json": "0af6359bc8460de675d9afdb50adbce21f04521682da7a7920b23e29a9a278b1",
     "subflows/integrated-review@1.json": "b7c7ee3a75abed237379ebda84999ef991c3dca3cb889f8e727867d0af3d7075"

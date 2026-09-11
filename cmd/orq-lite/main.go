@@ -8,11 +8,17 @@ import (
 	"os/signal"
 	"time"
 
+	"github.com/collectiveai-team/orquesta-lite/internal/buildinfo"
 	"github.com/collectiveai-team/orquesta-lite/internal/commands"
 	"github.com/collectiveai-team/orquesta-lite/internal/web"
 )
 
+// version is stamped by the release workflow with -X main.version=<tag>.
 var version = "dev"
+
+// Hand the tag to the packages below main so they can tell a project's pack
+// which release installed it.
+func init() { buildinfo.Version = version }
 
 func main() {
 	if len(os.Args) < 2 {
@@ -236,9 +242,11 @@ Commands:
   update [--check]      download and install the latest release from GitHub
   pack install <dir>    verify a v2 pack and install it into .orquestalite/packs/
   pack list             list installed packs (name, version, digest, file count)
+  pack sync [--dry-run] replace the built-in pack with this binary's copy
+  pack keep             keep the installed built-in pack until the next orq-lite update
   flow validate|inspect <ref|path> compile a strict v2 flow without executing it
   flow list             list local and installed versioned v2 flows
-  flow run <ref|path>   execute v2 flow data (--policy=<ref|path>, --source-key=<stable-key>, key=value...)
+  flow run <ref|path>   execute v2 flow data (--policy=<ref|path>, --source-key=<stable-key>, --accept-pack-drift, key=value...)
   flow status|events <run-id> inspect durable workflow state/history
   flow resume|cancel <run-id> resume the pinned IR or cancel a run
   flow approve <run-id> <approval-id> --decision approve|reject

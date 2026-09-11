@@ -3,6 +3,104 @@
 All notable changes to orq-lite are recorded here. Versions follow the git
 tags cut as GitHub releases (the binary's `--version` is stamped from the tag).
 
+## v0.7.0 — the pack a project runs, and a commit per green ticket
+
+### Added
+
+- **A project is told when its pack has fallen behind the binary.** Pack
+  improvements ship inside the existing pack version — the version names the
+  contract, and the repo's own convention is to edit flows and prompts in place
+  rather than bump it. `init` installs with write-if-missing, so until now a
+  project scaffolded months ago kept running the pack that release wrote, and
+  updating `orq-lite` changed nothing about it. Silently. That is the worst
+  shape for this: the flow still compiles, the run still succeeds, and the
+  improvement simply never arrives.
+
+  `orq-lite` now records the release that wrote each installed pack in
+  `.orquestalite/pack-state.json` and compares it before every `flow run`. When
+  the versions differ *and* files would actually change, the run stops before it
+  exists and names the three ways forward: `orq-lite pack sync <name>` takes this
+  binary's copy, `orq-lite pack keep <name>` stays put until the next orq-lite
+  update, and `flow run --accept-pack-drift` continues this once and records
+  nothing. Blocking is the only form the question can take — orq-lite runs
+  headless under an agent, and a notice on stdout is a notice an agent scrolls
+  past.
+
+  Two cases deliberately stay quiet. A release that leaves the pack untouched
+  re-stamps and says nothing: a prompt with no answer behind it teaches readers
+  to dismiss the ones that matter. And a binary built without release ldflags
+  reports version `dev` and never blocks, so developing orq-lite does not gate
+  anyone's run.
+
+  `pack sync` overwrites rather than merges, which is safe because it has nothing
+  to destroy: `flow.LoadPack` verifies every file digest on every run, so a
+  hand-edited pack does not load in the first place. Customizing means forking
+  the pack under another name and `pack install`ing it. `pack sync --dry-run`
+  reports what would change without touching disk, and a sync that produced a
+  pack the verifier rejects fails rather than recording itself as current.
+
+- **`activity:git.commit@1` lands one commit and reports refusal as data.** The
+  ticket loop now commits each ticket that passed QA and both gates, so a run
+  leaves a reviewable commit per ticket instead of one undifferentiated worktree.
+
+  A commit could not simply be a gate. A failed gate aborts the run, which is
+  right for a red test suite and wrong for a commit hook: most hook failures are
+  a formatter rewriting the files it was handed. So `git.commit@1` stages,
+  commits, and — when the commit is refused but the worktree changed — re-stages
+  and tries once more. `end-of-file-fixer` and `trailing-whitespace` are resolved
+  entirely by that retry, with no agent turn spent.
+
+  What the retry cannot fix is reported in the step's output rather than raised:
+  `blocked`, the exit code, and the hook's own stdout and stderr. `develop-ticket@1`
+  hands that to the `coder` role as `{{COMMIT_FAILURE}}` and then retries the
+  commit with `requireCommitted: true`, which *is* a gate. A reproduced failure
+  that is only described in prose gets signed off; one promoted to a blocking
+  gate does not. If the hooks are still red after the repair pass, the run stops
+  there instead of stacking further tickets onto a tree that cannot commit.
+
+  The commit message is assembled by the activity as Conventional Commits
+  (`type(scope): subject`), cut to its first line and 72 characters, so a ticket
+  title copied verbatim cannot produce a message a `commit-msg` hook rejects. The
+  type is per-flow: `issue-fix@1` commits as `fix`, everything else as `feat`.
+  `commit_ticket` runs unconditionally and takes the QA verdict as an `enabled`
+  input rather than carrying an `if` — a skipped step resolves to nil and `&&`
+  does not short-circuit, so guarding it would make the two steps that depend on
+  its output fail to resolve and kill the run.
+
+### Fixed
+
+- **A test now pins which prompt placeholders no step supplies.** Interpolation
+  leaves an unsupplied `{{VAR}}` in the prompt verbatim, so a role whose prompt
+  reads an input the flow never wires receives the literal text `{{QA_REVIEW}}`
+  where its findings belong. Nothing caught that. A new test walks every flow and
+  subflow in the pack and asserts that each step supplies every placeholder its
+  role's prompt reads.
+
+  Twenty such gaps already exist, all of them introduced with the review-result
+  rework: the shared review block at the foot of `qa.md`, `critic.md`,
+  `adversary.md`, `visual-verifier.md` and `pr-reviewer.md` names four review
+  slots that `integrated-review@1`, `fast-batch@1` and `pr-review@1` never pass.
+  They are recorded in an explicit allowlist rather than papered over, because
+  what each block should receive — an empty string, a real review, or no block at
+  all in that prompt — is a question about the review pipeline's design, not
+  about the wiring. The list is a ratchet: it may shrink, and any new gap fails
+  the build.
+
+- **The parallel-foreach test proved concurrency with a sleep.**
+  `incrementExecutor` slept 10ms inside each invocation and asserted that two
+  were active at once. That is not synchronization: on a loaded runner the first
+  worker can enter, sleep and leave before the second starts, so the count stays
+  at one and the test fails for a reason that has nothing to do with the
+  scheduler. It is also the exact pattern `ticket-qa.md` instructs reviewers to
+  treat as blocking. The sleep is replaced by a rendezvous — each invocation
+  waits until the expected number are inside together — bounded by a timeout so
+  a scheduler that has genuinely stopped running work in parallel fails the
+  assertion instead of hanging the suite.
+
+- **Adding an activity no longer has to be remembered twice.** The CLI and the
+  web dashboard each built their own list of built-in activity specs. A flow
+  using an activity only one of them knew about did not fail loudly — it vanished
+  from the dashboard's catalog. Both now call `builtin.Specs()`.
 ## v0.6.2 — isolated runs and durable cancellation
 
 ### Fixed

@@ -655,6 +655,23 @@ version under `.orquestalite/packs/<name>/<version>`.
 Local project flows may live under `flows/`, but they must still be strict V2
 documents and execute through the same compiler and durable scheduler.
 
+## 10b. Keep the built-in pack in step with the binary
+
+Pack improvements ship inside the existing pack version, so updating `orq-lite`
+does not update a project's installed copy. `orq-lite` records the release that
+wrote the pack in `.orquestalite/pack-state.json` and compares it before every
+run. A mismatch that would actually change files stops the run and offers three
+answers; a release that leaves the pack untouched re-stamps silently and says
+nothing.
+
+```bash
+orq-lite pack sync development --dry-run   # what would change
+orq-lite pack sync development             # take this binary's copy
+orq-lite pack keep development             # stay put until the next orq-lite update
+```
+
+A binary built without release ldflags reports version `dev` and never blocks.
+
 ## Final checklist
 
 - [ ] Setup interview held; every confirmed answer recorded in `team.json`, `CONVENTIONS.md`, or the objective document.

@@ -71,6 +71,8 @@ These aliases do not select an engine and have no compatibility fallback.
 ```bash
 orq-lite pack install ./my-pack
 orq-lite pack list
+orq-lite pack sync            # replace the built-in pack with this binary's copy
+orq-lite pack keep            # stay on the installed one until the next orq-lite update
 orq-lite flow list
 orq-lite flow validate development/task-list@1
 orq-lite flow inspect development/task-list@1
@@ -82,6 +84,25 @@ Pack versions and flow versions are independent. `development/task-list@1` selec
 ```text
 development@5/task-list@1
 ```
+
+### Keeping the built-in pack current
+
+Improvements to the built-in `development` pack ship inside its existing version,
+so a project that ran `orq-lite init` months ago keeps running the pack that
+release installed. `orq-lite` records which release wrote the pack and compares
+it on every `flow run`. When they differ and files actually changed, the run
+stops before it starts and names the three ways forward:
+
+```text
+orq-lite pack sync development               update the pack, then re-run
+orq-lite pack keep development               keep it until the next orq-lite update
+orq-lite flow run <...> --accept-pack-drift  continue this run only
+```
+
+`pack sync` overwrites. An installed pack is byte-verified on every run, so a
+hand-edited one does not load in the first place — to customize, fork the pack
+under another name and `orq-lite pack install` it. Use `pack sync --dry-run` to
+see what would change first.
 
 Pack installation verifies the manifest, every listed SHA-256 digest, unlisted files, and symlinks before an atomic install under `.orquestalite/packs/<name>/<version>`.
 

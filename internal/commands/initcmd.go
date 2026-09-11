@@ -11,10 +11,25 @@ import (
 	"strings"
 
 	governedpack "github.com/collectiveai-team/orquesta-lite/examples/governed-pack"
+	"github.com/collectiveai-team/orquesta-lite/internal/buildinfo"
+	"github.com/collectiveai-team/orquesta-lite/internal/packstate"
+	"github.com/collectiveai-team/orquesta-lite/internal/packsync"
 )
 
 //go:embed assets/team.json
 var defaultAssets embed.FS
+
+const (
+	// builtinPackName and builtinPackVersion identify the pack this binary
+	// embeds. The version names the contract; improvements to the pack ship
+	// inside it in place, which is exactly why a project needs the orq-lite
+	// version recorded alongside it to know its copy has fallen behind.
+	builtinPackName    = "development"
+	builtinPackVersion = "6"
+	// builtinPackSource is the directory the current pack occupies inside the
+	// embedded filesystem. The frozen v5 copy lives beside it under pack-v5.
+	builtinPackSource = "pack"
+)
 
 // InitOptions tunes scaffolding behaviour.
 type InitOptions struct {
@@ -86,11 +101,33 @@ func writeOrMigrateTeam(path string, defaults []byte) error {
 	return os.WriteFile(path, migrated, mode)
 }
 
+func builtinPackRoot(projectDir string) string {
+	return filepath.Join(projectDir, ".orquestalite", "packs", builtinPackName, builtinPackVersion)
+}
+
+// installBuiltinDevelopmentPack writes the embedded packs without overwriting
+// anything already there, then records the version that produced the current
+// one — but only when what is on disk actually matches this binary's copy.
+// Re-running init over an older pack must not stamp it as current: claiming
+// files came from a version that did not write them is the one lie that would
+// make the drift check useless.
+//
+// Only the current pack is stamped. The frozen v5 copy exists so pinned refs
+// keep resolving; it does not change, so there is nothing to tell anyone about.
 func installBuiltinDevelopmentPack(projectDir string) error {
 	if err := installEmbeddedPack(projectDir, "pack-v5", "5"); err != nil {
 		return err
 	}
-	return installEmbeddedPack(projectDir, "pack", "6")
+	if err := installEmbeddedPack(projectDir, builtinPackSource, builtinPackVersion); err != nil {
+		return err
+	}
+	changes, err := packsync.Diff(builtinPackRoot(projectDir), governedpack.FS, builtinPackSource)
+	if err != nil || len(changes) > 0 {
+		return err
+	}
+	stamp := packstate.Load(projectDir, builtinPackName, builtinPackVersion)
+	stamp.InstalledFrom = buildinfo.Version
+	return packstate.Save(projectDir, builtinPackName, builtinPackVersion, stamp)
 }
 
 func installEmbeddedPack(projectDir, source, version string) error {

@@ -1,25 +1,52 @@
 {
   "apiVersion": "orq.dev/v2",
   "kind": "Flow",
-  "metadata": {"name": "issue-fix", "version": "1", "policy": "policy:development@3"},
+  "metadata": {
+    "name": "issue-fix",
+    "version": "1",
+    "policy": "policy:development@3"
+  },
   "inputs": {
-    "issue_path": {"schema": "schema:path@1"},
-    "run": {"schema": "schema:flag@1", "default": true}
+    "issue_path": {
+      "schema": "schema:path@1"
+    },
+    "run": {
+      "schema": "schema:flag@1",
+      "default": true
+    }
   },
   "steps": [
     {
       "id": "read_issue",
       "uses": "activity:command.run@1",
-      "with": {"argv": ["cat", {"$ref": "inputs.issue_path"}]}
+      "with": {
+        "argv": [
+          "cat",
+          {
+            "$ref": "inputs.issue_path"
+          }
+        ]
+      }
     },
     {
       "id": "triage",
       "uses": "activity:agent.invoke@1",
       "with": {
         "role": "intake",
-        "context": {"ISSUE": {"$ref": "steps.read_issue.output.stdout"}},
+        "context": {
+          "ISSUE": {
+            "$ref": "steps.read_issue.output.stdout"
+          }
+        },
         "outputSchema": "schema:intake-result@1",
-        "fallbackOutput": {"actionable": false, "summary": "intake agent failed; fail closed", "plan": "", "missing_info": ["intake agent did not produce a verdict"]}
+        "fallbackOutput": {
+          "actionable": false,
+          "summary": "intake agent failed; fail closed",
+          "plan": "",
+          "missing_info": [
+            "intake agent did not produce a verdict"
+          ]
+        }
       }
     },
     {
@@ -30,13 +57,19 @@
         "role": "ticket_planner",
         "vars": {
           "MODE": "initial",
-          "FEATURES_PATH": {"$ref": "inputs.issue_path"},
+          "FEATURES_PATH": {
+            "$ref": "inputs.issue_path"
+          },
           "CURRENT_STATE": "{}",
           "IMPLEMENTATION": "{}",
           "VERIFICATION": "{}",
           "APPEND": "false"
         },
-        "context": {"TRIAGE": {"$ref": "steps.triage.output"}},
+        "context": {
+          "TRIAGE": {
+            "$ref": "steps.triage.output"
+          }
+        },
         "outputSchema": "schema:workflow-state@2"
       }
     },
@@ -46,12 +79,23 @@
       "if": "steps.triage.output.actionable == true && inputs.run == true",
       "while": {
         "condition": "item.state.status == \"active\"",
-        "maxIterations": {"$ref": "item.state.iteration_budget"},
-        "initial": {"state": {"$ref": "steps.plan_fix.output"}}
+        "maxIterations": {
+          "$ref": "item.state.iteration_budget"
+        },
+        "initial": {
+          "state": {
+            "$ref": "steps.plan_fix.output"
+          }
+        }
       },
       "with": {
-        "features_path": {"$ref": "inputs.issue_path"},
-        "state": {"$ref": "item.state"}
+        "features_path": {
+          "$ref": "inputs.issue_path"
+        },
+        "state": {
+          "$ref": "item.state"
+        },
+        "commit_type": "fix"
       }
     },
     {
@@ -59,7 +103,9 @@
       "uses": "activity:gate.assert@1",
       "if": "steps.triage.output.actionable == true && inputs.run == true && steps.plan_fix.output.status == \"active\"",
       "with": {
-        "value": {"$ref": "steps.develop_tickets.output.last.state.status"},
+        "value": {
+          "$ref": "steps.develop_tickets.output.last.state.status"
+        },
         "equals": "complete",
         "message": "the ticket loop ended without the plan reaching status=complete"
       }
@@ -69,13 +115,21 @@
       "uses": "subflow:integrated-review@1",
       "if": "steps.triage.output.actionable == true && inputs.run == true",
       "with": {
-        "features_path": {"$ref": "inputs.issue_path"}
+        "features_path": {
+          "$ref": "inputs.issue_path"
+        }
       }
     }
   ],
   "outputs": {
-    "triage": {"$ref": "steps.triage.output"},
-    "state": {"$ref": "steps.develop_tickets.output"},
-    "governance": {"$ref": "steps.integrated_review.output"}
+    "triage": {
+      "$ref": "steps.triage.output"
+    },
+    "state": {
+      "$ref": "steps.develop_tickets.output"
+    },
+    "governance": {
+      "$ref": "steps.integrated_review.output"
+    }
   }
 }
