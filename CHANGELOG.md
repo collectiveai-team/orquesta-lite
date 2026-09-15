@@ -3,6 +3,72 @@
 All notable changes to orq-lite are recorded here. Versions follow the git
 tags cut as GitHub releases (the binary's `--version` is stamped from the tag).
 
+## v0.7.2 — a killed agent is not a reviewer
+
+### Fixed
+
+- **A timed-out agent's placeholder was accepted as its answer.** `classify`
+  tested `ResultExists` before `TimedOut`, so any file at `result_path` made the
+  timeout branch unreachable. Every reviewer prompt in the development pack tells
+  the agent to write a schema-valid scaffold *before* it starts work, so a
+  reviewer killed at its `timeout_seconds` left exactly such a file behind — and
+  the engine recorded the step `succeeded` with it.
+
+  What that looked like in the run that surfaced it: the `adversary` role was
+  killed at 1500s with its backend suite still going; the step output became
+  `{"status":"partial","decision":"inconclusive","summary":"Review in progress"}`;
+  `cost_usd` was `0.0`; and `governance` received it as `ADVERSARY_REVIEW` — a
+  verdict from a review that never happened. Schema validation could not catch it,
+  because `review-result@2` admits `partial` and `inconclusive` by design. The run
+  continued for another fifteen minutes and died at `review_coverage`, a gate
+  several steps downstream whose message names neither the role nor the timeout.
+
+  The precedence was collateral, not a decision about timeouts. It arrived with
+  the fix for false `rate_limit` and `auth_failed` detections — both of which are
+  read out of the agent's own stdout, so an agent that merely printed "usage
+  limit" while working was being benched. A written result genuinely disproves a
+  text heuristic. It does not disprove `context.DeadlineExceeded` on the
+  subprocess, which is ground truth that the process was killed mid-turn.
+
+  A result file now outranks the text heuristics and yields to the clock. The
+  fallback chain fires — `case r.TimedOut` existed to trigger it and had been
+  unreachable — so a second agent gets the chance to produce a real review. If the
+  chain is exhausted, a step that declares a `fallbackOutput` records that instead
+  (for the pack's review steps: `status: "unavailable"`, limitation "Provider did
+  not produce a valid review checkpoint", which is true), and a step that declares
+  none fails as `timeout` at the role that timed out.
+
+- **The timeout error now says what happened.** The message for an exhausted
+  chain read `agent "x" (role "y") did not write <path>`, which was not even true
+  — the agent had written, and the engine discarded it. It now names the limit,
+  the elapsed time and the discarded file: `agent "claude_sonnet" (role
+  "adversary") was killed at its 25m0s timeout after 25m0s; the partial
+  .orquestalite/results/adversary.json it had written was discarded`. The artifact
+  is still on disk under `runs/<run>/agents/`, and without that sentence it is
+  indistinguishable from one the engine accepted.
+
+- **A killed attempt is no longer free.** Token usage was read only from the
+  provider's terminal result message, which a killed process never emits, so
+  twenty-five minutes of opus work priced at exactly `0.0` and `maxCostUSD` never
+  saw it. Any run that times out roles repeatedly could overrun its cost budget
+  without the budget registering it. Claude's per-turn usage is now captured from
+  each assistant message as a distinct `partial_usage` event, and used only when
+  no terminal total arrived — the two are never summed, so a completed run prices
+  exactly as before. Each partial is a real API call that was really billed, so
+  this is a measurement, not the guess `runSpendUSD` refuses to make.
+
+### Known gaps
+
+- A step that fails terminally stays failed across `flow resume`, by design of
+  durable execution. Re-running it still means deleting the row from `step_runs`.
+- The default and pack retry policies allow `timeout: maxAttempts 2`, which
+  retries the whole fallback chain. That is bounded by the run's
+  `maxDurationSeconds`, but a role with a long timeout and several agents can
+  spend a large fraction of it failing. Left as configured rather than changed
+  underneath existing packs.
+- Only the Claude adapter reports per-turn usage. A killed attempt on `codex`,
+  `gemini`, `opencode` or `agy` still prices at zero.
+
 ## v0.7.1 — a declared default now produces a value
 
 ### Fixed

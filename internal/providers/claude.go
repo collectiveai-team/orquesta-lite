@@ -138,11 +138,19 @@ func isClaudeErrorResult(obj map[string]any) bool {
 func parseClaudeAssistantMessage(obj map[string]any) []Event {
 	message, _ := obj["message"].(map[string]any)
 	content, _ := message["content"].([]any)
-	if len(content) == 0 {
-		return nil
-	}
 
-	events := make([]Event, 0, len(content))
+	events := make([]Event, 0, len(content)+1)
+	// Each assistant message reports the usage of the API call that produced it,
+	// which is also what that call is billed at. It is read before the content
+	// guard below so a turn that carries usage and nothing else is still priced,
+	// and recorded as partial so it is only consulted when the terminal `result`
+	// message never arrived.
+	if usage, ok := parseClaudeUsage(message["usage"]); ok {
+		events = append(events, Event{Type: EventPartialUsage, Usage: usage})
+	}
+	if len(content) == 0 {
+		return events
+	}
 	for _, raw := range content {
 		block, _ := raw.(map[string]any)
 		switch block["type"] {

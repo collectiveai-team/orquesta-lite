@@ -74,9 +74,26 @@ func TestClassifyFallbackDisposition(t *testing.T) {
 			wantReason:   "timeout",
 		},
 		{
-			name: "checkpoint survives timeout",
+			// A killed process did not finish, and the file it left behind is
+			// whatever its turn had got to — for every review role in the
+			// development pack, the schema-valid scaffold the prompt tells the
+			// agent to write *before* starting work. Accepting it recorded a
+			// review that never happened as a successful step.
+			name: "timeout is ground truth and outranks a written result",
 			result: &runner.Result{
 				TimedOut:     true,
+				ResultExists: true,
+			},
+			wantFallback: true,
+			wantReason:   "timeout",
+		},
+		{
+			// rate_limit and auth_failed are read out of the agent's own stdout,
+			// so a written result genuinely disproves them. That precedence is
+			// what this switch was built for and it has to survive.
+			name: "rate limit still yields to a written result",
+			result: &runner.Result{
+				RateLimited:  true,
 				ResultExists: true,
 			},
 			wantFallback: false,

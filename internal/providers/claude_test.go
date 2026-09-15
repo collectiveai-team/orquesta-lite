@@ -73,3 +73,35 @@ func TestClaudeParseLineAssistantBlocks(t *testing.T) {
 		t.Fatalf("tool event = %#v", events[1])
 	}
 }
+
+// TestClaudeAssistantMessageEmitsPartialUsage captures the per-turn usage the
+// API reports on each assistant message. Usage used to be read only from the
+// terminal `result` message, which a process killed at its timeout never emits —
+// so 25 minutes of opus work priced at exactly zero and the run's cost budget
+// never saw it.
+func TestClaudeAssistantMessageEmitsPartialUsage(t *testing.T) {
+	events := (Claude{}).ParseLine(`{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}],"usage":{"input_tokens":10,"cache_read_input_tokens":900,"output_tokens":25}}}`)
+	var partial map[string]int
+	for _, ev := range events {
+		if ev.Type == EventPartialUsage {
+			partial = ev.Usage
+		}
+	}
+	if partial == nil {
+		t.Fatalf("no partial usage event: %#v", events)
+	}
+	if partial["input_tokens"] != 10 || partial["cached_input_tokens"] != 900 || partial["output_tokens"] != 25 {
+		t.Fatalf("partial usage = %#v", partial)
+	}
+}
+
+// TestClaudeAssistantMessageWithoutUsageEmitsNone keeps the stream quiet for the
+// messages that carry no usage at all.
+func TestClaudeAssistantMessageWithoutUsageEmitsNone(t *testing.T) {
+	events := (Claude{}).ParseLine(`{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}`)
+	for _, ev := range events {
+		if ev.Type == EventPartialUsage {
+			t.Fatalf("unexpected partial usage: %#v", ev)
+		}
+	}
+}

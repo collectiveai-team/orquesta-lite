@@ -15,7 +15,12 @@ const (
 	EventToolCall  EventType = "tool_call"
 	EventSessionID EventType = "session_id"
 	EventUsage     EventType = "usage"
-	EventError     EventType = "error"
+	// EventPartialUsage carries the token usage of a single assistant turn,
+	// as opposed to EventUsage which carries a provider's terminal total. It
+	// exists so an agent killed before it emits its final result message is
+	// still priced from what it measurably spent, rather than at zero.
+	EventPartialUsage EventType = "partial_usage"
+	EventError        EventType = "error"
 )
 
 type Event struct {
