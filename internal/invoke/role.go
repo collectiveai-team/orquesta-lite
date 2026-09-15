@@ -330,7 +330,19 @@ func (inv *RoleInvoker) runValidated(ctx context.Context, roleName string, role 
 		}
 		if shouldFallback {
 			lastFallbackReason = fallbackReason
-			if fallbackReason != "invalid_contract" {
+			switch fallbackReason {
+			case "invalid_contract":
+				// lastErr already describes the validation failure.
+			case "timeout":
+				// A killed agent often has written something — the opening
+				// scaffold its prompt asked for — so "did not write" would be a
+				// lie, and the timeout is the fact the operator needs. Say which
+				// role hit which limit, and say plainly that the file it left
+				// behind was thrown away, because the artifact is still on disk
+				// and would otherwise look like an accepted answer.
+				lastErr = fmt.Errorf("agent %q (role %q) was killed at its %s timeout after %s%s",
+					agentName, roleName, spec.Timeout, r.Duration.Round(time.Second), discardedResultNote(r, relResultPath))
+			default:
 				lastErr = fmt.Errorf("agent %q (role %q) did not write %s: exit=%d; detail: %s",
 					agentName, roleName, relResultPath, r.ExitCode, errorDetail(r))
 			}
@@ -796,6 +808,17 @@ func redactedCmdLine(cmd []string, vars map[string]string) string {
 	return strings.Join(parts, " ")
 }
 
+// discardedResultNote reports the partial file a killed agent left behind. It
+// exists so the operator is told the artifact under runs/<run>/agents/ is not an
+// answer the engine accepted — before this, a timed-out reviewer's scaffold was
+// accepted, and the artifact is indistinguishable from one that was.
+func discardedResultNote(res *runner.Result, relResultPath string) string {
+	if !res.ResultExists {
+		return ""
+	}
+	return fmt.Sprintf("; the partial %s it had written was discarded", relResultPath)
+}
+
 func errorDetail(res *runner.Result) string {
 	if strings.TrimSpace(res.Stderr) != "" {
 		return res.StderrTail(2048)
@@ -839,12 +862,32 @@ type usageSummary struct {
 	Reasoning   int
 }
 
+// usageTotals prices one invocation from the token counts its provider reported.
+//
+// A provider's terminal usage message is authoritative and is used alone when it
+// arrived. A process killed at its timeout never emits one, which used to make
+// the whole attempt free: twenty-five minutes of opus work recorded cost_usd 0.0
+// and the run's maxCostUSD never saw it. So when no terminal total arrived, the
+// per-turn totals are summed instead — each one is a real API call that was
+// really billed, so this is a measurement, not the guess runSpendUSD refuses to
+// make. The two are never added together; that would double-count every turn.
 func usageTotals(res *runner.Result) usageSummary {
+	out, seenTerminal := sumUsage(res, providers.EventUsage)
+	if seenTerminal {
+		return out
+	}
+	partial, _ := sumUsage(res, providers.EventPartialUsage)
+	return partial
+}
+
+func sumUsage(res *runner.Result, kind providers.EventType) (usageSummary, bool) {
 	var out usageSummary
+	seen := false
 	for _, ev := range res.Events {
-		if ev.Type != providers.EventUsage {
+		if ev.Type != kind {
 			continue
 		}
+		seen = true
 		out.Input += ev.Usage["input_tokens"]
 		out.Output += ev.Usage["output_tokens"]
 		out.CachedInput += ev.Usage["cached_input_tokens"]
@@ -854,5 +897,5 @@ func usageTotals(res *runner.Result) usageSummary {
 		out.Reasoning += ev.Usage["reasoning_tokens"]
 	}
 	out.Input += out.CachedInput
-	return out
+	return out, seen
 }

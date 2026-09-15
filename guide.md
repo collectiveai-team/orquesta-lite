@@ -366,6 +366,15 @@ For each agent:
 - use a second provider in important role chains so a provider failure has a
   real fallback path.
 
+`timeout_seconds` is a hard kill, and what the agent left on disk when it is hit
+is discarded. Anything a prompt tells the agent to write *before* it starts work
+— the review scaffold the pack's reviewer prompts open with, for instance — is
+therefore never mistaken for the agent's answer: the role falls back to the next
+agent in its chain, and the step fails as `timeout` if the chain is exhausted and
+the step declares no `fallbackOutput`. Size the timeout for the slowest real turn
+the role has to complete; a role that is routinely killed now costs a full
+fallback chain instead of quietly returning a placeholder.
+
 The registered providers are `claude`, `codex`, `gemini`, `opencode` and `agy`
 (the Antigravity CLI). An agent names one of them in `provider`, or supplies its
 own `cmd` — never both.
