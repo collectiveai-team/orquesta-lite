@@ -69,6 +69,14 @@ func (r *Runtime) Start(ctx context.Context, ir *flow.IR, options StartOptions) 
 	if options.FlowRef == "" {
 		options.FlowRef = "flow:" + ir.Metadata.Name + "@" + ir.Metadata.Version
 	}
+	// Defaults are bound before the inputs are marshalled so the row a resume
+	// replays from records the values the run actually used, and before they are
+	// validated so a default has to satisfy its own schema like any other value.
+	bound, err := bindInputDefaults(ir.Inputs, options.Inputs)
+	if err != nil {
+		return nil, err
+	}
+	options.Inputs = bound
 	inputsRaw, err := json.Marshal(options.Inputs)
 	if err != nil {
 		return nil, err
@@ -574,6 +582,18 @@ func (s *executionState) executeInstance(ctx context.Context, step flow.IRStep, 
 		}
 		inputs[name] = resolved
 	}
+	// A subflow's `with` is the whole scope its steps resolve against — there is
+	// no outer map to fall back to — so a declared default that is never
+	// materialised here becomes a dangling `inputs.x` reference that kills the
+	// run in whichever step reads it, arbitrarily far from the call site that
+	// omitted it.
+	if step.Subflow != nil {
+		bound, bindErr := bindInputDefaults(step.Subflow.Inputs, inputs)
+		if bindErr != nil {
+			return nil, fmt.Errorf("step %s: %w", step.ID, bindErr)
+		}
+		inputs = bound
+	}
 	rawInputs, err := json.Marshal(inputs)
 	if err != nil {
 		return nil, fmt.Errorf("step %s inputs: %w", step.ID, err)
@@ -1036,6 +1056,42 @@ func arrayIndex(part string, length int) (int, bool) {
 		return 0, false
 	}
 	return index, true
+}
+
+// bindInputDefaults materialises the declared default of every input the caller
+// left out. Declaring a default used only to excuse a missing key: the value was
+// never written, so a step referencing that input resolved against nothing.
+//
+// Defaults resolve against a resolver that never resolves, because decode.go
+// budgets an input default but binds it to no scope — the same literal-only rule
+// the CLI has always applied when it pre-filled top-level defaults.
+//
+// The input map is left untouched when there is nothing to bind, so a caller's
+// map is never mutated and a run with no defaulted inputs persists byte-identical
+// inputs to before.
+func bindInputDefaults(specs map[string]flow.InputSpec, inputs map[string]any) (map[string]any, error) {
+	bound, copied := inputs, false
+	for name, spec := range specs {
+		if spec.Default == nil {
+			continue
+		}
+		if _, ok := bound[name]; ok {
+			continue
+		}
+		value, err := flow.ResolveValue(*spec.Default, func(string) (any, bool) { return nil, false })
+		if err != nil {
+			return nil, fmt.Errorf("input %s default: %w", name, err)
+		}
+		if !copied {
+			next := make(map[string]any, len(inputs)+1)
+			for key, existing := range inputs {
+				next[key] = existing
+			}
+			bound, copied = next, true
+		}
+		bound[name] = value
+	}
+	return bound, nil
 }
 
 func validateInputs(specs map[string]flow.InputSpec, inputs map[string]any, schemas map[string]*flow.Schema) error {

@@ -644,8 +644,8 @@ After changing any resource in that pack:
 ```bash
 python3 examples/governed-pack/regen-digests.py
 orq-lite pack install examples/governed-pack/pack
-orq-lite flow validate development@5/factory-governed@2
-orq-lite flow inspect development@5/factory-governed@2
+orq-lite flow validate development@6/factory-governed@2
+orq-lite flow inspect development@6/factory-governed@2
 ```
 
 Review every manifest digest change. Pack installation rejects missing files,
@@ -654,6 +654,21 @@ version under `.orquestalite/packs/<name>/<version>`.
 
 Local project flows may live under `flows/`, but they must still be strict V2
 documents and execute through the same compiler and durable scheduler.
+
+### The subflow input contract
+
+A subflow's `with` block is the whole scope its steps resolve against; there is
+no outer map to fall back to. The compiler enforces both halves of that contract,
+so a mistake at a call site fails `flow validate` instead of aborting a run
+half an hour in:
+
+- every input the subflow declares **without** a default must be passed;
+- every key passed must name an input the subflow declares — a misspelled one
+  used to be discarded silently, leaving the subflow on a default nobody chose.
+
+An input that declares a `default` may be omitted. The runtime binds the declared
+value before the subflow starts, and validates it against the input's own schema,
+so `{"$ref": "inputs.that_input"}` resolves whether or not the caller passed it.
 
 ## 10b. Keep the built-in pack in step with the binary
 

@@ -3,6 +3,64 @@
 All notable changes to orq-lite are recorded here. Versions follow the git
 tags cut as GitHub releases (the binary's `--version` is stamped from the tag).
 
+## v0.7.1 — a declared default now produces a value
+
+### Fixed
+
+- **An input default was a permission, not a value.** `validateInputs` read
+  `spec.Default` only to decide that a missing input was not an error, and then
+  moved on without writing anything. Declaring a default therefore produced an
+  absent key, so every `$ref` to that input dangled.
+
+  Nothing caught it at the top level, because a second code path covered for it:
+  the CLI walks `ir.Inputs` and pre-fills defaults into the map before calling
+  `Runtime.Start`. A subflow has no such path. Its `with` block *is* the entire
+  scope its steps resolve against — there is no outer map to fall back to — so an
+  input the call site omitted simply did not exist.
+
+  That is how v0.7.0 shipped a `factory-governed@2` that could not finish a
+  single ticket in its non-batch mode. `develop-ticket@1` declares `commit_type`
+  with a default of `feat`; `factory-governed@2` and `task-list@1` never passed
+  it; `commit_ticket` reads `inputs.commit_type`. A run died with
+  `reference "inputs.commit_type" not found` after 32 minutes — after the coder,
+  the QA verdict and both gates had passed — at the step that read the input,
+  arbitrarily far from the call site that omitted it. `--fast` runs were unaffected
+  only because `fast-batch@1` has no commit step.
+
+  `flow validate` was right to stay green. `commit_type` is a declared input and
+  the reference is legal; the runtime was the side breaking the contract.
+
+  Defaults are now bound into the input map — for the top-level flow and for
+  every subflow call site — before the inputs are marshalled, so the row a resume
+  replays from records the values the run actually used, and before they are
+  validated, so a default has to satisfy its own schema like any other value. A
+  run with no defaulted inputs persists byte-identical inputs to before.
+
+- **A subflow call site's contract is now checked when the flow compiles.** Two
+  mistakes at a call site used to survive `flow validate` and surface only when
+  some step deep inside the subflow read the input. Omitting an input the subflow
+  requires aborted the run partway through. Misspelling one was worse: the stray
+  key was silently discarded, the subflow fell back to its default, and the run
+  succeeded doing something nobody asked for.
+
+  Both are compile errors now, naming the step and the input. Together with the
+  binding fix this closes the class rather than the instance: a reference to
+  `inputs.x` inside a subflow already had to name a declared input, a declared
+  input either carries a default the engine binds or must be supplied at the call
+  site, and so every such reference is guaranteed to resolve before the run
+  starts.
+
+  The shipped pack needed no changes to satisfy this — `factory-governed@2` and
+  `task-list@1` legitimately lean on `commit_type`'s default, and `issue-fix@1`
+  overrides it with `fix`.
+
+- **The runtime had no subflow tests.** That is the gap this defect came through.
+  There are now regression tests covering a default bound at a subflow boundary,
+  a call site value taking precedence over a default, a default reaching a
+  top-level flow without the CLI's help, a default rejected by its own schema,
+  and a pack-level assertion that every subflow call site in the shipped pack
+  supplies or defaults every input the subflow's steps actually read.
+
 ## v0.7.0 — the pack a project runs, and a commit per green ticket
 
 ### Added
