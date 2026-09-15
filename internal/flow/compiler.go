@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -135,6 +136,7 @@ func compileDocument(doc *Document, catalog Catalog, stack map[string]bool) (*IR
 			sub, subDiagnostics := compileDocument(subdoc, catalog, stack)
 			diagnostics = append(diagnostics, subDiagnostics...)
 			compiled.Subflow = sub
+			diagnostics = append(diagnostics, checkSubflowCallSite(path, compiled.With, sub)...)
 			ir.Resources[resource.String()] = digest
 			if sub != nil {
 				for schemaRef, schema := range sub.Schemas {
@@ -251,6 +253,7 @@ func compileDocument(doc *Document, catalog Catalog, stack map[string]bool) (*IR
 			sub, subDiagnostics := compileDocument(subdoc, catalog, stack)
 			diagnostics = append(diagnostics, subDiagnostics...)
 			compiled.Subflow = sub
+			diagnostics = append(diagnostics, checkSubflowCallSite(path, compiled.With, sub)...)
 			ir.Resources[resource.String()] = digest
 			if sub != nil {
 				for schemaRef, schema := range sub.Schemas {
@@ -289,6 +292,45 @@ func compileDocument(doc *Document, catalog Catalog, stack map[string]bool) (*IR
 	}
 	ir.Digest = digestBytes(raw)
 	return ir, diagnostics
+}
+
+// checkSubflowCallSite compares a call site's `with` against the inputs the
+// subflow declares. The `with` map is the entire scope the subflow's steps
+// resolve against — there is no outer scope to fall back to — so an input
+// missing here can never be supplied later, and a key the subflow does not
+// declare is silently discarded rather than passed on.
+//
+// Both mistakes used to surface only at runtime, and only in the step that read
+// the input: a missing one aborted the run partway through, and a misspelled one
+// did not fail at all, it just left the subflow running on a default nobody
+// asked for. Names are walked in sorted order so diagnostics stay deterministic.
+func checkSubflowCallSite(path string, with map[string]Value, sub *IR) Diagnostics {
+	if sub == nil {
+		return nil
+	}
+	var diagnostics Diagnostics
+	declared := make([]string, 0, len(sub.Inputs))
+	for name := range sub.Inputs {
+		declared = append(declared, name)
+	}
+	sort.Strings(declared)
+	for _, name := range declared {
+		if _, ok := with[name]; ok || sub.Inputs[name].Default != nil {
+			continue
+		}
+		diagnostics = append(diagnostics, Diagnostic{"error", path + ".with", fmt.Sprintf("subflow %s@%s requires input %q", sub.Metadata.Name, sub.Metadata.Version, name)})
+	}
+	supplied := make([]string, 0, len(with))
+	for name := range with {
+		supplied = append(supplied, name)
+	}
+	sort.Strings(supplied)
+	for _, name := range supplied {
+		if _, ok := sub.Inputs[name]; !ok {
+			diagnostics = append(diagnostics, Diagnostic{"error", path + ".with." + name, fmt.Sprintf("subflow %s@%s does not declare input %q", sub.Metadata.Name, sub.Metadata.Version, name)})
+		}
+	}
+	return diagnostics
 }
 
 func validateReference(ref string, inputs map[string]InputSpec, steps map[string]bool, stepSchemas map[string]*Schema, allowItem bool) error {
