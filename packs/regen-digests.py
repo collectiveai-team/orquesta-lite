@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Regenerate the SHA-256 file digests in pack/pack.json.
+"""Regenerate the SHA-256 file digests in development/pack/pack.json.
 
-Run from anywhere: python3 examples/governed-pack/regen-digests.py
-Rewrites pack.json's "files" map from the actual pack/ directory contents
+Run from anywhere: python3 packs/regen-digests.py
+Rewrites pack.json's "files" map from the actual development/pack/ contents
 (every file except pack.json itself), preserving apiVersion/name/version.
 """
 import hashlib
 import json
 import pathlib
 
-pack_dir = pathlib.Path(__file__).resolve().parent / "pack"
+pack_dir = pathlib.Path(__file__).resolve().parent / "development" / "pack"
 manifest_path = pack_dir / "pack.json"
 manifest = json.loads(manifest_path.read_text())
 

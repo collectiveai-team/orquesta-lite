@@ -650,12 +650,14 @@ Before leaving it unattended:
 Use packs for reusable workflows, subflows, prompts, schemas, and policies. Do
 not add a parallel runtime or special-case orchestration in a CLI command.
 
-The canonical example is [`examples/governed-pack/`](./examples/governed-pack/).
-After changing any resource in that pack:
+The pack this binary ships is [`packs/development/`](./packs/development/); the
+runnable example project that consumes it is
+[`examples/governed-pack/`](./examples/governed-pack/). After changing any
+resource in the pack:
 
 ```bash
-python3 examples/governed-pack/regen-digests.py
-orq-lite pack install examples/governed-pack/pack
+python3 packs/regen-digests.py
+orq-lite pack install packs/development/pack
 orq-lite flow validate development@6/factory-governed@2
 orq-lite flow inspect development@6/factory-governed@2
 ```
