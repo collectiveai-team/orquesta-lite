@@ -16,7 +16,7 @@ import (
 // gateConfigKeys is the single source of truth for what a flow may read out of
 // team.json, but nothing used to tie it to what `orq-lite init` actually
 // writes. The only guard on the fail-fast path validated the pack against
-// examples/governed-pack/team.json — a hand-maintained file that happens to
+// examples/governed-pack/team.json — a hand-maintained example that happens to
 // declare both argv keys — while the embedded template shipped neither. The
 // result was an adoption path where init, pack install and doctor all exited 0
 // and the first `flow run` failed before creating workflows.db.

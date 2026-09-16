@@ -225,7 +225,7 @@ The development pack separates delivery from post-delivery governance. `factory`
 5. integrate findings and repeat governance within the policy budget;
 6. run final lint/test gates before completion.
 
-`qa`, `adversary`, and `critic` have distinct contracts. QA validates behavior and can use browser-oriented skills when the project provides them. The adversary evaluates the declared product objective and invariants, not only the literal ticket text. The critic reviews code quality, maintainability, and convention fit. See [the governed pack](examples/governed-pack/README.md).
+`qa`, `adversary`, and `critic` have distinct contracts. QA validates behavior and can use browser-oriented skills when the project provides them. The adversary evaluates the declared product objective and invariants, not only the literal ticket text. The critic reviews code quality, maintainability, and convention fit. See [the development pack](packs/development/README.md).
 
 ## Watch and dashboard
 

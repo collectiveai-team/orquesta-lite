@@ -10,10 +10,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	governedpack "github.com/collectiveai-team/orquesta-lite/examples/governed-pack"
 	"github.com/collectiveai-team/orquesta-lite/internal/buildinfo"
 	"github.com/collectiveai-team/orquesta-lite/internal/packstate"
 	"github.com/collectiveai-team/orquesta-lite/internal/packsync"
+	builtinpacks "github.com/collectiveai-team/orquesta-lite/packs"
 )
 
 //go:embed assets/team.json
@@ -27,8 +27,13 @@ const (
 	builtinPackName    = "development"
 	builtinPackVersion = "6"
 	// builtinPackSource is the directory the current pack occupies inside the
-	// embedded filesystem. The frozen v5 copy lives beside it under pack-v5.
-	builtinPackSource = "pack"
+	// embedded filesystem, rooted at the pack name. The frozen v5 copy lives
+	// beside it under development/pack-v5.
+	builtinPackSource = "development/pack"
+	// builtinPackFrozenSource is the previous pack, shipped unchanged so refs
+	// pinned to it keep resolving.
+	builtinPackFrozenSource  = "development/pack-v5"
+	builtinPackFrozenVersion = "5"
 )
 
 // InitOptions tunes scaffolding behaviour.
@@ -115,13 +120,13 @@ func builtinPackRoot(projectDir string) string {
 // Only the current pack is stamped. The frozen v5 copy exists so pinned refs
 // keep resolving; it does not change, so there is nothing to tell anyone about.
 func installBuiltinDevelopmentPack(projectDir string) error {
-	if err := installEmbeddedPack(projectDir, "pack-v5", "5"); err != nil {
+	if err := installEmbeddedPack(projectDir, builtinPackFrozenSource, builtinPackFrozenVersion); err != nil {
 		return err
 	}
 	if err := installEmbeddedPack(projectDir, builtinPackSource, builtinPackVersion); err != nil {
 		return err
 	}
-	changes, err := packsync.Diff(builtinPackRoot(projectDir), governedpack.FS, builtinPackSource)
+	changes, err := packsync.Diff(builtinPackRoot(projectDir), builtinpacks.FS, builtinPackSource)
 	if err != nil || len(changes) > 0 {
 		return err
 	}
@@ -132,7 +137,7 @@ func installBuiltinDevelopmentPack(projectDir string) error {
 
 func installEmbeddedPack(projectDir, source, version string) error {
 	destination := filepath.Join(projectDir, ".orquestalite", "packs", "development", version)
-	return fs.WalkDir(governedpack.FS, source, func(path string, entry fs.DirEntry, walkErr error) error {
+	return fs.WalkDir(builtinpacks.FS, source, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -144,7 +149,7 @@ func installEmbeddedPack(projectDir, source, version string) error {
 		if entry.IsDir() {
 			return os.MkdirAll(target, 0o755)
 		}
-		data, err := governedpack.FS.ReadFile(path)
+		data, err := builtinpacks.FS.ReadFile(path)
 		if err != nil {
 			return err
 		}

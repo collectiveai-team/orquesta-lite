@@ -14,7 +14,6 @@ import (
 	"strings"
 	"time"
 
-	governedpack "github.com/collectiveai-team/orquesta-lite/examples/governed-pack"
 	"github.com/collectiveai-team/orquesta-lite/internal/activity"
 	"github.com/collectiveai-team/orquesta-lite/internal/activity/builtin"
 	activityprocess "github.com/collectiveai-team/orquesta-lite/internal/activity/process"
@@ -34,6 +33,7 @@ import (
 	"github.com/collectiveai-team/orquesta-lite/internal/sessions"
 	"github.com/collectiveai-team/orquesta-lite/internal/usageguard"
 	"github.com/collectiveai-team/orquesta-lite/internal/workflow"
+	builtinpacks "github.com/collectiveai-team/orquesta-lite/packs"
 )
 
 const agentHealthThreshold = 2
@@ -599,7 +599,7 @@ func checkPackDrift(projectDir string, compiled *compiledWorkflow, accept bool) 
 	if err != nil || resolved != expected {
 		return nil
 	}
-	changes, err := packsync.Diff(root, governedpack.FS, builtinPackSource)
+	changes, err := packsync.Diff(root, builtinpacks.FS, builtinPackSource)
 	if err != nil {
 		return nil
 	}

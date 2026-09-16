@@ -24,7 +24,7 @@ import (
 // numbers: whatever the pack's iteration ceiling and per-pass agent spend are,
 // the backstop must sit above their product. Lower it and this test says why.
 func TestGovernedPackAttemptBackstopExceedsItsOwnLoopCeiling(t *testing.T) {
-	root := filepath.Join("..", "..", "examples", "governed-pack", "pack")
+	root := builtinPackTestRoot()
 
 	// The ceiling the planner's budget can legitimately reach.
 	var stateSchema struct {

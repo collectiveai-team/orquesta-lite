@@ -1,75 +1,14 @@
-# Governed development pack
+# Governed pack example project
 
-`development@5` is the canonical built-in pack and the source embedded into the release binary. It demonstrates the product's v2-only architecture: flows compose versioned subflows, schemas, policies, and role prompts; the durable scheduler executes the compiled and pinned IR.
+The files a project needs around the shipped `development` pack, kept runnable
+so the pack's flows always have a real caller to validate against.
 
-## Flows
-
-| Flow | Purpose |
+| File | What it is |
 |---|---|
-| `plan-tickets@1` | Produce or extend a bounded ticket plan. |
-| `task-list@1` | Plan, implement, verify, and run final gates. |
-| `factory-fast@1` | Implement a feature batch with one integrated verification. |
-| `factory-governed@2` | Batch implementation by default (ticket mode is optional), followed by mandatory integrated governance. |
-| `review-existing@1` | Run governance over existing changes. |
-| `pr-review@1` | Review a pull request and optionally publish the verdict. |
-| `issue-fix@1` | Triage an issue and optionally execute its repair workflow. |
+| `team.json` | Role-to-agent bindings and prompt paths, pointing into the installed pack under `.orquestalite/packs/development/<version>/`. |
+| `features.md` | A sample contract written the way [the guide](../../guide.md) describes: one `##` heading per vertical slice. |
+| `CONVENTIONS.md` | The house style injected into every role prompt as `{{CONVENTIONS}}`, referenced by `team.json`'s `conventions_file`. |
 
-## Governance design
-
-Delivery and integrated review are separate phases. `fast=true` is the default and selects batch delivery; `fast=false` selects the per-ticket loop. Both paths always enter integrated review:
-
-```text
-ticket planner
-  ├─ batch coder -> initial QA/repair       (default fast=true)
-  └─ coder <-> ticket QA                    (fast=false)
-                         |
-                         v
-integrated QA + adversary + critic + visual_verifier
-                         |
-                         v
-                    integrator
-                         |
-                         v
-                 governance reviewer
-                         |
-                 repeat or complete
-```
-
-- QA validates the integrated behavior and is expected to use browser-oriented project skills for web work.
-- The adversary evaluates the product objective, invariants, security boundaries, and realistic misuse—not merely acceptance-criteria wording.
-- The critic evaluates correctness risks, maintainability, architecture, and repository conventions.
-- The visual verifier checks the feature in a real browser session, requiring observed evidence for every check.
-- The governance reviewer turns evidence into another bounded state or completion.
-
-The current objective and workflow state travel through each iteration, so a ticket never becomes the sole definition of success.
-
-## Quality gates
-
-The pack contains no project toolchain commands. It reads:
-
-```json
-{"argv": {"$ref": "config.lint_argv"}}
-{"argv": {"$ref": "config.test_argv"}}
-```
-
-`orq-lite init --lang ...` fills these values and `doctor` reports missing or unavailable gate executables.
-
-## Production notes
-
-- **Models.** Swap the haiku team for real reviewers: a strong coder
-  (e.g. Sonnet) and **Opus on the test/gate roles** (`ticket_qa`, `qa`,
-  `adversary`, `critic`, `gov_reviewer`, `visual_verifier`). The review roles
-  are where the bugs are caught, and in the benchmark they were ~78% of a
-  governed run's cost — that spend is the point, not the overhead.
-
-## Validate and install
-
-From the repository root:
-
-```bash
-orq-lite pack install examples/governed-pack/pack
-orq-lite flow validate development@5/factory-governed@2
-orq-lite flow inspect development@5/factory-governed@2
-```
-
-When any pack resource changes, run `python3 examples/governed-pack/regen-digests.py` and review the resulting `pack.json` digest changes.
+The pack these point at — flows, subflows, prompts, schemas, policies — is
+[`packs/development/`](../../packs/development/). Edit it there, then run
+`python3 packs/regen-digests.py`.

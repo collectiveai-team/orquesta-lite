@@ -11,11 +11,11 @@ import (
 	"sort"
 	"strings"
 
-	governedpack "github.com/collectiveai-team/orquesta-lite/examples/governed-pack"
 	"github.com/collectiveai-team/orquesta-lite/internal/buildinfo"
 	"github.com/collectiveai-team/orquesta-lite/internal/flow"
 	"github.com/collectiveai-team/orquesta-lite/internal/packstate"
 	"github.com/collectiveai-team/orquesta-lite/internal/packsync"
+	builtinpacks "github.com/collectiveai-team/orquesta-lite/packs"
 )
 
 const packUsage = "usage: orq-lite pack <install <pack-dir> [--force] | list | sync [<name>] [--dry-run] | keep [<name>]>"
@@ -248,7 +248,7 @@ func packInstall(projectDir, source string, force bool, out io.Writer) error {
 // need a different pack fork it under another name and `pack install` it.
 func packSync(projectDir string, dryRun bool, out io.Writer) error {
 	root := builtinPackRoot(projectDir)
-	changes, err := packsync.Diff(root, governedpack.FS, builtinPackSource)
+	changes, err := packsync.Diff(root, builtinpacks.FS, builtinPackSource)
 	if err != nil {
 		return err
 	}
@@ -259,7 +259,7 @@ func packSync(projectDir string, dryRun bool, out io.Writer) error {
 		fmt.Fprintf(out, "%d file(s) would change; re-run without --dry-run to apply\n", len(changes))
 		return nil
 	}
-	if err = packsync.Apply(root, governedpack.FS, builtinPackSource); err != nil {
+	if err = packsync.Apply(root, builtinpacks.FS, builtinPackSource); err != nil {
 		return err
 	}
 	// A sync that left an unloadable pack behind would break every later run,
