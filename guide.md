@@ -533,7 +533,10 @@ Write it with:
 
 - a preamble defining the user outcome, non-goals, stack, constraints, and
   cross-feature invariants;
-- one `##` heading per independently verifiable vertical slice;
+- one `##` heading per independently verifiable vertical slice — a narrow but
+  complete path through every layer the change touches (schema, API, UI, tests),
+  never a horizontal slice of one layer such as "add the columns" followed by
+  "write the endpoints";
 - mechanically checkable acceptance criteria;
 - explicit compatibility and failure behavior;
 - required automated and manual/browser evidence;
