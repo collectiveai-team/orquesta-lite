@@ -27,10 +27,11 @@ tickets — es que el modelo tenga una representación fuera del run.
 Estas cuatro condicionan el diseño más que cualquier preferencia:
 
 1. **El lenguaje de `if` no tiene predicados de string.** `internal/flow/expr.go`
-   parsea `&& || == != >= <= > <` y nada más. Un flow **no puede** inspeccionar
-   `spec_ref` para decidir si es un path o una referencia a issue. Esa rama no
-   existe como opción de diseño; la decisión tiene que venir de un input
-   explícito o del agente.
+   parsea `&& || == != >= <= > <`, referencias y literales, y nada más. Un flow
+   **no puede** inspeccionar un string para decidir si parece un path o una
+   referencia a issue: no hay `startsWith` ni `matches`. Sí puede comparar contra
+   un literal, incluido `== ""`, y de ahí sale el diseño de dos campos
+   excluyentes en lugar de un campo polimórfico que alguien tenga que adivinar.
 2. **`command.run` con `argv` corre; con `shell` no.** `internal/workflow/scheduler.go:701`
    deniega solo el campo `shell` cuando la policy no declara `allowShell`, y
    `policies/development@3.json` no lo declara. `gh issue list --json ...` corre
@@ -66,10 +67,13 @@ editar issues es escritura saliente y no puede entrar por la puerta de atrás.
 3. **Las escrituras a GitHub van detrás de un flag explícito, default `false`**,
    por simetría con `create_pr`. `publish_tickets=false` permite **leer** issues
    siempre; crear o editar, nunca. La postura del pack queda intacta.
-4. **El agente resuelve, el flow no ramifica.** Consecuencia directa de la
-   restricción 1: `ticket_planner` recibe `SPEC_REF` y `TICKET_STORE` y decide
-   si eso es un archivo o un issue, si los tickets ya existen o hay que crearlos.
-   Tiene `gh` disponible y es el único componente que puede mirar el string.
+4. **La spec entra por dos campos excluyentes, no por uno polimórfico.**
+   La restricción 1 impide ramificar sobre la *forma* de un string, pero no
+   sobre si está **vacío**: `expr.go` lexea literales y `if: inputs.spec_issue == ""`
+   compila y evalúa. Así que la discriminación vive en el flow, deterministica,
+   en vez de depender del criterio del agente. Un `spec_path` mal escrito falla
+   al leerlo, antes de gastar una invocación. Lo que el agente sí resuelve es lo
+   que ningún `if` puede: si los tickets ya existen en GitHub o hay que crearlos.
 5. **La rama de vuelta se resuelve con datos, no con `if`:** el planner
    **devuelve** dónde quedó la spec, y todo lo de abajo consume ese valor.
 6. **La spec es el ledger de tickets.** La referencia a los issues que
@@ -87,29 +91,45 @@ Tres inputs nuevos, declarados en cada flow que hoy declara `features_path`:
 
 | Input | Schema | Default | Qué es |
 |---|---|---|---|
-| `spec_ref` | `schema:text@1` | — | Path local (`features.md`) o referencia a issue (`#123`, `owner/repo#123`, o URL). Un solo campo: el agente discrimina. |
+| `spec_path` | `schema:path@1` | `""` | La spec como archivo del repo (`features.md`). |
+| `spec_issue` | `schema:text@1` | `""` | La spec como issue (`#123`, `owner/repo#123`, o URL). |
 | `ticket_store` | `schema:ticket-store@1` (nuevo, enum `local`\|`github`) | `"local"` | Dónde viven los tickets. |
-| `publish_tickets` | `schema:flag@1` | `false` | Autoriza crear/editar issues y editar la spec. |
+| `publish_tickets` | `schema:flag@1` | `false` | Autoriza crear/editar issues y commitear la spec. |
+
+`spec_path` y `spec_issue` son **mutuamente excluyentes**: exactamente uno tiene
+que venir no vacío. Un `gate.assert@1` al inicio de `tickets-source@1` rechaza
+los dos puestos y los dos vacíos, con mensajes distintos — "ambiguo" y "falta la
+spec" son errores del operador diferentes y merecen texto diferente.
 
 `features_path` se mantiene como input **deprecado pero funcional**: cuando
-`spec_ref` viene vacío, `tickets-source@1` usa `features_path`. Esto deja que
-los alias de CLI existentes (`orq-lite plan`, `factory`, `issue-fix`) sigan
-funcionando sin cambios en `aliases.go` hasta que se migren en un ticket aparte.
+`spec_path` y `spec_issue` vienen vacíos, `tickets-source@1` usa `features_path`
+como `spec_path`. Esto deja que los alias de CLI existentes (`orq-lite plan`,
+`factory`, `issue-fix`) sigan funcionando sin cambios en `aliases.go` hasta que
+se migren en un ticket aparte. La exclusión mutua se evalúa después de ese
+fallback, así que `features_path` + `spec_issue` también es ambiguo.
 
 ### El subflow `tickets-source@1`
 
-Inputs: `spec_ref`, `features_path`, `ticket_store`, `publish_tickets`, `mode`,
-y los pass-through que el planner ya recibe (`state`, `implementation`,
-`verification`, `triage`, `append`).
+Inputs: `spec_path`, `spec_issue`, `features_path`, `ticket_store`,
+`publish_tickets`, `mode`, y los pass-through que el planner ya recibe
+(`state`, `implementation`, `verification`, `triage`, `append`).
 
 Steps:
 
-1. **`resolve`** — `agent.invoke@1` sobre `ticket_planner`, con
+1. **`spec_is_unambiguous`** — `gate.assert@1`. Exactamente una de `spec_path` /
+   `spec_issue` no vacía, evaluado después del fallback a `features_path`.
+2. **`fetch_issue_spec`** — `command.run@1`, `if: inputs.spec_issue != ""`.
+   `gh issue view <ref> --json title,body` y el planner lo materializa a
+   `.orquestalite/spec.md`. En el camino local este step ni se materializa.
+3. **`resolve`** — `agent.invoke@1` sobre `ticket_planner`, con
    `outputSchema: schema:workflow-state@3`. Es el mismo rol de hoy con vars
-   nuevas (`SPEC_REF`, `TICKET_STORE`, `PUBLISH_TICKETS`).
-2. **`verify_tickets_exist`** — `command.run@1`, `if: ticket_store == "github"`.
+   nuevas (`SPEC_PATH`, `SPEC_ISSUE`, `TICKET_STORE`, `PUBLISH_TICKETS`).
+4. **`verify_tickets_exist`** — `command.run@1`, `if: ticket_store == "github"`.
    Corre un `gh issue view` por cada id declarado y falla si alguno no resuelve.
-3. **`tickets_are_real`** — `gate.assert@1` sobre la salida del step anterior.
+5. **`tickets_are_real`** — `gate.assert@1` sobre la salida del step anterior.
+6. **`commit_spec`** — `git.commit@1`, `if: publish_tickets == true`, con
+   `type: "chore"`, `scope: "spec"` y un subject que nombra los issues creados.
+   Ver "El ledger se commitea solo", abajo.
 
 Outputs: `state` (un `workflow-state@3`) y `spec_path`, proyectado desde el
 mismo estado para que los consumidores no tengan que navegarlo.
@@ -193,6 +213,36 @@ Esto hace que la spec sea legible por un humano y verificable por una máquina
 con el mismo texto, y que el ancla sobreviva a que alguien renombre labels o
 mueva el issue de milestone.
 
+### El ledger se commitea solo
+
+Cuando el planner crea los issues y escribe la sección `## Tickets` en una spec
+local, deja `features.md` modificado y sin commitear. `git.commit@1` hace
+`git add -A` (`internal/activity/builtin/gitcommit.go:156`), así que sin un step
+propio esa sección viaja **dentro del primer commit de ticket**: el commit cuyo
+mensaje dice "ticket #101" llevaría además el registro de los seis issues, y su
+mensaje dejaría de describir su propio diff.
+
+Peor que eso es la ventana: si el run muere después de crear los issues y antes
+del primer commit, los issues existen en GitHub y la spec queda sucia en el
+working tree con una sección que el usuario no escribió. Recuperable —el
+re-run lee la sección y encuentra los issues en vez de duplicarlos— pero deja un
+cambio local que nadie pidió.
+
+Por eso `commit_spec` corre dentro de `tickets-source@1`, apenas publicados los
+issues:
+
+```
+chore(spec): link tickets #101-#106
+```
+
+El commit del ticket queda conteniendo solo el ticket, y la ventana sucia se
+cierra en el mismo pase que la abre. `git add -A` sigue barriendo cualquier otro
+cambio pendiente del working tree, pero eso ya es cierto para todo commit que el
+pack hace hoy: no es algo que este diseño introduzca.
+
+Cuando la spec es un issue, el ancla se escribe con `gh issue edit` y no hay
+nada que commitear: `commit_spec` reporta "nothing to commit" y sigue.
+
 ### Reglas de fallo cerrado
 
 | Situación | Qué pasa |
@@ -207,10 +257,10 @@ mueva el issue de milestone.
 
 Una sección nueva, `## Ticket store`, que cubre:
 
-- Cómo discriminar `SPEC_REF`: si resuelve como archivo existente es una spec
-  local; si matchea `#N`, `owner/repo#N` o una URL de issue, es un issue.
-  Ambiguo (existe el archivo **y** parece ref) → gana el archivo, y se anota en
-  `risks`.
+- Qué spec leer: el flow ya garantizó que llega exactamente una de `SPEC_PATH`
+  o `SPEC_ISSUE`, así que el prompt no discrimina formas de string — lee la que
+  venga no vacía. Con `SPEC_ISSUE`, materializa el cuerpo a `.orquestalite/spec.md`
+  y devuelve **ese** path en `spec_path`.
 - En `TICKET_STORE=github`: leer la sección `## Tickets` de la spec; si existe,
   construir el estado desde esos issues (`gh issue view --json number,title,body,state`)
   en lugar de descomponer de cero; si no existe y `PUBLISH_TICKETS=true`,
@@ -233,11 +283,11 @@ son propiedades del plan, no del lugar donde se guarda.
 | `packs/development/pack/schemas/workflow-state@3.json` | nuevo (`@2` intacto para `pack-v5/`) |
 | `packs/development/pack/schemas/ticket-store@1.json` | nuevo (`enum`, que el validador sí soporta) |
 | `packs/development/pack/prompts/ticket-planner.md` | sección `## Ticket store` |
-| `flows/{plan-tickets,task-list,factory-fast,factory-governed,issue-fix}` | inputs nuevos; `plan_tickets` → `subflow:tickets-source@1` |
+| `flows/{plan-tickets,task-list,factory-fast,factory-governed,issue-fix}` | inputs nuevos (`spec_path`, `spec_issue`, `ticket_store`, `publish_tickets`); `plan_tickets` → `subflow:tickets-source@1` |
 | `packs/development/pack/subflows/develop-ticket@1.json` | el `replan` usa el subflow; `features_path` → `spec_path` |
 | `packs/development/pack/subflows/integrated-review@1.json` | `features_path` → `spec_path` |
 | `internal/doctor/doctor.go` | check de `gh auth status` |
-| `internal/commands/aliases.go` | `--spec` / `--ticket-store` / `--publish-tickets` |
+| `internal/commands/aliases.go` | `--spec` / `--spec-issue` / `--ticket-store` / `--publish-tickets` |
 | `packs/development/pack/pack.json` | digests |
 
 ### Testing
@@ -254,6 +304,12 @@ ejecute y salga roto, como ya pasó con `factory-governed@2` non-fast. Entonces:
   se vio fallar no es un gate.
 - **Fallo cerrado.** Test de `ticket_store=github` + `publish_tickets=false` +
   spec sin sección: el run falla y no escribe tickets locales.
+- **Exclusión mutua.** Tres tests sobre `spec_is_unambiguous`: las dos puestas,
+  las dos vacías, y `features_path` + `spec_issue`. Cada uno con su mensaje.
+- **El commit del ticket queda limpio.** Con `publish_tickets=true` y spec
+  local, el commit del primer ticket **no** contiene la sección `## Tickets`:
+  ya la commiteó `commit_spec`. Es la verificación de que el step sirve para
+  algo, y falla si alguien lo borra.
 - **No-regresión del camino local.** Los tests existentes de `ticketcommit` y
   `subflowinputs` tienen que pasar sin cambios de expectativa: en modo local
   esto no altera nada.
@@ -269,21 +325,25 @@ ejecute y salga roto, como ya pasó con `factory-governed@2` non-fast. Entonces:
 - **Concurrencia:** varios runs tomando del mismo frontier. Hoy
   `maxParallelism: 1` en `development@3` lo hace imposible de todos modos.
 
-## Preguntas abiertas para revisión
+## Resuelto en revisión (2026-09-23)
 
-1. **La edición de la spec local ensucia el working tree a mitad de run.** El
-   loop `develop-ticket@1` commitea por ticket, así que la sección `## Tickets`
-   nueva se colaría dentro del primer commit de ticket. Mi lectura es que está
-   bien y hasta es deseable — el commit que arranca el trabajo registra qué
-   issues lo componen. Pero es un efecto lateral y merece un sí explícito.
-2. **`id` = número de issue rompe la legibilidad de `history`.** Las entradas
-   pasan de "T3 verified" a "123 verified". Alternativa: mantener `T1..Tn` como
-   id y guardar el número en un campo aparte, a costa de una tabla de mapeo que
-   el agente tiene que sostener entre pases. Me inclino por el número de issue
-   justamente porque no hay mapeo que perder.
-3. **`schema:text@1` para `spec_ref` acepta cualquier string.** El validador no
-   implementa `pattern`, así que no hay forma de restringirlo en el schema a un
-   path o una ref. La validación real ocurre en el agente, que es lo que la
-   restricción 1 impone de todos modos. Queda anotado como deuda: si el subset
-   de `internal/flow/schema.go` gana `pattern` algún día, este input debería
-   estrecharse.
+1. **La spec se commitea sola.** Se evaluó dejar que la sección `## Tickets`
+   viajara dentro del primer commit de ticket. Se descartó: el mensaje dejaría
+   de describir su diff, y un run caído entre la creación de issues y el primer
+   commit dejaría la spec sucia sin que nadie la haya tocado. `commit_spec`
+   cierra las dos cosas por un step.
+2. **`id` = número de issue.** Se aceptó que `history` diga "123 verified" en
+   vez de "T3 verified". La alternativa —ids `T1..Tn` más una tabla de mapeo a
+   números de issue— pone en el agente la obligación de sostener esa tabla entre
+   pases, y una tabla que el agente sostiene es una tabla que el agente pierde.
+3. **Dos campos excluyentes en vez de un `spec_ref` polimórfico.** El borrador
+   original tenía un solo input que el agente discriminaba, justificado en que
+   la restricción 1 impide ramificar sobre strings. Es cierto para la *forma*
+   del string y falso para si está **vacío**: `expr.go` lexea literales y
+   `inputs.spec_issue == ""` evalúa sin problema. Con dos campos, un path mal
+   escrito falla al leerlo en vez de convertirse en una búsqueda en GitHub
+   adentro de una invocación de agente.
+
+Queda como deuda, no como pregunta: `internal/flow/schema.go` no implementa
+`pattern`, así que `spec_issue` acepta cualquier string y su forma solo se
+valida al usarla. Si el subset de schemas gana `pattern`, estrechar ese input.
