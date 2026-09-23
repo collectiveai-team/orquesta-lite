@@ -14,6 +14,7 @@ var embeddedPrices = map[string]price{
 	"claude-opus-4":     {InputPerMillion: 15.00, OutputPerMillion: 75.00},
 	"claude-opus-4-8":   {InputPerMillion: 5.00, OutputPerMillion: 25.00},
 	"claude-opus-5":     {InputPerMillion: 5.00, OutputPerMillion: 25.00},
+	"claude-opus-5-5":   {InputPerMillion: 4.00, OutputPerMillion: 20.00},
 	"gemini-2.5-pro":    {InputPerMillion: 1.25, OutputPerMillion: 10.00},
 	"gemini-2.5-flash":  {InputPerMillion: 0.30, OutputPerMillion: 2.50},
 	"gpt-5":             {InputPerMillion: 1.25, OutputPerMillion: 10.00},
@@ -22,15 +23,17 @@ var embeddedPrices = map[string]price{
 }
 
 // Longest prefix first: claude-sonnet-5 must win over claude-sonnet-4 for a
-// dated snapshot id, and claude-opus-4-8 over claude-opus-4. Only models with
-// a known rate are listed: a bare "gpt-5" prefix would silently price every
-// future gpt-5.x at another model's rate, and a guessed number is worse than
-// none because the result feeds the workflow cost budget.
+// dated snapshot id, claude-opus-4-8 over claude-opus-4, and claude-opus-5-5
+// over claude-opus-5. Only models with a known rate are listed: a bare "gpt-5"
+// prefix would silently price every future gpt-5.x at another model's rate,
+// and a guessed number is worse than none because the result feeds the
+// workflow cost budget.
 var embeddedPricePrefixes = []string{
 	"claude-sonnet-4-6",
 	"claude-sonnet-5",
 	"claude-sonnet-4",
 	"claude-opus-4-8",
+	"claude-opus-5-5",
 	"claude-opus-5",
 	"claude-opus-4",
 	"gemini-2.5-pro",

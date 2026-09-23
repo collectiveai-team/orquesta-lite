@@ -2,7 +2,7 @@
   "agents": {
     "claude_opus": {
       "provider": "claude",
-      "model": "claude-opus-5",
+      "model": "claude-opus-5-5",
       "dangerously_skip_permissions": true,
       "rate_limit_pattern": "(?i)(rate[ _-]?limit|429|quota|too many requests|session limit|usage limit|spend limit|credit balance|overloaded)"
     },
