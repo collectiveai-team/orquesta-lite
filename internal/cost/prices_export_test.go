@@ -24,6 +24,8 @@ func TestEstimateUSD_Claude5(t *testing.T) {
 		{"claude-sonnet-5", 12.00},          // 2.00 input + 10.00 output
 		{"claude-opus-5-20260401", 30.00},   // dated snapshot resolves by prefix
 		{"claude-sonnet-5-20260401", 12.00}, // must not match claude-sonnet-4
+		{"claude-opus-5-5", 24.00},          // 4.00 input + 20.00 output
+		{"claude-opus-5-5-20260901", 24.00}, // must not match claude-opus-5
 	}
 	for _, tc := range cases {
 		usd, ok := EstimateUSD(tc.model, 1_000_000, 1_000_000)

@@ -116,7 +116,7 @@ func TestInit_TeamJSONHasClaudePrimaryCodexFallback(t *testing.T) {
 		model    string
 		effort   string
 	}{
-		"claude_opus":   {provider: "claude", model: "claude-opus-5"},
+		"claude_opus":   {provider: "claude", model: "claude-opus-5-5"},
 		"claude_sonnet": {provider: "claude", model: "claude-sonnet-5"},
 		"codex_sol":     {provider: "codex", model: "gpt-5.6-sol", effort: "medium"},
 		"codex_terra":   {provider: "codex", model: "gpt-5.6-terra", effort: "medium"},
