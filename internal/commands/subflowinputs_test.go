@@ -38,7 +38,7 @@ type packDoc struct {
 // engine now binds declared defaults; this test is the pack-level statement of
 // the property that fix buys, so a new subflow input cannot reintroduce it.
 func TestEverySubflowCallSiteBindsTheInputsItsStepsRead(t *testing.T) {
-	packRoot := filepath.Join("..", "..", "examples", "governed-pack", "pack")
+	packRoot := builtinPackTestRoot()
 
 	subflows := map[string]packDoc{}
 	entries, err := os.ReadDir(filepath.Join(packRoot, "subflows"))
@@ -95,6 +95,14 @@ func TestEverySubflowCallSiteBindsTheInputsItsStepsRead(t *testing.T) {
 			}
 		}
 	}
+}
+
+// builtinPackTestRoot locates the shipped development pack from inside the
+// package under test. Every test that reads the real pack goes through here:
+// the path lived in five separate literals until the pack moved out of
+// examples/, and a grep for the old directory missed most of them.
+func builtinPackTestRoot() string {
+	return filepath.Join("..", "..", "packs", "development", "pack")
 }
 
 func readPackDoc(t *testing.T, path string) packDoc {

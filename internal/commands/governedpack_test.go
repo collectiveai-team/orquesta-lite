@@ -13,7 +13,7 @@ import (
 
 func governedPackRoot(t *testing.T) string {
 	t.Helper()
-	root, err := filepath.Abs(filepath.Join("..", "..", "examples", "governed-pack", "pack"))
+	root, err := filepath.Abs(builtinPackTestRoot())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestGovernedFactoryV2DefaultsToFastAndAlwaysRunsIntegratedReview(t *testing
 func TestGovernedPackRequiredFlowsCompile(t *testing.T) {
 	root := governedPackRoot(t)
 	if _, err := flow.LoadPack(root); err != nil {
-		t.Fatalf("pack.json digests are stale — run examples/governed-pack/regen-digests.py: %v", err)
+		t.Fatalf("pack.json digests are stale — run packs/regen-digests.py: %v", err)
 	}
 	catalog := flow.NewDirectoryCatalog(root, builtinSpecs())
 	for name, version := range map[string]string{"factory-fast": "1", "factory-governed": "2", "issue-fix": "1", "plan-tickets": "1", "pr-review": "1", "review-existing": "1", "task-list": "1"} {
@@ -255,7 +255,7 @@ func installGovernedPack(t *testing.T, project string) {
 	source := governedPackRoot(t)
 	pack, err := flow.LoadPack(source)
 	if err != nil {
-		t.Fatalf("pack.json digests are stale — run examples/governed-pack/regen-digests.py: %v", err)
+		t.Fatalf("pack.json digests are stale — run packs/regen-digests.py: %v", err)
 	}
 	dest := filepath.Join(project, ".orquestalite", "packs", pack.Name, pack.Version)
 	for relative := range pack.Files {

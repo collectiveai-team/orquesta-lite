@@ -34,6 +34,15 @@ flows.json
 !examples/**/flows.json
 !examples/**/plan.md
 
+# the shipped packs live under packs/ and are product, not workspace state. The
+# repo-wide prompts/ and schemas/ ignores above would swallow any file added to
+# a pack from here on: the files moved out of examples/ stayed tracked, so the
+# move itself looked clean and no test could have caught this.
+!packs/**/prompts/
+!packs/**/prompts/**
+!packs/**/schemas/
+!packs/**/schemas/**
+
 # the embedded assets that `orq-lite init` scaffolds from are part of the binary,
 # not runtime-generated dogfooding config — keep them trackable despite the
 # repo-wide prompts/, schemas/, and flows.json ignores.

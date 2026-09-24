@@ -14,7 +14,7 @@ import (
 // the run instead of skipping it.
 func loadDevelopTicket(t *testing.T) map[string]any {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "examples", "governed-pack", "pack", "subflows", "develop-ticket@1.json"))
+	raw, err := os.ReadFile(filepath.Join(builtinPackTestRoot(), "subflows", "develop-ticket@1.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestAStillBlockedCommitFailsTheRun(t *testing.T) {
 }
 
 func TestCoderPromptDocumentsTheCommitFailureInput(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "examples", "governed-pack", "pack", "prompts", "coder.md"))
+	raw, err := os.ReadFile(filepath.Join(builtinPackTestRoot(), "prompts", "coder.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +172,7 @@ var knownPromptGaps = map[string]bool{
 // reads a literal placeholder where its instructions should be — the failure
 // mode where a role is wired but never actually receives its findings.
 func TestEveryPromptPlaceholderIsSuppliedByEveryStepThatUsesTheRole(t *testing.T) {
-	packRoot := filepath.Join("..", "..", "examples", "governed-pack", "pack")
+	packRoot := builtinPackTestRoot()
 	placeholder := regexp.MustCompile(`\{\{([A-Z0-9_]+)\}\}`)
 
 	prompts := map[string][]string{}
@@ -259,7 +259,7 @@ func TestEveryPromptPlaceholderIsSuppliedByEveryStepThatUsesTheRole(t *testing.T
 // Conventional Commits carries meaning in the type. A flow whose whole purpose
 // is repairing a reported issue must not label its commits as features.
 func TestIssueFixCommitsAsAFix(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "examples", "governed-pack", "pack", "flows", "issue-fix@1.json"))
+	raw, err := os.ReadFile(filepath.Join(builtinPackTestRoot(), "flows", "issue-fix@1.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
