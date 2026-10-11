@@ -412,7 +412,7 @@ func (d *workflowDeps) close(ctx context.Context) error {
 // FlowCLI dispatches durable v2 workflow commands.
 func FlowCLI(ctx context.Context, projectDir string, args []string, out io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: orq-lite flow <validate|inspect|list|run|status|resume|cancel|approve|events> <arguments>")
+		return fmt.Errorf("usage: orq-lite flow <validate|inspect|list|check-result|run|status|resume|cancel|approve|events> <arguments>")
 	}
 	switch args[0] {
 	case "validate", "inspect":
@@ -432,6 +432,8 @@ func FlowCLI(ctx context.Context, projectDir string, args []string, out io.Write
 		return err
 	case "list":
 		return listWorkflows(projectDir, out)
+	case "check-result":
+		return flowCheckResult(projectDir, args[1:], out)
 	case "run":
 		return flowCLIRun(ctx, projectDir, args[1:], out)
 	case "status", "events":
