@@ -38,19 +38,9 @@
       }
     },
     {
-      "id": "review_coverage",
-      "uses": "activity:gate.assert@1",
-      "with": {
-        "value": {
-          "$ref": "steps.review_evidence.output.ready"
-        },
-        "equals": true,
-        "message": "Incomplete governance requires review, not product repair"
-      }
-    },
-    {
       "id": "repair",
       "uses": "activity:agent.invoke@1",
+      "if": "inputs.verdict.status == \"complete\" && steps.review_evidence.output.needs_repair == true",
       "with": {
         "role": "integrator",
         "outputSchema": "schema:iteration-result@1",
@@ -58,12 +48,14 @@
           "FEATURES_PATH": {
             "$ref": "inputs.features_path"
           },
+          "FEEDBACK": {
+            "$ref": "inputs.verdict"
+          },
           "CONFIRMED_FINDINGS": {
             "$ref": "steps.review_evidence.output.repair_findings"
           }
         }
-      },
-      "if": "steps.review_evidence.output.needs_repair == true"
+      }
     },
     {
       "id": "lint",
@@ -81,6 +73,50 @@
         "argv": {
           "$ref": "config.test_argv"
         }
+      }
+    },
+    {
+      "id": "commit",
+      "uses": "activity:git.commit@1",
+      "with": {
+        "type": "fix",
+        "scope": "review",
+        "subject": "repair review findings",
+        "body": "Repairs for the findings confirmed by the integrated review and governance."
+      }
+    },
+    {
+      "id": "repair_commit",
+      "uses": "activity:agent.invoke@1",
+      "if": "steps.commit.output.blocked == true",
+      "with": {
+        "role": "integrator",
+        "outputSchema": "schema:iteration-result@1",
+        "context": {
+          "FEATURES_PATH": {
+            "$ref": "inputs.features_path"
+          },
+          "FEEDBACK": {
+            "$ref": "steps.commit.output"
+          },
+          "CONFIRMED_FINDINGS": {
+            "$ref": "steps.review_evidence.output.repair_findings"
+          }
+        }
+      }
+    },
+    {
+      "id": "commit_retry",
+      "uses": "activity:git.commit@1",
+      "if": "steps.commit.output.blocked == true",
+      "with": {
+        "type": "fix",
+        "scope": "review",
+        "subject": "repair review findings",
+        "body": {
+          "$ref": "steps.repair_commit.output.summary"
+        },
+        "requireCommitted": true
       }
     },
     {
@@ -107,16 +143,33 @@
           "VISUAL_REVIEW": {
             "$ref": "inputs.visual_review"
           }
+        },
+        "fallbackOutput": {
+          "version": 2,
+          "status": "unavailable",
+          "decision": "inconclusive",
+          "approved": false,
+          "summary": "Governance reviewer unavailable",
+          "findings": [],
+          "limitations": [
+            "Governance did not produce a valid review-result@2 after every contract retry; its verdict is unknown"
+          ],
+          "reviewed_revision": "",
+          "evidence": []
         }
       }
     }
   ],
   "outputs": {
+    "pending": false,
     "approved": {
       "$ref": "steps.governance.output.approved"
     },
     "verdict": {
       "$ref": "steps.governance.output"
+    },
+    "commit": {
+      "$ref": "steps.commit.output"
     }
   }
 }
