@@ -188,6 +188,7 @@ func main() {
   validate <ref|path>        compile and validate a v2 flow
   inspect <ref|path>         print pinned compiled IR
 	  list                       list local and installed v2 flows
+  check-result <schema> <file> validate a result file against a pack schema
 	  run <ref|path> [k=v...]    start a durable workflow
   status <run-id>            print run, steps and approvals
   resume <run-id>            resume the pinned workflow definition

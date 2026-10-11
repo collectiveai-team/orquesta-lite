@@ -9,6 +9,14 @@
  "inputs": {
   "features_path": {
    "schema": "schema:path@1"
+  },
+  "create_pr": {
+   "schema": "schema:flag@1",
+   "default": false
+  },
+  "strict_governance": {
+   "schema": "schema:flag@1",
+   "default": false
   }
  },
  "steps": [
@@ -18,7 +26,48 @@
    "with": {
     "features_path": {
      "$ref": "inputs.features_path"
+    },
+    "require_approval": {
+     "$ref": "inputs.strict_governance"
     }
+   }
+  },
+  {
+   "id": "push_branch",
+   "uses": "activity:command.run@1",
+   "if": "inputs.create_pr == true",
+   "with": {
+    "argv": [
+     "git",
+     "push",
+     "-u",
+     "origin",
+     "HEAD"
+    ]
+   }
+  },
+  {
+   "id": "publish_pr",
+   "uses": "activity:command.run@1",
+   "if": "inputs.create_pr == true && steps.integrated_review.output.approved == true",
+   "with": {
+    "argv": [
+     "sh",
+     "-c",
+     "gh pr create --fill --head \"$(git branch --show-current)\""
+    ]
+   }
+  },
+  {
+   "id": "publish_draft_pr",
+   "uses": "activity:command.run@1",
+   "if": "inputs.create_pr == true && steps.integrated_review.output.approved != true",
+   "with": {
+    "argv": [
+     "sh",
+     "-c",
+     "gh pr create --fill --draft --head \"$(git branch --show-current)\""
+    ]
    }
   }
  ],

@@ -130,7 +130,7 @@ func (s *Schema) validateValue(path string, value any) error {
 			}
 		}
 		if !found {
-			return fmt.Errorf("%s: value is not in enum", path)
+			return fmt.Errorf("%s: value %s is not in enum [%s]", path, enumLiteral(value), enumList(s.Enum))
 		}
 	}
 	if s.Minimum != nil || s.Maximum != nil {
@@ -350,4 +350,22 @@ func valuesEqual(a, b any) bool {
 		return fmt.Sprint(a) == fmt.Sprint(b)
 	}
 	return reflect.DeepEqual(a, b)
+}
+
+// enumLiteral and enumList render an enum violation as JSON, so an agent reading
+// the error sees the exact strings it may write instead of only that it missed.
+func enumLiteral(value any) string {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Sprint(value)
+	}
+	return string(raw)
+}
+
+func enumList(values []any) string {
+	parts := make([]string, 0, len(values))
+	for _, value := range values {
+		parts = append(parts, enumLiteral(value))
+	}
+	return strings.Join(parts, ", ")
 }

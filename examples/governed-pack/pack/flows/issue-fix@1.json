@@ -13,6 +13,10 @@
     "run": {
       "schema": "schema:flag@1",
       "default": true
+    },
+    "strict_governance": {
+      "schema": "schema:flag@1",
+      "default": false
     }
   },
   "steps": [
@@ -117,6 +121,9 @@
       "with": {
         "features_path": {
           "$ref": "inputs.issue_path"
+        },
+        "require_approval": {
+          "$ref": "inputs.strict_governance"
         }
       }
     }

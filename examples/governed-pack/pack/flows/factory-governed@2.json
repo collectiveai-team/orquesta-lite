@@ -10,8 +10,18 @@
   "features_path": {
    "schema": "schema:path@1"
   },
-  "fast": {"schema": "schema:flag@1", "default": true},
-  "create_pr": {"schema": "schema:flag@1", "default": false}
+  "fast": {
+   "schema": "schema:flag@1",
+   "default": true
+  },
+  "create_pr": {
+   "schema": "schema:flag@1",
+   "default": false
+  },
+  "strict_governance": {
+   "schema": "schema:flag@1",
+   "default": false
+  }
  },
  "steps": [
   {
@@ -38,8 +48,12 @@
    "uses": "subflow:fast-batch@1",
    "if": "inputs.fast == true",
    "with": {
-    "features_path": {"$ref": "inputs.features_path"},
-    "state": {"$ref": "steps.plan_tickets.output"}
+    "features_path": {
+     "$ref": "inputs.features_path"
+    },
+    "state": {
+     "$ref": "steps.plan_tickets.output"
+    }
    }
   },
   {
@@ -48,7 +62,9 @@
    "if": "inputs.fast != true",
    "while": {
     "condition": "item.state.status == \"active\"",
-    "maxIterations": {"$ref": "item.state.iteration_budget"},
+    "maxIterations": {
+     "$ref": "item.state.iteration_budget"
+    },
     "initial": {
      "state": {
       "$ref": "steps.plan_tickets.output"
@@ -69,7 +85,9 @@
    "uses": "activity:gate.assert@1",
    "if": "inputs.fast != true && steps.plan_tickets.output.status == \"active\"",
    "with": {
-    "value": {"$ref": "steps.develop_tickets.output.last.state.status"},
+    "value": {
+     "$ref": "steps.develop_tickets.output.last.state.status"
+    },
     "equals": "complete",
     "message": "the ticket loop ended without the plan reaching status=complete"
    }
@@ -80,19 +98,60 @@
    "with": {
     "features_path": {
      "$ref": "inputs.features_path"
+    },
+    "require_approval": {
+     "$ref": "inputs.strict_governance"
     }
+   }
+  },
+  {
+   "id": "push_branch",
+   "uses": "activity:command.run@1",
+   "if": "inputs.create_pr == true",
+   "with": {
+    "argv": [
+     "git",
+     "push",
+     "-u",
+     "origin",
+     "HEAD"
+    ]
    }
   },
   {
    "id": "publish_pr",
    "uses": "activity:command.run@1",
-   "if": "inputs.create_pr == true",
-   "with": {"argv": ["gh", "pr", "create", "--fill"]}
+   "if": "inputs.create_pr == true && steps.integrated_review.output.approved == true",
+   "with": {
+    "argv": [
+     "sh",
+     "-c",
+     "gh pr create --fill --head \"$(git branch --show-current)\""
+    ]
+   }
+  },
+  {
+   "id": "publish_draft_pr",
+   "uses": "activity:command.run@1",
+   "if": "inputs.create_pr == true && steps.integrated_review.output.approved != true",
+   "with": {
+    "argv": [
+     "sh",
+     "-c",
+     "gh pr create --fill --draft --head \"$(git branch --show-current)\""
+    ]
+   }
   }
  ],
  "outputs": {
-  "ticket_iterations": {"$ref": "steps.develop_tickets.output"},
-  "governance": {"$ref": "steps.integrated_review.output"},
-  "batch": {"$ref": "steps.fast_batch.output"}
+  "ticket_iterations": {
+   "$ref": "steps.develop_tickets.output"
+  },
+  "governance": {
+   "$ref": "steps.integrated_review.output"
+  },
+  "batch": {
+   "$ref": "steps.fast_batch.output"
+  }
  }
 }

@@ -1,6 +1,9 @@
 package review
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func completeReview(findings ...Finding) Result {
 	decision := "approve"
@@ -106,5 +109,52 @@ func TestPreserveRejectsDroppedBlockingFinding(t *testing.T) {
 	prior := completeReview(blockingFinding("BUG-1"))
 	if err := Preserve(completeReview(), []Result{prior}); err == nil {
 		t.Fatal("blocking finding disappeared")
+	}
+}
+
+// A corrective retry only converges when the agent sees every violation at
+// once; reporting the first one made governance fix one detail per attempt and
+// exhaust its budget on the next.
+func TestValidateReportsEveryViolationWithItsSubject(t *testing.T) {
+	missingEvidence := blockingFinding("BUG-2")
+	missingEvidence.Evidence = []string{}
+	r := completeReview(missingEvidence)
+	r.Status, r.Decision, r.Approved = "partial", "block", false
+	r.Limitations = []string{"browser flaky"}
+	r.Visual = &Visual{
+		Requested: "browser", Executed: "agent-browser", Required: []string{"login form", "mobile layout"},
+		Checked: []string{"login form"}, Pending: []string{}, Reason: "partial run",
+	}
+	err := r.Validate()
+	if err == nil {
+		t.Fatal("invalid review accepted")
+	}
+	for _, want := range []string{
+		`finding "BUG-2"`,
+		`visual.executed "agent-browser"`,
+		"browser, static, not_applicable, unavailable",
+		`criterion "mobile layout"`,
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error does not mention %q:\n%v", want, err)
+		}
+	}
+}
+
+func TestPreserveReportsEveryLostEvidenceVerbatim(t *testing.T) {
+	old := blockingFinding("BUG-1")
+	old.Evidence = []string{"repro one", "repro two"}
+	old.Origins = []string{"qa", "adversary"}
+	current := blockingFinding("BUG-1")
+	current.Evidence = []string{"paraphrased repro"}
+	current.Origins = []string{"governance"}
+	err := Preserve(completeReview(current), []Result{completeReview(old)})
+	if err == nil {
+		t.Fatal("lost evidence accepted")
+	}
+	for _, want := range []string{`"repro one"`, `"repro two"`, `origin "qa"`, `origin "adversary"`, "verbatim"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error does not mention %q:\n%v", want, err)
+		}
 	}
 }

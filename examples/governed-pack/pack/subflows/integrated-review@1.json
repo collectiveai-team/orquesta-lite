@@ -8,6 +8,10 @@
   "inputs": {
     "features_path": {
       "schema": "schema:path@1"
+    },
+    "require_approval": {
+      "schema": "schema:flag@1",
+      "default": false
     }
   },
   "steps": [
@@ -180,7 +184,8 @@
         },
         "equals": true,
         "message": "Required review incomplete; obtain evidence before repair or approval"
-      }
+      },
+      "if": "inputs.require_approval == true"
     },
     {
       "id": "integration_repair",
@@ -218,84 +223,26 @@
       }
     },
     {
-      "id": "final_lint",
-      "uses": "activity:gate.run@1",
-      "with": {
-        "argv": {
-          "$ref": "config.lint_argv"
-        }
-      }
-    },
-    {
-      "id": "final_tests",
-      "uses": "activity:gate.run@1",
-      "with": {
-        "argv": {
-          "$ref": "config.test_argv"
-        }
-      }
-    },
-    {
-      "id": "governance",
-      "uses": "activity:agent.invoke@1",
-      "with": {
-        "role": "gov_reviewer",
-        "outputSchema": "schema:review-result@2",
-        "vars": {
-          "FEATURES_PATH": {
-            "$ref": "inputs.features_path"
-          }
-        },
-        "context": {
-          "QA_REVIEW": {
-            "$ref": "steps.qa.output"
-          },
-          "CRITIC_REVIEW": {
-            "$ref": "steps.critic.output"
-          },
-          "ADVERSARY_REVIEW": {
-            "$ref": "steps.adversary.output"
-          },
-          "VISUAL_REVIEW": {
-            "$ref": "steps.visual_verifier.output"
-          }
-        }
-      }
-    },
-    {
-      "id": "governance_evidence",
-      "uses": "activity:review.aggregate@1",
-      "with": {
-        "reviews": [
-          {
-            "$ref": "steps.governance.output"
-          }
-        ]
-      }
-    },
-    {
-      "id": "governance_coverage",
-      "uses": "activity:gate.assert@1",
-      "with": {
-        "value": {
-          "$ref": "steps.governance_evidence.output.ready"
-        },
-        "equals": true,
-        "message": "Governance review incomplete; no automatic repair"
-      }
-    },
-    {
-      "id": "governance_repair",
+      "id": "governance_loop",
       "uses": "subflow:governance-cycle@1",
       "while": {
-        "condition": "item.approved != true",
-        "maxIterations": 2,
+        "condition": "item.pending == true || (item.approved != true && item.verdict.status == \"complete\" && item.verdict.decision == \"block\")",
+        "maxIterations": 3,
         "initial": {
-          "approved": {
-            "$ref": "steps.governance.output.approved"
-          },
+          "pending": true,
+          "approved": false,
           "verdict": {
-            "$ref": "steps.governance.output"
+            "version": 2,
+            "status": "partial",
+            "decision": "inconclusive",
+            "approved": false,
+            "summary": "Governance has not run yet",
+            "findings": [],
+            "limitations": [
+              "Governance has not run yet"
+            ],
+            "reviewed_revision": "",
+            "evidence": []
           }
         }
       },
@@ -323,10 +270,10 @@
     {
       "id": "governance_gate",
       "uses": "activity:gate.assert@1",
-      "if": "steps.governance.output.approved != true",
+      "if": "inputs.require_approval == true",
       "with": {
         "value": {
-          "$ref": "steps.governance_repair.output.last.approved"
+          "$ref": "steps.governance_loop.output.last.approved"
         },
         "equals": true,
         "message": "governance did not approve after the repair cycles"
@@ -337,23 +284,26 @@
     "qa": {
       "$ref": "steps.qa.output"
     },
+    "adversary": {
+      "$ref": "steps.adversary.output"
+    },
     "critic": {
       "$ref": "steps.critic.output"
+    },
+    "visual_verifier": {
+      "$ref": "steps.visual_verifier.output"
     },
     "repairs": {
       "$ref": "steps.integration_repair.output"
     },
     "governance": {
-      "$ref": "steps.governance.output"
+      "$ref": "steps.governance_loop.output.last.verdict"
     },
-    "governance_repair": {
-      "$ref": "steps.governance_repair.output"
+    "governance_rounds": {
+      "$ref": "steps.governance_loop.output"
     },
-    "adversary": {
-      "$ref": "steps.adversary.output"
-    },
-    "visual_verifier": {
-      "$ref": "steps.visual_verifier.output"
+    "approved": {
+      "$ref": "steps.governance_loop.output.last.approved"
     }
   }
 }

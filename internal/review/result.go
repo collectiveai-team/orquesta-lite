@@ -55,40 +55,62 @@ func Decode(raw []byte) (Result, error) {
 	return r, r.Validate()
 }
 
+// Validate reports every violation in one error rather than the first, naming
+// the finding or criterion each one is about and the values a field accepts.
+// The corrective retry hands this text back to the agent, and a retry that sees
+// one problem at a time spends its whole budget fixing them one by one.
 func (r Result) Validate() error {
-	bad := func(s string) error { return fmt.Errorf("review-result@2: %s", s) }
-	if r.Version != 2 || !slices.Contains([]string{"complete", "partial", "unavailable", "not_applicable"}, r.Status) || !slices.Contains([]string{"approve", "warn", "block", "inconclusive"}, r.Decision) {
-		return bad("invalid version/status/decision")
+	var problems []string
+	bad := func(format string, args ...any) { problems = append(problems, fmt.Sprintf(format, args...)) }
+	statuses := []string{"complete", "partial", "unavailable", "not_applicable"}
+	decisions := []string{"approve", "warn", "block", "inconclusive"}
+	if r.Version != 2 {
+		bad("version must be 2, got %d", r.Version)
+	}
+	if !slices.Contains(statuses, r.Status) {
+		bad("status %q is not one of %s", r.Status, strings.Join(statuses, ", "))
+	}
+	if !slices.Contains(decisions, r.Decision) {
+		bad("decision %q is not one of %s", r.Decision, strings.Join(decisions, ", "))
 	}
 	if strings.TrimSpace(r.Summary) == "" || r.Findings == nil || r.Limitations == nil || r.Evidence == nil {
-		return bad("summary and explicit arrays required")
+		bad("summary and explicit arrays required (findings, limitations, evidence may be [] but not missing)")
 	}
 	complete := r.Status == "complete" || r.Status == "not_applicable"
 	if r.Approved != (complete && r.Decision == "approve") {
-		return bad("approved must agree with status and decision")
+		bad("approved must agree with status and decision: true exactly when decision is approve and status is complete or not_applicable")
 	}
 	if !complete && (r.Decision == "approve" || r.Decision == "warn" || len(r.Limitations) == 0) {
-		return bad("incomplete review requires limitations and inconclusive/block")
+		bad("incomplete review requires limitations and inconclusive/block")
 	}
 	if complete && strings.TrimSpace(r.ReviewedRevision) == "" {
-		return bad("completed review requires revision evidence")
+		bad("completed review requires revision evidence in reviewed_revision")
 	}
 	if r.Status == "not_applicable" && (len(r.Evidence) == 0 || len(r.Limitations) == 0 || len(r.Findings) > 0) {
-		return bad("not_applicable requires scope evidence, justification and no defects")
+		bad("not_applicable requires scope evidence, justification and no defects")
 	}
+	severities := []string{"critical", "high", "medium", "low"}
+	states := []string{"open", "resolved", "refuted"}
 	seen := map[string]bool{}
 	blocking := false
 	open := false
-	for _, f := range r.Findings {
+	for i, f := range r.Findings {
+		name := fmt.Sprintf("finding %q", f.ID)
+		if f.ID == "" {
+			name = fmt.Sprintf("finding #%d (no id)", i+1)
+		}
 		if f.ID == "" || seen[f.ID] || f.Category == "" || f.Location == "" || f.Trigger == "" || f.Impact == "" || len(f.Evidence) == 0 || len(f.Origins) == 0 {
-			return bad("finding requires unique ID, scenario, impact, evidence and origins")
+			bad("%s requires unique ID, scenario, impact, evidence and origins%s", name, missingFields(f, seen[f.ID]))
 		}
 		seen[f.ID] = true
-		if !slices.Contains([]string{"critical", "high", "medium", "low"}, f.Severity) || !slices.Contains([]string{"open", "resolved", "refuted"}, f.State) {
-			return bad("invalid finding severity/state")
+		if !slices.Contains(severities, f.Severity) {
+			bad("%s: severity %q is not one of %s", name, f.Severity, strings.Join(severities, ", "))
+		}
+		if !slices.Contains(states, f.State) {
+			bad("%s: state %q is not one of %s", name, f.State, strings.Join(states, ", "))
 		}
 		if f.State != "open" && strings.TrimSpace(f.Resolution) == "" {
-			return bad("changed finding state requires resolution evidence")
+			bad("%s: changed finding state requires resolution evidence", name)
 		}
 		if f.State == "open" {
 			open = true
@@ -98,45 +120,83 @@ func (r Result) Validate() error {
 		}
 	}
 	if blocking && r.Decision != "block" {
-		return bad("open blocking defect cannot disappear from decision")
+		bad("open blocking defect cannot disappear from decision: an open critical/high/medium finding requires decision block")
 	}
 	if r.Decision == "block" && !blocking {
-		return bad("block requires confirmed blocking defect; missing evidence is inconclusive")
+		bad("block requires confirmed blocking defect; missing evidence is inconclusive")
 	}
 	if r.Decision == "approve" && open {
-		return bad("approval cannot carry open defects")
+		bad("approval cannot carry open defects")
 	}
 	if r.Visual != nil {
-		v := r.Visual
-		if !slices.Contains([]string{"browser", "static", "not_applicable"}, v.Requested) || !slices.Contains([]string{"browser", "static", "not_applicable", "unavailable"}, v.Executed) {
-			return bad("invalid visual mode")
-		}
-		missing := false
-		for _, c := range v.Required {
-			if !slices.Contains(v.Checked, c) {
-				missing = true
-				if !slices.Contains(v.Pending, c) {
-					return bad("unchecked criterion must be pending")
-				}
+		validateVisual(r, bad)
+	}
+	if len(problems) == 0 {
+		return nil
+	}
+	if len(problems) == 1 {
+		return fmt.Errorf("review-result@2: %s", problems[0])
+	}
+	return fmt.Errorf("review-result@2: %d problems:\n- %s", len(problems), strings.Join(problems, "\n- "))
+}
+
+func validateVisual(r Result, bad func(string, ...any)) {
+	v := r.Visual
+	requested := []string{"browser", "static", "not_applicable"}
+	executed := []string{"browser", "static", "not_applicable", "unavailable"}
+	if !slices.Contains(requested, v.Requested) {
+		bad("invalid visual mode: visual.requested %q is not one of %s", v.Requested, strings.Join(requested, ", "))
+	}
+	if !slices.Contains(executed, v.Executed) {
+		bad("invalid visual mode: visual.executed %q is not one of %s (name the tool in evidence, not here)", v.Executed, strings.Join(executed, ", "))
+	}
+	missing := false
+	for _, c := range v.Required {
+		if !slices.Contains(v.Checked, c) {
+			missing = true
+			if !slices.Contains(v.Pending, c) {
+				bad("unchecked criterion must be pending: visual criterion %q is in required but in neither checked nor pending (copy the exact string)", c)
 			}
 		}
-		degraded := (v.Requested == "browser" && v.Executed != "browser") || missing || len(v.Pending) > 0
-		if degraded && (r.Status == "complete" || r.Approved || v.Reason == "" || len(r.Limitations) == 0) {
-			return bad("degraded visual review must be incomplete with reason and limitations")
-		}
-		if v.Executed == "not_applicable" && (r.Status != "not_applicable" || v.Reason == "") {
-			return bad("visual not_applicable needs justified scope")
+	}
+	degraded := (v.Requested == "browser" && v.Executed != "browser") || missing || len(v.Pending) > 0
+	if degraded && (r.Status == "complete" || r.Approved || v.Reason == "" || len(r.Limitations) == 0) {
+		bad("degraded visual review must be incomplete with reason and limitations")
+	}
+	if v.Executed == "not_applicable" && (r.Status != "not_applicable" || v.Reason == "") {
+		bad("visual not_applicable needs justified scope")
+	}
+}
+
+func missingFields(f Finding, duplicate bool) string {
+	var missing []string
+	for name, empty := range map[string]bool{
+		"id": f.ID == "", "category": f.Category == "", "location": f.Location == "",
+		"trigger": f.Trigger == "", "impact": f.Impact == "", "evidence": len(f.Evidence) == 0, "origins": len(f.Origins) == 0,
+	} {
+		if empty {
+			missing = append(missing, name)
 		}
 	}
-	return nil
+	slices.Sort(missing)
+	if duplicate {
+		missing = append(missing, "id is duplicated")
+	}
+	if len(missing) == 0 {
+		return ""
+	}
+	return " (missing: " + strings.Join(missing, ", ") + ")"
 }
 
 // Preserve checks historical identity. A reviewer may resolve/refute a defect
 // explicitly with evidence, but cannot silently omit it or erase its sources.
+// Like Validate, it reports every lost item at once.
 func Preserve(current Result, previous []Result) error {
+	var problems []string
+	bad := func(format string, args ...any) { problems = append(problems, fmt.Sprintf(format, args...)) }
 	for _, prior := range previous {
 		if current.Approved && prior.Status != "complete" && prior.Status != "not_applicable" {
-			return fmt.Errorf("cannot approve with incomplete required review")
+			bad("cannot approve with incomplete required review")
 		}
 		for _, old := range prior.Findings {
 			if old.State != "open" || old.Severity == "low" {
@@ -144,25 +204,32 @@ func Preserve(current Result, previous []Result) error {
 			}
 			i := slices.IndexFunc(current.Findings, func(f Finding) bool { return f.ID == old.ID })
 			if i < 0 {
-				return fmt.Errorf("missing upstream blocking finding %s", old.ID)
+				bad("missing upstream blocking finding %s: carry it forward (resolve or refute it with evidence, never omit it)", old.ID)
+				continue
 			}
 			f := current.Findings[i]
 			for _, origin := range old.Origins {
 				if !slices.Contains(f.Origins, origin) {
-					return fmt.Errorf("lost origin for %s", old.ID)
+					bad("lost origin for %s: origin %q must stay in origins", old.ID, origin)
 				}
 			}
 			for _, e := range old.Evidence {
 				if !slices.Contains(f.Evidence, e) {
-					return fmt.Errorf("lost evidence for %s", old.ID)
+					bad("lost evidence for %s: copy this upstream evidence string verbatim into evidence: %q", old.ID, e)
 				}
 			}
 			if f.State == "open" && old.Severity != "low" && f.Severity == "low" {
-				return fmt.Errorf("silently downgraded blocking finding %s", old.ID)
+				bad("silently downgraded blocking finding %s", old.ID)
 			}
 		}
 	}
-	return nil
+	if len(problems) == 0 {
+		return nil
+	}
+	if len(problems) == 1 {
+		return fmt.Errorf("%s", problems[0])
+	}
+	return fmt.Errorf("%d problems:\n- %s", len(problems), strings.Join(problems, "\n- "))
 }
 
 // Aggregate keeps duplicate IDs as one defect with all evidence and sources.

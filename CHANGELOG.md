@@ -3,6 +3,55 @@
 All notable changes to orq-lite are recorded here. Versions follow the git
 tags cut as GitHub releases (the binary's `--version` is stamped from the tag).
 
+## Unreleased — a blocked review is a draft PR, not a failed run
+
+### Fixed
+
+- **A reviewer saw one contract violation per retry.** `review.Validate` and
+  `review.Preserve` returned the first problem they found, so the corrective
+  retry fixed that one and failed on the next. In the run that surfaced it,
+  `governance` spent all six attempts (three per provider) this way on a
+  verdict whose content was sound: `visual.executed: "agent-browser"`, then
+  reworded upstream evidence, then a visual criterion in neither `checked` nor
+  `pending`. Both now report every violation at once, naming the finding,
+  criterion or evidence string each is about and the values a field accepts.
+  A schema `enum` violation now prints the value and the allowed set.
+- **Repairs made during the integrated review were never committed.** Neither
+  `integrated-review@1` nor `governance-cycle@1` had a commit step, so a run
+  that repaired findings and then failed left them as an uncommitted tree.
+  Each governance round now runs lint → tests → `git.commit` (with the same
+  hook-repair-and-retry pair as `develop-ticket@1`) before the reviewer looks.
+
+- **`gh pr create` aborted over a branch that was already pushed.** gh finds
+  the PR head through the branch's remote-tracking ref, which a clone whose
+  fetch refspec does not cover the branch (`--single-branch`, many CI
+  checkouts) never gets, even after `git push -u`. Every PR step now passes
+  `--head "$(git branch --show-current)"` and follows a `push_branch` step
+  (`factory-fast@1` had none).
+
+### Changed
+
+- **Governance no longer fails the run by default.** `integrated-review@1`
+  runs governance inside `governance_loop` (at most three rounds: the first
+  verdict plus two repair cycles, as before), with a `fallbackOutput` so a
+  reviewer that cannot produce a valid verdict is recorded as `unavailable`
+  instead of killing the run. The subflow outputs `approved`; with
+  `create_pr=true`, `factory-governed@2` and `review-existing@1` push the
+  branch and open a normal PR when governance approved and a draft PR when it
+  did not. `strict_governance=true` (passed down as `require_approval`)
+  restores the hard gates on review coverage and governance approval.
+- **`review-existing@1` can open the PR** (`create_pr`, default false).
+- **`review-result@2` declares its enums** (`severity`, `state`,
+  `visual.requested`, `visual.executed`), and every reviewer prompt ends with
+  a contract checklist and a self-check command.
+
+### Added
+
+- **`orq-lite flow check-result <schema> <file>`** validates a result file with
+  the validator a flow step applies, resolving `schema:name@version` against
+  the installed packs. Reviewer prompts ask the agent to run it before
+  finishing.
+
 ## v0.7.2 — a killed agent is not a reviewer
 
 ### Fixed
