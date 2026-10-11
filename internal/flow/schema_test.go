@@ -55,3 +55,19 @@ func TestSchemaUnknownKeywordFailsClosed(t *testing.T) {
 		t.Fatal("expected unsupported keyword error")
 	}
 }
+
+func TestSchemaEnumErrorNamesValueAndAllowedSet(t *testing.T) {
+	schema, err := DecodeSchema(strings.NewReader(`{"type":"object","properties":{"executed":{"type":"string","enum":["browser","static"]}}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = schema.ValidateJSON([]byte(`{"executed":"agent-browser"}`))
+	if err == nil {
+		t.Fatal("value outside enum accepted")
+	}
+	for _, want := range []string{"$.executed", `"agent-browser"`, `"browser", "static"`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error does not mention %s: %v", want, err)
+		}
+	}
+}
