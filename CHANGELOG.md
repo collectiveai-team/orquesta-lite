@@ -22,6 +22,13 @@ tags cut as GitHub releases (the binary's `--version` is stamped from the tag).
   Each governance round now runs lint → tests → `git.commit` (with the same
   hook-repair-and-retry pair as `develop-ticket@1`) before the reviewer looks.
 
+- **`gh pr create` aborted over a branch that was already pushed.** gh finds
+  the PR head through the branch's remote-tracking ref, which a clone whose
+  fetch refspec does not cover the branch (`--single-branch`, many CI
+  checkouts) never gets, even after `git push -u`. Every PR step now passes
+  `--head "$(git branch --show-current)"` and follows a `push_branch` step
+  (`factory-fast@1` had none).
+
 ### Changed
 
 - **Governance no longer fails the run by default.** `integrated-review@1`

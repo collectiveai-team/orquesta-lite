@@ -52,10 +52,9 @@
    "if": "inputs.create_pr == true && steps.integrated_review.output.approved == true",
    "with": {
     "argv": [
-     "gh",
-     "pr",
-     "create",
-     "--fill"
+     "sh",
+     "-c",
+     "gh pr create --fill --head \"$(git branch --show-current)\""
     ]
    }
   },
@@ -65,11 +64,9 @@
    "if": "inputs.create_pr == true && steps.integrated_review.output.approved != true",
    "with": {
     "argv": [
-     "gh",
-     "pr",
-     "create",
-     "--fill",
-     "--draft"
+     "sh",
+     "-c",
+     "gh pr create --fill --draft --head \"$(git branch --show-current)\""
     ]
    }
   }

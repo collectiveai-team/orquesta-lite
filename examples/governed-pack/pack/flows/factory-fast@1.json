@@ -49,15 +49,28 @@
    }
   },
   {
+   "id": "push_branch",
+   "uses": "activity:command.run@1",
+   "with": {
+    "argv": [
+     "git",
+     "push",
+     "-u",
+     "origin",
+     "HEAD"
+    ]
+   },
+   "if": "inputs.create_pr == true"
+  },
+  {
    "id": "publish_pr",
    "uses": "activity:command.run@1",
    "if": "inputs.create_pr == true",
    "with": {
     "argv": [
-     "gh",
-     "pr",
-     "create",
-     "--fill"
+     "sh",
+     "-c",
+     "gh pr create --fill --head \"$(git branch --show-current)\""
     ]
    }
   }
