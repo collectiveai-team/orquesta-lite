@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/collectiveai-team/orquesta-lite/internal/activity"
 )
@@ -210,5 +211,68 @@ func TestCommitRequiresASubject(t *testing.T) {
 	writeFile(t, dir, "a.txt", "x")
 	if _, err := runCommit(t, dir, map[string]any{"type": "feat", "scope": "T-1"}); err == nil {
 		t.Fatal("a commit with no subject is a contract error, not a default message")
+	}
+}
+
+// A ticket title in Spanish is enough to produce an invalid commit message:
+// cutting the subject at a byte offset can land inside a multibyte character
+// and leave the message ending in a lone continuation byte.
+func TestCommitSubjectStaysValidUTF8WhenTheLimitSplitsACharacter(t *testing.T) {
+	subject := "Listar las conversaciones con el estado del pipeline y el botón Ver más"
+	message := commitMessage(gitCommitInput{Type: "feat", Scope: "T2", Subject: subject})
+	if !utf8.ValidString(message) {
+		t.Fatalf("subject was cut mid-character: %q (% x)", message, message)
+	}
+	if len(message) > subjectLimit {
+		t.Fatalf("message is %d bytes, want <= %d: %q", len(message), subjectLimit, message)
+	}
+}
+
+// The reported failure: commit-msg hooks read the message with a strict UTF-8
+// decoder, so an invalid byte sequence crashes them before they can lint it.
+// The commit is refused, and no agent can repair a message the flow built.
+func TestCommitSurvivesAHookThatDecodesTheMessageAsUTF8(t *testing.T) {
+	if _, err := exec.LookPath("iconv"); err != nil {
+		t.Skip("iconv is needed to validate the message encoding")
+	}
+	dir := gitRepo(t)
+	writeFile(t, dir, filepath.Join(".git", "hooks", "commit-msg"),
+		"#!/bin/sh\niconv -f UTF-8 -t UTF-8 \"$1\" >/dev/null\n")
+	writeFile(t, dir, "app.go", "package app\n")
+	output, err := runCommit(t, dir, map[string]any{
+		"type": "feat", "scope": "T2",
+		"subject":          "Listar las conversaciones con el estado del pipeline y el botón Ver más",
+		"requireCommitted": true,
+	})
+	if err != nil {
+		t.Fatalf("a valid UTF-8 ticket title must not fail the run: %v", err)
+	}
+	if !output.Committed {
+		t.Fatalf("want committed, got %+v", output)
+	}
+}
+
+// "…y el bot" is a worse subject than "…y el": the first line is prose that a
+// human and a commit linter both read, so the cut belongs between words.
+func TestCommitSubjectIsCutAtAWordBoundary(t *testing.T) {
+	subject := "Listar las conversaciones con el estado del pipeline y el botón Ver más"
+	message := commitMessage(gitCommitInput{Type: "feat", Scope: "T2", Subject: subject})
+	kept := strings.TrimPrefix(message, "feat(T2): ")
+	rest := strings.TrimPrefix(subject, kept)
+	if rest != "" && !strings.HasPrefix(rest, " ") {
+		t.Fatalf("subject cut mid-word: kept %q, next %q", kept, rest)
+	}
+}
+
+// A subject with no space to back off to must keep as much as fits rather than
+// collapse to the first short word.
+func TestCommitKeepsALongUnbrokenSubjectInsteadOfCollapsingIt(t *testing.T) {
+	subject := "Implement " + strings.Repeat("Camel", 20)
+	message := commitMessage(gitCommitInput{Type: "feat", Scope: "T2", Subject: subject})
+	if len(message) < subjectLimit/2 {
+		t.Fatalf("truncation threw away a usable subject: %q", message)
+	}
+	if !utf8.ValidString(message) || len(message) > subjectLimit {
+		t.Fatalf("message is %d bytes and valid=%v: %q", len(message), utf8.ValidString(message), message)
 	}
 }
