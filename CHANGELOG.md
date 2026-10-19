@@ -29,6 +29,21 @@ tags cut as GitHub releases (the binary's `--version` is stamped from the tag).
   `--head "$(git branch --show-current)"` and follows a `push_branch` step
   (`factory-fast@1` had none).
 
+- **Reviewers that agreed with each other failed the run.**
+  `review.Aggregate` merged findings sharing an id but rejected the merge when
+  `State`, `Severity`, `Trigger` or `Impact` differed. `Trigger` and `Impact`
+  are prose each reviewer writes in its own words, so agreement was the case
+  that failed: in a `factory-governed@2` run four reviewers reported the same
+  finding with the same id, state and severity and only differing wording, and
+  the run ended with `review.aggregate invalid_contract: conflicting duplicate
+  finding …` after every ticket had already been committed — the findings
+  never reached the repair loop. Only the structured claims can conflict now,
+  and each reviewer's own account of the trigger and impact is kept as
+  evidence. A genuine state or severity disagreement resolves towards the more
+  alarming claim instead of aborting: the worst severity wins and an
+  unresolved claim keeps the defect open, so escalation can over-report a
+  defect but never drop one.
+
 ### Changed
 
 - **Governance no longer fails the run by default.** `integrated-review@1`
