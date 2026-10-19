@@ -90,7 +90,7 @@ func TestAggregateKeepsIncompleteCoverageOutOfRepairs(t *testing.T) {
 	}
 }
 
-func TestAggregateMergesDuplicateEvidenceAndRejectsConflict(t *testing.T) {
+func TestAggregateMergesDuplicateEvidence(t *testing.T) {
 	left := blockingFinding("BUG-1")
 	right := left
 	right.Evidence = []string{"second reproduction"}
@@ -98,10 +98,6 @@ func TestAggregateMergesDuplicateEvidenceAndRejectsConflict(t *testing.T) {
 	findings, ready, err := Aggregate([]Result{completeReview(left), completeReview(right)})
 	if err != nil || !ready || len(findings) != 1 || len(findings[0].Evidence) != 2 || len(findings[0].Origins) != 2 {
 		t.Fatalf("ready=%v findings=%+v err=%v", ready, findings, err)
-	}
-	right.Severity = "medium"
-	if _, _, err := Aggregate([]Result{completeReview(left), completeReview(right)}); err == nil {
-		t.Fatal("conflicting duplicate finding was accepted")
 	}
 }
 
@@ -156,5 +152,70 @@ func TestPreserveReportsEveryLostEvidenceVerbatim(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error does not mention %q:\n%v", want, err)
 		}
+	}
+}
+
+// Reviewers that agree on a defect still describe its impact in their own
+// words: one quotes the spec, another paraphrases it and cites a file. Reading
+// that prose as a conflict failed the run on the strongest signal the harness
+// can get — independent reviewers reporting the same defect — and the findings
+// never reached the repair loop.
+func TestAggregateMergesAgreementThatIsWordedDifferently(t *testing.T) {
+	qa := blockingFinding("contract-filters-ignored")
+	qa.Impact = "El filtro declarado en el spec se ignora por completo."
+	adversary := blockingFinding("contract-filters-ignored")
+	adversary.Impact = "The status filter required by the spec is ignored (services/insights.py:18)."
+	adversary.Origins = []string{"adversary"}
+	adversary.Evidence = []string{"reproduced with status=closed"}
+
+	findings, ready, err := Aggregate([]Result{completeReview(qa), completeReview(adversary)})
+	if err != nil {
+		t.Fatalf("reviewers that agree must not fail the run: %v", err)
+	}
+	if !ready || len(findings) != 1 {
+		t.Fatalf("ready=%v findings=%+v", ready, findings)
+	}
+	merged := findings[0]
+	if len(merged.Origins) != 2 || len(merged.Evidence) < 2 {
+		t.Fatalf("merge lost a reviewer's sources: %+v", merged)
+	}
+	for _, want := range []string{qa.Impact, adversary.Impact} {
+		if !strings.Contains(merged.Impact+"\n"+strings.Join(merged.Evidence, "\n"), want) {
+			t.Fatalf("lost a reviewer's wording %q: %+v", want, merged)
+		}
+	}
+}
+
+// A real disagreement resolves towards the more alarming claim and stays
+// visible, instead of aborting a run whose tickets are already committed.
+// Escalating can over-report a defect; it can never drop one.
+func TestAggregateEscalatesASeverityDisagreementInsteadOfFailingTheRun(t *testing.T) {
+	mild := blockingFinding("BUG-1")
+	mild.Severity = "medium"
+	severe := blockingFinding("BUG-1")
+	severe.Severity = "critical"
+	severe.Origins = []string{"adversary"}
+
+	findings, _, err := Aggregate([]Result{completeReview(mild), completeReview(severe)})
+	if err != nil {
+		t.Fatalf("a severity disagreement must not fail the run: %v", err)
+	}
+	if len(findings) != 1 || findings[0].Severity != "critical" {
+		t.Fatalf("want the worst severity kept, got %+v", findings)
+	}
+}
+
+func TestAggregateKeepsAFindingOpenWhenReviewersDisagreeOnItsState(t *testing.T) {
+	resolved := blockingFinding("BUG-1")
+	resolved.State, resolved.Resolution = "resolved", "fixed in abc123"
+	stillOpen := blockingFinding("BUG-1")
+	stillOpen.Origins = []string{"adversary"}
+
+	findings, _, err := Aggregate([]Result{completeReview(resolved), completeReview(stillOpen)})
+	if err != nil {
+		t.Fatalf("a state disagreement must not fail the run: %v", err)
+	}
+	if len(findings) != 1 || findings[0].State != "open" {
+		t.Fatalf("an unresolved claim must keep the defect open, got %+v", findings)
 	}
 }
