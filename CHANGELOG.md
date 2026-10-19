@@ -29,6 +29,17 @@ tags cut as GitHub releases (the binary's `--version` is stamped from the tag).
   `--head "$(git branch --show-current)"` and follows a `push_branch` step
   (`factory-fast@1` had none).
 
+- **`git.commit` built an invalid commit message from an accented ticket
+  title.** The subject was cut to 72 bytes by offset, so a cut landing inside a
+  multibyte rune left the message ending in a lone continuation byte: a title
+  ending in `el botón Ver más` produced `…el bot\xc3`. Commit-msg hooks read
+  the message with a strict UTF-8 decoder — this repo's own
+  `agents-conventional-commits` hook does — so they raised `UnicodeDecodeError`
+  before linting anything, `git.commit` returned `gate_failed`, and the run
+  died on a message no agent could repair, because the flow builds it. The
+  subject is now cut on a character boundary, and on the last word boundary
+  where one exists.
+
 ### Changed
 
 - **Governance no longer fails the run by default.** `integrated-review@1`
