@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/collectiveai-team/orquesta-lite/internal/activity"
 )
@@ -142,13 +143,36 @@ func commitMessage(input gitCommitInput) string {
 	}
 	header += ": "
 	if room := subjectLimit - len(header); len(subject) > room && room > 0 {
-		subject = strings.TrimSpace(subject[:room])
+		subject = strings.TrimSpace(truncateSubject(subject, room))
 	}
 	message := header + subject
 	if body := strings.TrimSpace(input.Body); body != "" {
 		message += "\n\n" + body
 	}
 	return message
+}
+
+// truncateSubject cuts s to at most limit bytes without splitting a character.
+// Cutting by byte offset alone ends the subject on a lone continuation byte
+// whenever the limit lands inside a multibyte rune, and a commit-msg hook that
+// decodes the message as UTF-8 crashes on it rather than reporting a finding —
+// a failure no agent can repair, because the flow builds the message.
+// It then prefers the last word boundary, so the subject reads as the prose a
+// linter and a reviewer expect rather than ending mid-word. A subject with no
+// space to back off to keeps the character-boundary cut instead of collapsing
+// to its first short word.
+func truncateSubject(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	cut := limit
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	if space := strings.LastIndexByte(s[:cut], ' '); space > limit/2 {
+		return s[:space]
+	}
+	return s[:cut]
 }
 
 // stageAll stages every change and reports whether anything is staged.
