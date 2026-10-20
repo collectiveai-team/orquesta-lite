@@ -233,7 +233,16 @@ func Preserve(current Result, previous []Result) error {
 }
 
 // Aggregate keeps duplicate IDs as one defect with all evidence and sources.
-// Conflicting claims require a new review; last-writer-wins would hide bugs.
+//
+// Only the structured claims can disagree. Trigger and Impact are prose each
+// reviewer writes in its own words, so comparing them byte for byte reported
+// agreement as a conflict: four reviewers finding the same defect, wording its
+// impact differently, failed the whole run and the findings never reached the
+// repair loop. Their wording is kept as evidence instead.
+//
+// A real disagreement on state or severity resolves towards the more alarming
+// claim rather than aborting a run whose tickets are already committed.
+// Escalating can over-report a defect; last-writer-wins could drop one.
 func Aggregate(reviews []Result) ([]Finding, bool, error) {
 	if len(reviews) == 0 {
 		return nil, false, fmt.Errorf("required reviews cannot be empty")
@@ -251,21 +260,42 @@ func Aggregate(reviews []Result) ([]Finding, bool, error) {
 				findings = append(findings, f)
 				continue
 			}
-			old := &findings[i]
-			if old.State != f.State || old.Severity != f.Severity || old.Trigger != f.Trigger || old.Impact != f.Impact {
-				return nil, false, fmt.Errorf("conflicting duplicate finding %s", f.ID)
-			}
-			for _, x := range f.Origins {
-				if !slices.Contains(old.Origins, x) {
-					old.Origins = append(old.Origins, x)
-				}
-			}
-			for _, x := range f.Evidence {
-				if !slices.Contains(old.Evidence, x) {
-					old.Evidence = append(old.Evidence, x)
-				}
-			}
+			merge(&findings[i], f)
 		}
 	}
 	return findings, ready, nil
+}
+
+var severityRank = map[string]int{"low": 0, "medium": 1, "high": 2, "critical": 3}
+
+// merge folds a second report of the same defect into the one already kept.
+func merge(old *Finding, f Finding) {
+	if severityRank[f.Severity] > severityRank[old.Severity] {
+		old.Severity = f.Severity
+	}
+	// An unresolved claim outranks a resolution: a defect one reviewer still
+	// reproduces is open, whichever order the reviews arrived in.
+	if f.State == "open" && old.State != "open" {
+		old.State, old.Resolution = f.State, f.Resolution
+	}
+	// Each reviewer's own account of the defect is evidence for the repair
+	// loop, which otherwise only ever sees whichever one happened to be first.
+	for _, account := range []struct{ field, text string }{{"trigger", f.Trigger}, {"impact", f.Impact}} {
+		if account.text == "" || account.text == old.Trigger || account.text == old.Impact {
+			continue
+		}
+		keep(&old.Evidence, fmt.Sprintf("%s per %s: %s", account.field, strings.Join(f.Origins, ", "), account.text))
+	}
+	for _, x := range f.Origins {
+		keep(&old.Origins, x)
+	}
+	for _, x := range f.Evidence {
+		keep(&old.Evidence, x)
+	}
+}
+
+func keep(list *[]string, value string) {
+	if !slices.Contains(*list, value) {
+		*list = append(*list, value)
+	}
 }
