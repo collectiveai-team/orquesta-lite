@@ -3,7 +3,7 @@
 All notable changes to orq-lite are recorded here. Versions follow the git
 tags cut as GitHub releases (the binary's `--version` is stamped from the tag).
 
-## Unreleased — a blocked review is a draft PR, not a failed run
+## v0.8.0 — a blocked review is a draft PR, not a failed run
 
 ### Fixed
 
