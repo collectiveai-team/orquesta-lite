@@ -28,12 +28,50 @@ Before changing project configuration, verify:
 - the dependency lockfile is current and there is only one authoritative
   package manager per project surface.
 
-Install from a release when possible. Building from source is the fallback:
+### Install orq-lite (recommended: latest release)
+
+On macOS and Linux, install the prebuilt binary from the
+[latest release](https://github.com/collectiveai-team/orquesta-lite/releases/latest).
+Go is not required.
+
+1. Download the `.tar.gz` asset matching the host: `darwin` for macOS or `linux`
+   for Linux, with `arm64` for Apple Silicon / ARM64 or `amd64` for Intel / AMD
+   x86-64. Use `uname -s` and `uname -m` to inspect the host if needed
+   (`aarch64` maps to `arm64`; `x86_64` maps to `amd64`). Choose the
+   `orq-lite-...tar.gz` asset, rather than GitHub's source code archive.
+2. In the download directory, extract the archive and move the executable to
+   `/usr/local/bin` so it is available from any working directory. Replace the
+   filename below with the asset you downloaded:
+
+   ```bash
+   archive="orq-lite-<version>-<os>-<arch>.tar.gz"
+   tar -xzf "$archive"
+   chmod +x "${archive%.tar.gz}/orq-lite"
+   sudo mkdir -p /usr/local/bin
+   sudo mv "${archive%.tar.gz}/orq-lite" /usr/local/bin/orq-lite
+   ```
+
+   Ensure `/usr/local/bin` is on `PATH`. If needed, add
+   `export PATH="/usr/local/bin:$PATH"` to the user's shell startup file
+   (`~/.zshrc` or `~/.bashrc`) and open a new terminal.
+3. Run `orq-lite version`. **On macOS, ask the user to grant permission if
+   Gatekeeper blocks the executable:** open **System Settings → Privacy &
+   Security**, find the message about `orq-lite`, click **Open Anyway**, and
+   confirm the prompts. This approval requires user interaction; wait for the
+   user to complete it before proceeding. Then rerun `orq-lite version`.
+
+On Windows, download the matching `.zip` asset, extract it, and move
+`orq-lite.exe` to a directory on `PATH`.
+
+Building from source is the fallback when Go is installed:
 
 ```bash
 go install github.com/collectiveai-team/orquesta-lite/cmd/orq-lite@latest
 orq-lite version
 ```
+
+Ensure Go's binary directory (`go env GOBIN`, or `$(go env GOPATH)/bin` when
+unset) is on `PATH` before running `orq-lite version`.
 
 Start from a clean commit. Durable state protects workflow progress, but a
 clean baseline is still necessary for agents and reviewers to attribute a diff

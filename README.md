@@ -8,7 +8,7 @@ There is one execution path. The old hardcoded development loops and the in-memo
 
 ## Bootstrap a repository
 
-For an existing working repository, the recommended installation path is to let an agent drive the setup. Bootstrap requires judgment that the CLI cannot automate: understanding the existing worktree, making the baseline gates green, pinning the toolchain, configuring agents and roles, choosing the right V2 flow, and validating the pack before spending model time.
+For an existing working repository, the recommended bootstrap path is to let an agent drive the setup. Bootstrap requires judgment that the CLI cannot automate: understanding the existing worktree, making the baseline gates green, pinning the toolchain, configuring agents and roles, choosing the right V2 flow, and validating the pack before spending model time.
 
 Give the agent this instruction:
 
@@ -18,17 +18,41 @@ Give the agent this instruction:
 
 The guide covers installing `orq-lite` when it is not on `PATH`, initializing the built-in development pack, configuring `team.json`, proving lint/test gates, selecting a development and review strategy, launching idempotently, and monitoring or resuming the durable run.
 
-If you only need the binary, install it directly and continue with the quick start:
+## Install orq-lite
+
+The recommended installation on macOS and Linux is the prebuilt binary; Go is not required.
+
+1. Open the [latest release](https://github.com/collectiveai-team/orquesta-lite/releases/latest) and download the `.tar.gz` asset for your system: `darwin` for macOS or `linux` for Linux, with `arm64` for Apple Silicon / ARM64 or `amd64` for Intel / AMD x86-64. Choose the `orq-lite-...tar.gz` asset, rather than GitHub's source code archive.
+2. In the download directory, extract it and move the executable to `/usr/local/bin` so it can run from any directory. Replace the filename below with the asset you downloaded:
+
+   ```bash
+   archive="orq-lite-<version>-<os>-<arch>.tar.gz"
+   tar -xzf "$archive"
+   chmod +x "${archive%.tar.gz}/orq-lite"
+   sudo mkdir -p /usr/local/bin
+   sudo mv "${archive%.tar.gz}/orq-lite" /usr/local/bin/orq-lite
+   ```
+
+   Ensure `/usr/local/bin` is on your `PATH`. If needed, add `export PATH="/usr/local/bin:$PATH"` to your shell startup file (`~/.zshrc` or `~/.bashrc`) and open a new terminal.
+3. Run `orq-lite version`. **On macOS, you may also need to grant permission to open the downloaded executable:** if macOS blocks it, open **System Settings → Privacy & Security**, find the message about `orq-lite`, click **Open Anyway**, and confirm the prompts. Run `orq-lite version` again after approval.
+
+On Windows, download the matching `.zip` asset, extract it, and move `orq-lite.exe` to a directory on your `PATH`.
+
+### Alternative: build from source
+
+With Go installed:
 
 ```bash
 go install github.com/collectiveai-team/orquesta-lite/cmd/orq-lite@latest
 ```
 
+Ensure Go's binary directory (`go env GOBIN`, or `$(go env GOPATH)/bin` when unset) is on your `PATH`.
+
 ## Quick start
 
-```bash
-go install github.com/collectiveai-team/orquesta-lite/cmd/orq-lite@latest
+After installing `orq-lite`:
 
+```bash
 cd your-project
 orq-lite init --lang auto
 orq-lite doctor
