@@ -3,7 +3,7 @@
 All notable changes to orq-lite are recorded here. Versions follow the git
 tags cut as GitHub releases (the binary's `--version` is stamped from the tag).
 
-## Unreleased
+## v0.8.1 — the cost budget prices cache reads as cache
 
 ### Fixed
 
