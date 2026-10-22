@@ -213,12 +213,13 @@ func TestRunOnceLogsUsageTokens(t *testing.T) {
 		Event             string `json:"event"`
 		InputTokens       int    `json:"input_tokens"`
 		CachedInputTokens int    `json:"cached_input_tokens"`
+		CacheWriteTokens  int    `json:"cache_write_tokens"`
 		OutputTokens      int    `json:"output_tokens"`
 	}
 	if err := json.Unmarshal(raw, &ev); err != nil {
 		t.Fatalf("parse log %q: %v", raw, err)
 	}
-	if ev.Event != "agent_run" || ev.InputTokens != 135 || ev.CachedInputTokens != 35 || ev.OutputTokens != 40 {
+	if ev.Event != "agent_run" || ev.InputTokens != 135 || ev.CachedInputTokens != 35 || ev.CacheWriteTokens != 25 || ev.OutputTokens != 40 {
 		t.Fatalf("event = %+v; raw=%s", ev, raw)
 	}
 }

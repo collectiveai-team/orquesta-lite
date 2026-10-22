@@ -79,6 +79,11 @@ type AgentRun struct {
 	SessionID string
 	InputTok  int
 	OutputTok int
+	// CachedTok is the part of InputTok served from or written to the prompt
+	// cache; CacheWriteTok the written part. Logs older than the cache split
+	// carry no cache_write_tokens, so their cached tokens all price as reads.
+	CachedTok     int
+	CacheWriteTok int
 }
 
 // RunsFromLog extracts agent_run events from a run.log JSONL file. Missing
@@ -108,6 +113,8 @@ func RunsFromLog(path string) ([]AgentRun, error) {
 			SessionID    string `json:"session_id"`
 			InputTokens  int    `json:"input_tokens"`
 			OutputTokens int    `json:"output_tokens"`
+			CachedTokens int    `json:"cached_input_tokens"`
+			CacheWrites  int    `json:"cache_write_tokens"`
 		}
 		if json.Unmarshal(sc.Bytes(), &ev) != nil {
 			continue
@@ -126,9 +133,23 @@ func RunsFromLog(path string) ([]AgentRun, error) {
 			SessionID: ev.SessionID,
 			InputTok:  ev.InputTokens,
 			OutputTok: ev.OutputTokens,
+
+			CachedTok:     ev.CachedTokens,
+			CacheWriteTok: ev.CacheWrites,
 		})
 	}
 	return runs, sc.Err()
+}
+
+// usage splits the logged totals back into billing classes: the log's
+// input_tokens includes cached_input_tokens, which includes cache_write_tokens.
+func (r AgentRun) usage() Usage {
+	return Usage{
+		Input:      r.InputTok - r.CachedTok,
+		CacheRead:  r.CachedTok - r.CacheWriteTok,
+		CacheWrite: r.CacheWriteTok,
+		Output:     r.OutputTok,
+	}
 }
 
 // TaskCost aggregates spend for one task (or synthetic id like _plan/_review).
@@ -182,7 +203,7 @@ func Rollup(runs []AgentRun, sessions map[string]Session) Report {
 			tc.TotalUSD += s.Cost.Total
 			continue
 		}
-		if usd, ok := estimateUSD(r.Model, input, output); ok {
+		if usd, ok := EstimateUsageUSD(r.Model, r.usage()); ok {
 			tc.Priced++
 			tc.TotalUSD += usd
 		}

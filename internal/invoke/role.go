@@ -533,11 +533,7 @@ func runSpendUSD(model string, result *runner.Result) float64 {
 	if result == nil {
 		return 0
 	}
-	usage := usageTotals(result)
-	if usage.Input == 0 && usage.Output == 0 {
-		return 0
-	}
-	usd, ok := cost.EstimateUSD(model, usage.Input, usage.Output)
+	usd, ok := cost.EstimateUsageUSD(model, usageTotals(result).Usage)
 	if !ok {
 		return 0
 	}
@@ -642,14 +638,17 @@ func (inv *RoleInvoker) logAgentRun(roleName, agentName string, ag config.AgentS
 		fields["artifacts_dir"] = artifactsDir
 	}
 	usage := usageTotals(r)
-	if usage.Input > 0 {
-		fields["input_tokens"] = usage.Input
+	if total := usage.totalInput(); total > 0 {
+		fields["input_tokens"] = total
 	}
 	if usage.Output > 0 {
 		fields["output_tokens"] = usage.Output
 	}
-	if usage.CachedInput > 0 {
-		fields["cached_input_tokens"] = usage.CachedInput
+	if cached := usage.cachedInput(); cached > 0 {
+		fields["cached_input_tokens"] = cached
+	}
+	if usage.CacheWrite > 0 {
+		fields["cache_write_tokens"] = usage.CacheWrite
 	}
 	if usage.Reasoning > 0 {
 		fields["reasoning_tokens"] = usage.Reasoning
@@ -855,11 +854,23 @@ func toolCallsCount(res *runner.Result) int {
 	return count
 }
 
+// usageSummary is one invocation's tokens split by billing class, the split
+// cost.EstimateUsageUSD prices. Cache reads must stay apart from fresh input:
+// they are nearly all of an agent's input and cost a tenth of it.
 type usageSummary struct {
-	Input       int
-	Output      int
-	CachedInput int
-	Reasoning   int
+	cost.Usage
+	Reasoning int
+}
+
+// totalInput is every input token, fresh or cached — the run.log's
+// input_tokens.
+func (u usageSummary) totalInput() int {
+	return u.Input + u.cachedInput()
+}
+
+// cachedInput is the run.log's cached_input_tokens: reads plus writes.
+func (u usageSummary) cachedInput() int {
+	return u.CacheRead + u.CacheWrite
 }
 
 // usageTotals prices one invocation from the token counts its provider reported.
@@ -890,12 +901,11 @@ func sumUsage(res *runner.Result, kind providers.EventType) (usageSummary, bool)
 		seen = true
 		out.Input += ev.Usage["input_tokens"]
 		out.Output += ev.Usage["output_tokens"]
-		out.CachedInput += ev.Usage["cached_input_tokens"]
-		out.CachedInput += ev.Usage["cache_read_tokens"]
-		out.CachedInput += ev.Usage["cache_creation_input_tokens"]
-		out.CachedInput += ev.Usage["cache_write_tokens"]
+		out.CacheRead += ev.Usage["cached_input_tokens"]
+		out.CacheRead += ev.Usage["cache_read_tokens"]
+		out.CacheWrite += ev.Usage["cache_creation_input_tokens"]
+		out.CacheWrite += ev.Usage["cache_write_tokens"]
 		out.Reasoning += ev.Usage["reasoning_tokens"]
 	}
-	out.Input += out.CachedInput
 	return out, seen
 }
