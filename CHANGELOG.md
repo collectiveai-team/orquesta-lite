@@ -12,7 +12,7 @@ tags cut as GitHub releases (the binary's `--version` is stamped from the tag).
   prompt cache at about a tenth of the input rate, so cache reads are nearly
   all of an invocation's input. `sumUsage` folded them, and cache writes, into
   the input count that `cost.EstimateUSD` priced at the full rate. A
-  `factory-governed@2` run died with `workflow cost budget exhausted: 321.92 >=
+  `review-existing@1` run died with `workflow cost budget exhausted: 321.92 >=
   250` after spending about 46 USD: one timed-out claude-opus-5 qa attempt
   alone, 27.9M input tokens of which 446 were fresh, was charged 141.27
   instead of 17.30. The price table now carries cache-read and cache-write
