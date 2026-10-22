@@ -78,3 +78,18 @@ func TestRollup(t *testing.T) {
 		t.Errorf("report = %+v", rep)
 	}
 }
+
+// TestRollupFallbackPricesCacheAsCache: when agtop cannot price a session, the
+// report falls back to the logged tokens, whose input_tokens includes the
+// cached ones. They must price as cache, not as fresh input.
+func TestRollupFallbackPricesCacheAsCache(t *testing.T) {
+	runs := []AgentRun{{
+		TaskID: "T001", Model: "claude-opus-5",
+		InputTok: 3_000_000, CachedTok: 2_500_000, CacheWriteTok: 500_000, OutputTok: 0,
+	}}
+	rep := Rollup(runs, nil)
+	// 0.5M fresh × 5.00 + 2M read × 0.50 + 0.5M write × 10.00
+	if rep.TotalUSD != 8.50 {
+		t.Fatalf("TotalUSD = %v, want 8.50", rep.TotalUSD)
+	}
+}

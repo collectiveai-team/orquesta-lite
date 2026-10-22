@@ -3,6 +3,23 @@
 All notable changes to orq-lite are recorded here. Versions follow the git
 tags cut as GitHub releases (the binary's `--version` is stamped from the tag).
 
+## Unreleased
+
+### Fixed
+
+- **The cost budget priced cache reads as fresh input.** Every turn of an
+  agent re-sends the whole conversation, which the provider serves from its
+  prompt cache at about a tenth of the input rate, so cache reads are nearly
+  all of an invocation's input. `sumUsage` folded them, and cache writes, into
+  the input count that `cost.EstimateUSD` priced at the full rate. A
+  `factory-governed@2` run died with `workflow cost budget exhausted: 321.92 >=
+  250` after spending about 46 USD: one timed-out claude-opus-5 qa attempt
+  alone, 27.9M input tokens of which 446 were fresh, was charged 141.27
+  instead of 17.30. The price table now carries cache-read and cache-write
+  rates, invocations are priced per billing class, and `run.log`'s
+  `agent_run` gains `cache_write_tokens` so `orq-lite cost` can price its
+  fallback the same way.
+
 ## v0.8.0 — a blocked review is a draft PR, not a failed run
 
 ### Fixed

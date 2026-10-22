@@ -1,6 +1,9 @@
 package cost
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 func TestEstimateUSD_ExportedWrapper(t *testing.T) {
 	usd, ok := EstimateUSD("claude-sonnet-4-6", 1_000_000, 1_000_000)
@@ -69,5 +72,29 @@ func TestEstimateUSD_Codex56(t *testing.T) {
 	// model's rate through a bare "gpt-5" prefix.
 	if _, ok := EstimateUSD("gpt-5.7-unknown", 100, 100); ok {
 		t.Error("an unknown gpt-5.x model must report ok=false, not a guessed rate")
+	}
+}
+
+// TestEmbeddedPricesPriceEveryClass keeps a new model from silently pricing a
+// billing class at zero — the way cache reads would have gone free — or
+// cache reads at the fresh-input rate, the bug this table split fixed.
+func TestEmbeddedPricesPriceEveryClass(t *testing.T) {
+	for model, p := range embeddedPrices {
+		if p.InputPerMillion <= 0 || p.OutputPerMillion <= 0 || p.CacheReadPerMillion <= 0 || p.CacheWritePerMillion <= 0 {
+			t.Errorf("%s: every rate must be set, got %+v", model, p)
+		}
+		if p.CacheReadPerMillion >= p.InputPerMillion {
+			t.Errorf("%s: cache reads (%v) must be cheaper than fresh input (%v)", model, p.CacheReadPerMillion, p.InputPerMillion)
+		}
+	}
+}
+
+func TestEstimateUsageUSD_PricesEachClass(t *testing.T) {
+	usd, ok := EstimateUsageUSD("gpt-5.6-sol", Usage{Input: 1_000_000, CacheRead: 1_000_000, CacheWrite: 1_000_000, Output: 1_000_000})
+	if !ok || math.Abs(usd-29.40) > 1e-9 { // 4.00 + 0.40 + 5.00 + 20.00
+		t.Fatalf("EstimateUsageUSD = %v, %v; want 29.40, true", usd, ok)
+	}
+	if _, ok := EstimateUsageUSD("claude-opus-5", Usage{}); ok {
+		t.Fatal("no tokens must report ok=false")
 	}
 }
