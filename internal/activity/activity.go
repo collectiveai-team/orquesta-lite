@@ -3,7 +3,12 @@ package activity
 import (
 	"context"
 	"encoding/json"
+	"strings"
 )
+
+// ExecutorRef accepts the resource spelling stored on steps and the bare
+// executor spelling stored on attempts and in the registry.
+func ExecutorRef(ref string) string { return strings.TrimPrefix(ref, "activity:") }
 
 // Request identifies one logical step execution. IdempotencyKey is stable
 // across attempts for that step instance.
@@ -36,6 +41,12 @@ type Result struct {
 type Executor interface {
 	Spec() Spec
 	Execute(context.Context, Request) (Result, error)
+}
+
+// EvidenceValidator rechecks durable external proof before accepting a result
+// or reusing a completed step. A missing proof must never replay product effects.
+type EvidenceValidator interface {
+	ValidateEvidence(context.Context, Request, Result) error
 }
 
 type ReconcileRequest struct {

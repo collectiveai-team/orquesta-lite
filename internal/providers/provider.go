@@ -39,6 +39,7 @@ type Launch struct {
 }
 
 type Options struct {
+	ReadOnly             bool
 	Model                string
 	Effort               string
 	DangerouslySkipPerms bool

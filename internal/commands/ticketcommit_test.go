@@ -68,11 +68,11 @@ func stepOrder(t *testing.T) map[string]int {
 }
 
 func TestCommitStepCarriesApprovalAsDataNotAsACondition(t *testing.T) {
-	// If commit_ticket were skipped by an `if`, the steps guarded on its output
-	// would reference a nil step and fail to resolve.
+	// A real ticket always carries approval as data. The null-ticket guard
+	// prevents constructing a commit scope from a nonexistent ticket.
 	commit := developTicketSteps(t)["commit_ticket"]
-	if _, hasIf := commit["if"]; hasIf {
-		t.Fatal("commit_ticket must run unconditionally so later refs resolve")
+	if commit["if"] != "inputs.state.status == \"active\" && inputs.state.next_ticket != null" {
+		t.Fatal("commit_ticket must guard a missing/non-runnable ticket")
 	}
 	with, _ := commit["with"].(map[string]any)
 	if _, ok := with["enabled"]; !ok {
@@ -134,7 +134,7 @@ func contains(haystack, needle string) bool {
 
 // promptGlobals are supplied by the invoker for every role, so a prompt may use
 // them without any step wiring them.
-var promptGlobals = map[string]bool{"MEMORY": true, "CONVENTIONS": true, "SKILLS": true, "RESULT_PATH": true}
+var promptGlobals = map[string]bool{"MEMORY": true, "CONVENTIONS": true, "SKILLS": true, "RESULT_PATH": true, "PLAN_OUTCOME": true}
 
 // knownPromptGaps pins the unsupplied placeholders that already existed when
 // this check was written, so the check can be strict about everything else.

@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 )
 
 type Codex struct{}
@@ -24,6 +25,9 @@ func (Codex) ValidateExtraArgs(args []string) error {
 }
 
 func (Codex) Build(_ context.Context, prompt string, opts Options) (Launch, error) {
+	if opts.ReadOnly && len(opts.ExtraArgs) > 0 {
+		return Launch{}, fmt.Errorf("codex read-only execution does not accept extra_args; sandbox and configuration overrides cannot be verified")
+	}
 	model := opts.Model
 	if model == "" {
 		model = "gpt-5"
@@ -39,7 +43,10 @@ func (Codex) Build(_ context.Context, prompt string, opts Options) (Launch, erro
 	}
 
 	args = append(args, "--json")
-	if opts.DangerouslySkipPerms {
+	if opts.ReadOnly {
+		args = append(args, "--sandbox", "read-only")
+	}
+	if opts.DangerouslySkipPerms && !opts.ReadOnly {
 		args = append(args, "--dangerously-bypass-approvals-and-sandbox")
 	}
 	args = append(args, "-m", model)
@@ -79,6 +86,9 @@ func (Codex) ParseLine(line string) []Event {
 		}
 	case "item.started":
 		item, _ := obj["item"].(map[string]any)
+		if item["type"] == "collab_agent_tool_call" {
+			return []Event{{Type: EventToolCall, ToolName: "native_agent"}}
+		}
 		if item["type"] == "command_execution" {
 			if command, ok := item["command"].(string); ok {
 				return []Event{{Type: EventToolCall, ToolName: "Bash", ToolArgs: command}}

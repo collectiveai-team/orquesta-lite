@@ -82,7 +82,7 @@
       "uses": "subflow:develop-ticket@1",
       "if": "steps.triage.output.actionable == true && inputs.run == true",
       "while": {
-        "condition": "item.state.status == \"active\"",
+        "condition": "item.state.status == \"active\" && item.state.next_ticket != null",
         "maxIterations": {
           "$ref": "item.state.iteration_budget"
         },
@@ -103,15 +103,28 @@
       }
     },
     {
+      "id": "plan_outcome",
+      "uses": "activity:plan.outcome@1",
+      "with": {
+        "initial": {
+          "$ref": "steps.plan_fix.output"
+        },
+        "iterations": {
+          "$ref": "steps.develop_tickets.output"
+        }
+      },
+      "if": "steps.triage.output.actionable == true && inputs.run == true"
+    },
+    {
       "id": "ticket_plan_complete",
       "uses": "activity:gate.assert@1",
-      "if": "steps.triage.output.actionable == true && inputs.run == true && steps.plan_fix.output.status == \"active\"",
+      "if": "steps.triage.output.actionable == true && inputs.run == true && steps.plan_outcome.output.status != \"blocked\"",
       "with": {
         "value": {
-          "$ref": "steps.develop_tickets.output.last.state.status"
+          "$ref": "steps.plan_outcome.output.complete"
         },
-        "equals": "complete",
-        "message": "the ticket loop ended without the plan reaching status=complete"
+        "equals": true,
+        "message": "the ticket loop ended with runnable work still incomplete"
       }
     },
     {
@@ -124,6 +137,9 @@
         },
         "require_approval": {
           "$ref": "inputs.strict_governance"
+        },
+        "plan_outcome": {
+          "$ref": "steps.plan_outcome.output"
         }
       }
     }
@@ -137,6 +153,9 @@
     },
     "governance": {
       "$ref": "steps.integrated_review.output"
+    },
+    "plan_outcome": {
+      "$ref": "steps.plan_outcome.output"
     }
   }
 }

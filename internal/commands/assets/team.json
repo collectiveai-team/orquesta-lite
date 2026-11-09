@@ -28,6 +28,9 @@
     }
   },
   "roles": {
+    "verified_coder": {"agents": ["codex_terra"], "prompt": ".orquestalite/packs/development/6/prompts/verified-coder.md", "result_path": ".orquestalite/results/verified_coder.json", "timeout_seconds": 1800},
+    "verified_integrator": {"agents": ["codex_terra"], "prompt": ".orquestalite/packs/development/6/prompts/verified-integrator.md", "result_path": ".orquestalite/results/verified_integrator.json", "timeout_seconds": 900},
+    "verified_reviewer": {"agents": ["codex_terra"], "prompt": ".orquestalite/packs/development/6/prompts/verified-reviewer.md", "result_path": ".orquestalite/results/verified_reviewer.json", "timeout_seconds": 1200},
     "ticket_planner": {"agents": ["claude_opus", "codex_sol"], "prompt": ".orquestalite/packs/development/6/prompts/ticket-planner.md", "result_path": ".orquestalite/results/ticket_planner.json", "timeout_seconds": 900},
     "adversary": {"agents": ["claude_opus", "codex_sol"], "prompt": ".orquestalite/packs/development/6/prompts/adversary.md", "result_path": ".orquestalite/results/adversary.json", "timeout_seconds": 1800},
     "critic": {"agents": ["claude_opus", "codex_sol"], "prompt": ".orquestalite/packs/development/6/prompts/critic.md", "result_path": ".orquestalite/results/critic.json", "timeout_seconds": 1200},

@@ -8,16 +8,24 @@ import (
 	"fmt"
 	"github.com/collectiveai-team/orquesta-lite/internal/review"
 	"path/filepath"
+	"time"
 
 	"github.com/collectiveai-team/orquesta-lite/internal/activity"
+	"github.com/collectiveai-team/orquesta-lite/internal/checks"
+	"github.com/collectiveai-team/orquesta-lite/internal/config"
+	"github.com/collectiveai-team/orquesta-lite/internal/flow"
 	"github.com/collectiveai-team/orquesta-lite/internal/invoke"
+	"github.com/collectiveai-team/orquesta-lite/internal/risk"
+	"github.com/collectiveai-team/orquesta-lite/internal/supervision"
 )
 
 type SchemaValidator func(ref string, raw []byte) error
 
 type AgentExecutor struct {
-	Invoker  *invoke.RoleInvoker
-	Validate SchemaValidator
+	Invoker      *invoke.RoleInvoker
+	Validate     SchemaValidator
+	Verification *flow.Verification
+	ArtifactRoot string
 }
 
 func (a *AgentExecutor) Spec() activity.Spec {
@@ -25,6 +33,11 @@ func (a *AgentExecutor) Spec() activity.Spec {
 }
 
 type agentInput struct {
+	Snapshot       *checks.Snapshot  `json:"snapshot,omitempty"`
+	Unit           string            `json:"unit,omitempty"`
+	Correction     bool              `json:"correction,omitempty"`
+	ReadOnly       bool              `json:"read_only,omitempty"`
+	FreshContext   bool              `json:"fresh_context,omitempty"`
 	Role           string            `json:"role"`
 	Vars           map[string]string `json:"vars,omitempty"`
 	Context        map[string]any    `json:"context,omitempty"`
@@ -45,6 +58,7 @@ func (a *AgentExecutor) Execute(ctx context.Context, request activity.Request) (
 		return activity.Result{}, &activity.Error{Class: activity.ErrorPermanent, Op: "agent.invoke", Err: fmt.Errorf("executor is not configured")}
 	}
 	vars := make(map[string]string, len(input.Vars)+len(input.Context))
+	vars["PLAN_OUTCOME"] = "{}"
 	for key, value := range input.Vars {
 		vars[key] = value
 	}
@@ -73,6 +87,69 @@ func (a *AgentExecutor) Execute(ctx context.Context, request activity.Request) (
 	identity, _ := json.Marshal([]string{request.RunID, request.ScopePath, request.ForeachKey, request.StepID})
 	taskID := fmt.Sprintf("%x", sha256.Sum256(identity))
 	resultPath := filepath.Join(".orquestalite", "results", "invocations", taskID, fmt.Sprintf("attempt-%d.json", request.Attempt))
+	call := invoke.RoleCall{Vars: vars, Skills: input.Skills, ResultPath: resultPath, ReadOnly: input.ReadOnly, FreshContext: input.FreshContext}
+	invoker := a.Invoker
+	if a.Verification != nil {
+		call.DisableNativeDelegation = true
+		binding, ok := a.Verification.Roles[input.Role]
+		if !ok {
+			return activity.Result{}, contractError("agent.invoke", fmt.Errorf("role has no pinned model policy"))
+		}
+		local := *invoker
+		local.RequireNativeModelControl = binding.RequireNativeModelControl
+		invoker = &local
+		if binding.Purpose == "review" {
+			call.ReadOnly = true
+			call.FreshContext = true
+			if input.OutputSchema != "schema:review-claims@3" {
+				return activity.Result{}, contractError("agent.invoke", fmt.Errorf("verified reviewers require review-claims@3"))
+			}
+			if len(input.FallbackOutput) > 0 {
+				return activity.Result{}, contractError("agent.invoke", fmt.Errorf("verified review cannot substitute fallback claims"))
+			}
+		}
+		if input.OutputSchema == "schema:review-claims@3" && binding.Purpose != "review" {
+			return activity.Result{}, contractError("agent.invoke", fmt.Errorf("claims require a frozen read-only review role"))
+		}
+	}
+	if call.ReadOnly {
+		if input.Snapshot == nil || !within(a.ArtifactRoot, input.Snapshot.Dir) {
+			return activity.Result{}, contractError("agent.invoke", fmt.Errorf("read-only reviewer requires run snapshot"))
+		}
+		if err := checks.VerifySnapshot(*input.Snapshot); err != nil {
+			return activity.Result{}, &activity.ApprovalRequiredError{Reason: "review snapshot unavailable: " + err.Error()}
+		}
+		call.Dir = input.Snapshot.Dir
+		call.FreshContext = true
+		vars["TREE_HASH"] = input.Snapshot.TreeHash
+		vars["BASE_REVISION"] = input.Snapshot.BaseRevision
+	}
+	if input.Correction {
+		units := risk.UnitStore{Root: filepath.Join(a.ArtifactRoot, "units")}
+		unit, err := units.ClaimInvocation(input.Unit, taskID)
+		if err != nil {
+			return activity.Result{}, &activity.ApprovalRequiredError{Reason: err.Error()}
+		}
+		remaining := time.Duration(unit.Limits.MaxSeconds)*time.Second - time.Since(unit.StartedAt)
+		if remaining <= 0 {
+			return activity.Result{}, &activity.ApprovalRequiredError{Reason: "correction time budget exhausted"}
+		}
+		local := *invoker
+		local.Specs = make(map[string]config.RoleSpec, len(invoker.Specs))
+		for name, spec := range invoker.Specs {
+			local.Specs[name] = spec
+		}
+		spec := local.Specs[input.Role]
+		if spec.Timeout > remaining {
+			spec.Timeout = remaining
+		}
+		local.Specs[input.Role] = spec
+		invoker = &local
+		call.SingleAttempt = true
+		call.MaxTokens = unit.Limits.MaxTokens
+		call.MaxToolCalls = unit.Limits.MaxToolCalls
+		call.FreshContext = true
+	}
 
 	// The spend is attached to the Result on *every* return path below. The
 	// runtime sums attempts.cost_usd into RunUsage.CostUSD, which is what a
@@ -80,7 +157,7 @@ func (a *AgentExecutor) Execute(ctx context.Context, request activity.Request) (
 	// or that fell back to a canned output, still has to report what its agent
 	// chain burned. Dropping it on the failure paths would leave the only
 	// spend-shaped brake blind to precisely the runs that need braking.
-	outcome, err := invoke.Raw(ctx, a.Invoker, input.Role, invoke.RoleCall{Vars: vars, Skills: input.Skills, ResultPath: resultPath}, invoke.RunContext{TaskID: taskID, Attempt: request.Attempt}, func(raw []byte) error {
+	outcome, err := invoke.Raw(ctx, invoker, input.Role, call, invoke.RunContext{TaskID: taskID, Attempt: request.Attempt}, func(raw []byte) error {
 		if err := a.Validate(input.OutputSchema, raw); err != nil {
 			return err
 		}
@@ -106,12 +183,22 @@ func (a *AgentExecutor) Execute(ctx context.Context, request activity.Request) (
 			}
 			return review.Preserve(current, previous)
 		}
+		if input.OutputSchema == "schema:review-claims@3" {
+			_, err := review.DecodeClaimsV3(raw)
+			return err
+		}
 		return nil
 	})
 	if ctx.Err() != nil {
 		return activity.Result{CostUSD: outcome.CostUSD}, ctx.Err()
 	}
 	if err != nil {
+		if errors.Is(err, supervision.ErrCheckpointRequired) {
+			return activity.Result{CostUSD: outcome.CostUSD}, &activity.ApprovalRequiredError{Reason: err.Error(), Input: request.Inputs}
+		}
+		if a.Verification != nil && (call.ReadOnly || input.Correction) {
+			return activity.Result{CostUSD: outcome.CostUSD}, &activity.ApprovalRequiredError{Reason: "verified agent did not produce evidence: " + err.Error(), Input: request.Inputs}
+		}
 		if len(input.FallbackOutput) > 0 {
 			if validationErr := a.Validate(input.OutputSchema, input.FallbackOutput); validationErr != nil {
 				return activity.Result{CostUSD: outcome.CostUSD}, contractError("agent.invoke fallbackOutput", validationErr)

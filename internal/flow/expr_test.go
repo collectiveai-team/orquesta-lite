@@ -18,3 +18,28 @@ func TestEvalBool(t *testing.T) {
 		t.Fatalf("typed comparison=%v err=%v", got, err)
 	}
 }
+
+func TestEvalBoolShortCircuitsMissingReferences(t *testing.T) {
+	for _, test := range []struct {
+		expression string
+		want       bool
+	}{
+		{`false && steps.skipped.output.approved == true`, false},
+		{`true || steps.skipped.output.approved == true`, true},
+		{`false && !(steps.skipped.output.count > 0 || steps.skipped.output.ready)`, false},
+		{`(false && steps.skipped.output.ready) || true`, true},
+		{`true || (false && steps.skipped.output.ready)`, true},
+	} {
+		t.Run(test.expression, func(t *testing.T) {
+			got, err := EvalBool(test.expression, func(path string) (any, bool) { t.Fatalf("resolved skipped reference %s", path); return nil, false })
+			if err != nil || got != test.want {
+				t.Fatalf("got %v, %v", got, err)
+			}
+		})
+	}
+	for _, expression := range []string{`true && missing`, `false || missing`, `true || (false && )`, `false && (true || )`} {
+		if _, err := EvalBool(expression, func(string) (any, bool) { return nil, false }); err == nil {
+			t.Fatalf("accepted malformed/reachable reference in %s", expression)
+		}
+	}
+}

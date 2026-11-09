@@ -64,7 +64,7 @@ func DecodeSchema(r io.Reader) (*Schema, error) {
 }
 
 func (s *Schema) validateDefinition(path string) error {
-	if s.ReviewContract != 0 && s.ReviewContract != 2 {
+	if s.ReviewContract != 0 && s.ReviewContract != 2 && s.ReviewContract != 3 {
 		return fmt.Errorf("unsupported review contract %d", s.ReviewContract)
 	}
 	allowed := map[string]bool{"null": true, "boolean": true, "object": true, "array": true, "number": true, "integer": true, "string": true}
@@ -112,6 +112,14 @@ func (s *Schema) Validate(value any) error {
 			return err
 		}
 		_, err = review.Decode(raw)
+		return err
+	}
+	if s.ReviewContract == 3 {
+		raw, err := json.Marshal(value)
+		if err != nil {
+			return err
+		}
+		_, err = review.DecodeClaimsV3(raw)
 		return err
 	}
 	return nil

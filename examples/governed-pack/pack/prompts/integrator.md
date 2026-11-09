@@ -18,3 +18,14 @@ Write JSON atomically to {{RESULT_PATH}} using a temporary sibling and rename:
 {"continue":false,"summary":"addressed IDs, changes and exact test outcomes","remaining":[]}
 Set continue=false only when every confirmed blocking defect is resolved and
 both gates pass. Otherwise continue=true with concrete remaining IDs.
+
+If PLAN_OUTCOME is present in the task context, inspect its pending/blocked work.
+A blocked ticket plan is unfinished external work: report the exact IDs and
+prerequisites as limitations and remaining scope, not invented product defects.
+Review the implemented portion normally and distinguish concrete code defects
+from external access that prevents acceptance. Do not claim full objective
+completion while the plan is blocked. A missing calendar, credential or remote
+service is not something the integrator should repeatedly try to repair.
+
+Ticket-plan outcome (empty when no ticket plan applies):
+{{PLAN_OUTCOME}}

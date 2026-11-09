@@ -27,7 +27,9 @@ In `initial` mode:
 - Give every ticket its blocking edges (see `dependencies`, below), then select
   as `next_ticket` one whose `dependencies` is empty; put the rest in `pending`.
 - Prefer thin foundations followed by externally observable behavior.
-- Set status `active`, revision 1, and leave completed/blocked empty.
+- Set revision 1 and leave completed empty. Use status `active` only with a
+  runnable next ticket. If external prerequisites already block all remaining
+  work, use `blocked` as specified below and explain each prerequisite in history.
 - Set `iteration_budget` (see below).
 
 If the context variable `APPEND` is `true`, do not discard existing planning:
@@ -40,7 +42,9 @@ In `advance` mode:
 - Preserve ticket identity and all unfinished acceptance criteria.
 - If verification is approved, move the current ticket id to `completed` and
   select the next ticket from the frontier (see `dependencies`). Set `complete`
-  only when `pending` is empty and there is no next ticket.
+  only when `pending` is empty and there is no next ticket. If the runnable
+  frontier is empty because all remaining work is externally blocked (including
+  transitive dependents), set status `blocked` and next_ticket=null instead.
 - If verification is not approved, keep the same ticket as `next_ticket`, add
   the concrete findings to its acceptance criteria or objective, and increment
   the revision. You may split it if the findings prove it is too large.
@@ -106,9 +110,21 @@ Both selections read from it:
 - In `advance`, select `next_ticket` from the **frontier**: the pending tickets
   whose dependencies are all in `completed`. A pending ticket that depends on
   anything in `blocked` stays pending; it is not part of the frontier.
-- If the frontier is empty while `pending` is not, the graph is wrong — a cycle,
-  or an edge naming a ticket that no longer exists. Fix the edges instead of
-  picking arbitrarily, and say what you fixed in `history`.
+- Exclude tickets explicitly listed in `blocked` from the frontier even when
+  their ticket dependencies are complete: an external prerequisite still prevents
+  starting them. Keep those ticket objects in `pending`; `blocked` contains their
+  bare IDs.
+- If the frontier is empty and every pending ticket is directly blocked or
+  transitively depends on a blocked ticket, set status `blocked` and
+  next_ticket=null. Keep all pending objects and completed IDs intact. Record the
+  concrete external prerequisite, affected IDs and what would unblock them in
+  `summary`, `risks` and `history`. Do not invent a product defect or mark blocked
+  acceptance criteria complete.
+- If the frontier is empty without such an external blocker, the graph is wrong
+  (cycle or dangling dependency). Fix the edges and record the correction in
+  `history`; never conceal an invalid graph with status `blocked`.
+- A plan with another runnable ticket stays `active`, even if some other tickets
+  are blocked. Never set active with next_ticket=null.
 
 Every id must name a ticket present in this state. Padding `dependencies` with
 ids that do not actually gate the work shrinks the frontier and serializes a
@@ -172,8 +188,19 @@ Contrast:
 Writing `"completed": [{"id":"T1"}]` fails the contract, as does writing
 `"history": ["T1 done"]` where an object is expected.
 
-When status is `complete`, `next_ticket` must be null and `pending` empty. Do
-not modify source code.
+Legal terminal states are:
+
+- `complete`: next_ticket=null, pending=[] and blocked=[]. Every acceptance
+  criterion is verified.
+- `blocked`: next_ticket=null, pending is nonempty, and every pending ticket is
+  directly or transitively gated by an explicit blocked ID. The available work
+  is exhausted, but the contract is unfinished.
+- `active`: next_ticket is a runnable ticket object; never null.
+
+A blocked plan still receives an integrated review of the work completed so far.
+The runtime reports the blocked work separately and prevents a ready PR approval.
+Do not attempt to obtain unavailable external access or erase pending work merely
+to make the run appear complete. Do not modify source code.
 
 Size every ticket so a single coder invocation can implement and test it well
 within its execution budget. Split any ticket that combines an infrastructure

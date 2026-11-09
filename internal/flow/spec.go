@@ -35,12 +35,13 @@ type InputSpec struct {
 }
 
 type Document struct {
-	APIVersion string               `json:"apiVersion"`
-	Kind       Kind                 `json:"kind"`
-	Metadata   Metadata             `json:"metadata"`
-	Inputs     map[string]InputSpec `json:"inputs,omitempty"`
-	Steps      []StepSpec           `json:"steps"`
-	Outputs    map[string]Value     `json:"outputs,omitempty"`
+	Verification *VerificationSpec    `json:"verification,omitempty"`
+	APIVersion   string               `json:"apiVersion"`
+	Kind         Kind                 `json:"kind"`
+	Metadata     Metadata             `json:"metadata"`
+	Inputs       map[string]InputSpec `json:"inputs,omitempty"`
+	Steps        []StepSpec           `json:"steps"`
+	Outputs      map[string]Value     `json:"outputs,omitempty"`
 }
 
 type ForeachSpec struct {
