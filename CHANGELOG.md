@@ -3,6 +3,33 @@
 All notable changes to orq-lite are recorded here. Versions follow the git
 tags cut as GitHub releases (the binary's `--version` is stamped from the tag).
 
+## v0.9.0 — runtime evidence, bounded review and cost visibility
+
+### Added
+
+- **Opt-in runtime verification flows:** `development/verified-development@1` implements and verifies a unit; `development/verified-review@1` verifies existing changes. Repository checks, policies, explicit role models and prompt hashes are pinned in the compiled IR.
+- **Repository check profiles:** `checks detect`, `checks confirm`, `checks status` and `checks run` provide strict JSON contracts, manifest fingerprints, timeouts, tier/path selection and optional coverage evidence. Detection proposes commands without executing or approving them.
+- **Frozen-candidate evidence:** checks execute in independent copies of a captured tree and record command, exit status, duration, tree/profile hashes and bounded logs. Unit closure requires runtime evidence for the same candidate.
+- **Risk-based review and one bounded correction:** deterministic review selection, fresh read-only reviewers, runtime finding IDs and causal check comparisons, with durable patch/time/token/tool budgets. Existing medium/high/critical blocking severities are retained.
+- **Run cost and context visibility:** `cost --run <id>` reports measured usage, cache reuse and estimated cost with versioned pricing and explicit unavailable measurements. Controlled prompt budgets track baseline growth; role models cannot silently inherit a parent model.
+- **Durable supervisor decisions:** observable tool thresholds request a checkpoint, and `supervisor decide` records the action and justification before a fresh invocation resumes.
+
+### Fixed
+
+- **All remaining tickets blocked no longer crashes the ticket loop (#81).** The planner can return `blocked` with `next_ticket: null`; blocked and transitively dependent work stays pending. Null-ticket guards prevent empty coder, QA and commit invocations. Final integrated review still runs, reports blocked scope and withholds whole-plan approval; requested PRs remain drafts.
+- **Boolean guards now short-circuit.** A false `&&` or true `||` no longer resolves references in its skipped branch, so guards can safely protect nullable tickets and skipped outputs.
+- **Evidence recovery cannot replay completed product effects.** Deleted or changed receipts invalidate approval. Restoring and approving the original evidence reuses the completed result, including nested steps and repeated source keys.
+- **Repaired batches refresh stale QA when needed.** A conditional final QA preserves prior findings and checks the repaired candidate without adding another reviewer call to an already approved batch.
+
+### Upgrade notes
+
+- Update the binary, then review and sync the installed development pack with `orq-lite pack sync development --dry-run` and `orq-lite pack sync development`.
+- Existing flows keep their verification contract. New verified flows require an explicitly confirmed `.orquestalite/checks.json` and configured `verified_coder`, `verified_integrator` and `verified_reviewer` roles; the current read-only reviewer adapter is Codex.
+- Historical runs keep their pinned IR. This release does not rewrite an already failed run's definition.
+- Prompt measurement covers orq-lite-controlled context using a disclosed UTF-8 byte upper bound, not hidden CLI system/tool context. Token/tool limits depend on observable provider events; unsupported native-child model-control guarantees are rejected. Cache reuse regressions are estimates, not proven misses.
+
+Implemented in #82.
+
 ## v0.8.1 — the cost budget prices cache reads as cache
 
 ### Fixed
