@@ -46,6 +46,33 @@
     "state": {
      "$ref": "steps.plan_tickets.output"
     }
+   },
+   "if": "steps.plan_tickets.output.status == \"active\" && steps.plan_tickets.output.next_ticket != null"
+  },
+  {
+   "id": "plan_outcome",
+   "uses": "activity:plan.outcome@1",
+   "with": {
+    "initial": {
+     "$ref": "steps.plan_tickets.output"
+    },
+    "iterations": null,
+    "fast": true,
+    "batch": {
+     "$ref": "steps.fast_batch.output"
+    }
+   }
+  },
+  {
+   "id": "ticket_plan_complete",
+   "uses": "activity:gate.assert@1",
+   "if": "steps.plan_outcome.output.status != \"blocked\"",
+   "with": {
+    "value": {
+     "$ref": "steps.plan_outcome.output.complete"
+    },
+    "equals": true,
+    "message": "the batch ended with runnable work still incomplete"
    }
   },
   {
@@ -65,12 +92,24 @@
   {
    "id": "publish_pr",
    "uses": "activity:command.run@1",
-   "if": "inputs.create_pr == true",
+   "if": "inputs.create_pr == true && steps.plan_outcome.output.complete == true",
    "with": {
     "argv": [
      "sh",
      "-c",
      "gh pr create --fill --head \"$(git branch --show-current)\""
+    ]
+   }
+  },
+  {
+   "id": "publish_draft_pr",
+   "uses": "activity:command.run@1",
+   "if": "inputs.create_pr == true && steps.plan_outcome.output.complete != true",
+   "with": {
+    "argv": [
+     "sh",
+     "-c",
+     "gh pr create --fill --draft --head \"$(git branch --show-current)\""
     ]
    }
   }
@@ -81,6 +120,9 @@
   },
   "batch": {
    "$ref": "steps.fast_batch.output"
+  },
+  "plan_outcome": {
+   "$ref": "steps.plan_outcome.output"
   }
  }
 }

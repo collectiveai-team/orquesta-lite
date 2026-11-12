@@ -17,10 +17,12 @@ import (
 	"github.com/collectiveai-team/orquesta-lite/internal/fallback"
 	"github.com/collectiveai-team/orquesta-lite/internal/gitx"
 	"github.com/collectiveai-team/orquesta-lite/internal/memory"
+	"github.com/collectiveai-team/orquesta-lite/internal/promptbudget"
 	"github.com/collectiveai-team/orquesta-lite/internal/prompts"
 	"github.com/collectiveai-team/orquesta-lite/internal/providers"
 	"github.com/collectiveai-team/orquesta-lite/internal/runner"
 	"github.com/collectiveai-team/orquesta-lite/internal/skills"
+	"github.com/collectiveai-team/orquesta-lite/internal/supervision"
 	"github.com/collectiveai-team/orquesta-lite/internal/usageguard"
 )
 
@@ -44,6 +46,18 @@ func (ExecRunner) Run(ctx context.Context, s runner.Spec) (*runner.Result, error
 }
 
 type RoleInvoker struct {
+	PromptBudgets             map[string]promptbudget.Policy
+	Supervision               supervision.Policy
+	TelemetryRoot             string
+	MemoryProject             string
+	RequireNativeModelControl bool
+	DisallowNativeDelegation  bool
+	MaxTokens                 int
+	MaxToolCalls              int
+	ReadOnly                  bool
+	SingleAttempt             bool
+	// ArchiveDir remains anchored to the project when Dir is a frozen candidate.
+	ArchiveDir              string
 	Specs                   map[string]config.RoleSpec
 	Dir                     string
 	Fallback                *fallback.Caller
@@ -105,11 +119,18 @@ type RoleInvoker struct {
 }
 
 type RoleCall struct {
-	AgentOverride string
-	ArchiveRole   string
-	PromptPath    string
-	ResultPath    string
-	Vars          map[string]string
+	Dir                     string
+	FreshContext            bool
+	ReadOnly                bool
+	SingleAttempt           bool
+	DisableNativeDelegation bool
+	MaxTokens               int
+	MaxToolCalls            int
+	AgentOverride           string
+	ArchiveRole             string
+	PromptPath              string
+	ResultPath              string
+	Vars                    map[string]string
 	// Skills names the project-defined skills to inject as {{SKILLS}} for this
 	// call (typically the current task's requested skills). Empty means no
 	// skills were requested and a placeholder is injected. A name absent from
@@ -124,8 +145,26 @@ type RoleCall struct {
 // Callers that need bounded retry should loop themselves; RunOnce itself does
 // not retry.
 func (inv *RoleInvoker) RunOnce(ctx context.Context, roleName string, call RoleCall, rc RunContext) error {
+	if inv != nil {
+		if call.Dir != "" && call.PromptPath != "" {
+			call.PromptPath = absPath(inv.Dir, call.PromptPath)
+		}
+		if call.Dir != "" && call.ResultPath != "" {
+			call.ResultPath = absPath(inv.Dir, call.ResultPath)
+		}
+		var err error
+		inv, err = scopedInvoker(inv, call)
+		if err != nil {
+			return err
+		}
+	}
 	if inv == nil {
 		return fmt.Errorf("role invoker is nil")
+	}
+	var acknowledgementErr error
+	inv, acknowledgementErr = acknowledgedInvoker(inv, roleName, rc.TaskID)
+	if acknowledgementErr != nil {
+		return acknowledgementErr
 	}
 	spec, ok := inv.Specs[roleName]
 	if !ok {
@@ -133,6 +172,9 @@ func (inv *RoleInvoker) RunOnce(ctx context.Context, roleName string, call RoleC
 	}
 
 	roleVars := call.templateVars()
+	if err := inv.addSupervisorContext(roleName, rc.TaskID, roleVars); err != nil {
+		return err
+	}
 	promptPath := call.PromptPath
 	if promptPath == "" {
 		promptPath = spec.PromptPath
@@ -156,6 +198,13 @@ func (inv *RoleInvoker) RunOnce(ctx context.Context, roleName string, call RoleC
 		return err
 	}
 	prompt := prompts.Interpolate(tmpl, roleVars)
+	if controlled, err := inv.controlledPrompt(roleName, tmpl, roleVars); err != nil {
+		return err
+	} else if controlled != "" {
+		prompt = controlled
+	} else {
+		prompt = appendSupervisorContext(prompt, roleVars)
+	}
 	resultAbs := absPath(inv.Dir, resultPath)
 
 	return inv.run(ctx, roleName, spec, call.AgentOverride, prompt, resultPath, resultAbs, rc)
@@ -274,6 +323,9 @@ func (inv *RoleInvoker) runValidated(ctx context.Context, roleName string, role 
 		}
 
 		ag := agentByName[agentName]
+		if err := inv.validateCapabilities(ag); err != nil {
+			return fallback.Outcome{}, err
+		}
 		pattern := ag.RatePattern
 		if pattern == "" {
 			pattern = inv.DefaultRateLimitPattern
@@ -294,7 +346,10 @@ func (inv *RoleInvoker) runValidated(ctx context.Context, roleName string, role 
 				"RESULT_PATH": absResultPath,
 				"ROLE":        roleName,
 			},
-			Env: inv.AgentEnv,
+			Env:          inv.agentEnvironment(),
+			Dir:          inv.Dir,
+			ReadOnly:     inv.ReadOnly,
+			ObserveEvent: inv.toolObserver(roleName, rc),
 		}
 		// Resume this agent's prior conversation for the task when one exists.
 		// Only the same agent on the same task resumes; a fallback to a different
@@ -319,7 +374,17 @@ func (inv *RoleInvoker) runValidated(ctx context.Context, roleName string, role 
 		triedAgents = append(triedAgents, agentName)
 		spend += runSpendUSD(ag.Model, r)
 
+		var readOnlyErr error
+		if inv.ReadOnly && r.StopReason == nil && !r.TimedOut && !r.RateLimited && r.ExitCode == 0 {
+			readOnlyErr = writeReadOnlyResult(absResultPath, r)
+		}
 		shouldFallback, fallbackReason := Classify(r)
+		if readOnlyErr != nil {
+			shouldFallback = true
+			fallbackReason = "invalid_contract"
+			lastValidationErr = readOnlyErr
+			lastErr = readOnlyErr
+		}
 		if !shouldFallback && validate != nil {
 			if validationErr := validate(absResultPath); validationErr != nil {
 				shouldFallback = true
@@ -350,6 +415,27 @@ func (inv *RoleInvoker) runValidated(ctx context.Context, roleName string, role 
 
 		artifactsDir := inv.saveArtifacts(roleName, agentName, ag, spec, prompt, r, rc)
 		inv.logAgentRun(roleName, agentName, ag, spec, r, fallbackReason, rc, artifactsDir)
+		if err := inv.recordUsage(roleName, agentName, ag, spec, r, rc, artifactsDir); err != nil {
+			return fallback.Outcome{}, err
+		}
+		if r.StopReason != nil {
+			return fallback.Outcome{}, r.StopReason
+		}
+		if inv.MaxTokens > 0 && !measuredUsage(r) {
+			return fallback.Outcome{}, &InvocationBudgetError{Reason: "correction token measurement unavailable; cannot validate remaining budget"}
+		}
+		// A product correction has one provider launch. Output-contract errors,
+		// throttles and timeouts cannot silently authorize another writer.
+		if inv.SingleAttempt && shouldFallback {
+			cause := ErrSingleAttemptExhausted
+			if fallbackReason == "invalid_contract" {
+				cause = ErrInvalidContract
+			}
+			if fallbackReason == "timeout" {
+				cause = ErrAgentTimeout
+			}
+			return fallback.Outcome{}, fmt.Errorf("%w: %v", cause, lastErr)
+		}
 
 		// A missing/invalid result is often a cheap-to-fix slip, not a genuine
 		// failure: the benchmark evidence motivating this loop showed agents
@@ -362,11 +448,15 @@ func (inv *RoleInvoker) runValidated(ctx context.Context, roleName string, role 
 		// enter this loop; they already have correct handling below/in
 		// fallback.Caller and must not be retried this way.
 		isBestEffort := inv.BestEffortRoles[roleName]
-		for attempt := 0; attempt < contractRetryBudget && !isBestEffort && shouldFallback &&
+		for attempt := 0; attempt < contractRetryBudget && !inv.SingleAttempt && !isBestEffort && shouldFallback &&
 			(fallbackReason == "invalid_contract" || fallbackReason == "result_missing"); attempt++ {
 			cSpec := spec
 			cSpec.Prompt = correctivePrompt(roleName, absResultPath, fallbackReason, lastValidationErr)
 			cSpec.ResumeSessionID = r.SessionID // ephemeral: the attempt that just failed
+			if inv.ReadOnly {
+				cSpec.ResumeSessionID = ""
+				cSpec.Prompt += "\nReturn strict JSON only in the final response. Do not write any files."
+			}
 			if blocked := inv.usageBlocked(ctx, roleName, agentName, usageRequest); !blocked.Allowed {
 				shouldFallback = true
 				fallbackReason = "usage_threshold"
@@ -385,8 +475,18 @@ func (inv *RoleInvoker) runValidated(ctx context.Context, roleName string, role 
 			}
 			r = cr
 			lastResult = cr
-
+			spend += runSpendUSD(ag.Model, cr)
+			readOnlyErr = nil
+			if inv.ReadOnly && cr.StopReason == nil && !cr.TimedOut && !cr.RateLimited && cr.ExitCode == 0 {
+				readOnlyErr = writeReadOnlyResult(absResultPath, cr)
+			}
 			shouldFallback, fallbackReason = Classify(cr)
+			if readOnlyErr != nil {
+				shouldFallback = true
+				fallbackReason = "invalid_contract"
+				lastValidationErr = readOnlyErr
+				lastErr = readOnlyErr
+			}
 			if !shouldFallback && validate != nil {
 				if validationErr := validate(absResultPath); validationErr != nil {
 					shouldFallback = true
@@ -407,6 +507,12 @@ func (inv *RoleInvoker) runValidated(ctx context.Context, roleName string, role 
 			crc.Attempt = rc.Attempt + attempt + 1
 			cArtifactsDir := inv.saveArtifacts(roleName, agentName, ag, cSpec, cSpec.Prompt, cr, crc)
 			inv.logAgentRun(roleName, agentName, ag, cSpec, cr, fallbackReason, crc, cArtifactsDir)
+			if err := inv.recordUsage(roleName, agentName, ag, cSpec, cr, crc, cArtifactsDir); err != nil {
+				return fallback.Outcome{}, err
+			}
+			if cr.StopReason != nil {
+				return fallback.Outcome{}, cr.StopReason
+			}
 		}
 
 		inv.recordHealth(roleName, agentName, shouldFallback, fallbackReason)
@@ -769,7 +875,11 @@ func absPath(dir, path string) string {
 	if filepath.IsAbs(path) {
 		return path
 	}
-	return filepath.Join(dir, path)
+	joined := filepath.Join(dir, path)
+	if absolute, err := filepath.Abs(joined); err == nil {
+		return absolute
+	}
+	return joined
 }
 
 // skillsFor renders the {{SKILLS}} injection for the requested skill names.

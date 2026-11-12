@@ -21,6 +21,7 @@ import (
 	"github.com/collectiveai-team/orquesta-lite/internal/agenthealth"
 	"github.com/collectiveai-team/orquesta-lite/internal/artifacts"
 	"github.com/collectiveai-team/orquesta-lite/internal/buildinfo"
+	"github.com/collectiveai-team/orquesta-lite/internal/checks"
 	"github.com/collectiveai-team/orquesta-lite/internal/config"
 	"github.com/collectiveai-team/orquesta-lite/internal/contextopt"
 	"github.com/collectiveai-team/orquesta-lite/internal/doctor"
@@ -32,6 +33,7 @@ import (
 	"github.com/collectiveai-team/orquesta-lite/internal/packsync"
 	"github.com/collectiveai-team/orquesta-lite/internal/runid"
 	"github.com/collectiveai-team/orquesta-lite/internal/sessions"
+	"github.com/collectiveai-team/orquesta-lite/internal/supervision"
 	"github.com/collectiveai-team/orquesta-lite/internal/usageguard"
 	"github.com/collectiveai-team/orquesta-lite/internal/workflow"
 )
@@ -151,6 +153,7 @@ func compileWorkflowTarget(projectDir, target string) (*compiledWorkflow, error)
 			return nil, err
 		}
 	}
+	catalog.ProjectRoot = projectDir
 	ir, diagnostics := flow.Compile(doc, catalog)
 	if diagnostics.HasErrors() {
 		raw, _ := json.MarshalIndent(diagnostics, "", "  ")
@@ -158,6 +161,11 @@ func compileWorkflowTarget(projectDir, target string) (*compiledWorkflow, error)
 	}
 	if pack != nil {
 		if err = flow.PinPack(ir, pack); err != nil {
+			return nil, err
+		}
+	}
+	if ir.Verification != nil {
+		if err := validateVerificationRoles(projectDir, root, ir); err != nil {
 			return nil, err
 		}
 	}
@@ -206,7 +214,7 @@ func newWorkflowDeps(projectDir, teamPath, runID string, compiled *compiledWorkf
 		runtimeConfig = partial.Runtime
 	}
 	artifactExecutor := &builtin.ArtifactExecutor{Root: filepath.Join(stateDir, "runs", runID), MaxBytes: runtimeConfig.ArtifactLimit(), AllowedReadRoots: []string{projectDir}}
-	for _, executor := range []activity.Executor{command, gate, builtin.GateAssertExecutor{}, builtin.ReviewAggregateExecutor{}, artifactExecutor, builtin.ApprovalExecutor{}, &builtin.GitCommitExecutor{DefaultDir: projectDir}} {
+	for _, executor := range []activity.Executor{command, gate, builtin.GateAssertExecutor{}, builtin.ReviewAggregateExecutor{}, builtin.PlanOutcomeExecutor{}, builtin.PlanReviewExecutor{}, artifactExecutor, builtin.ApprovalExecutor{}, &builtin.GitCommitExecutor{DefaultDir: projectDir}} {
 		if err = registry.Register(executor); err != nil {
 			logger.Close()
 			store.Close()
@@ -228,6 +236,19 @@ func newWorkflowDeps(projectDir, teamPath, runID string, compiled *compiledWorkf
 			store.Close()
 			return nil, resolveErr
 		}
+		if compiled.IR.Verification != nil {
+			specs = make(map[string]config.RoleSpec, len(compiled.IR.Verification.ResolvedRoles))
+			for name, spec := range compiled.IR.Verification.ResolvedRoles {
+				spec.Agents = append([]config.AgentSpec(nil), spec.Agents...)
+				spec.EscalationLadder = append([]config.AgentSpec(nil), spec.EscalationLadder...)
+				specs[name] = spec
+			}
+			if len(specs) == 0 {
+				logger.Close()
+				store.Close()
+				return nil, fmt.Errorf("verified IR has no pinned role bindings")
+			}
+		}
 		// Built-in prompts follow the pinned pack, including resume after init
 		// upgrades team.json. Custom prompt paths remain an explicit live override.
 		if compiled.IR.Pack != nil && compiled.IR.Pack.Name == "development" {
@@ -235,6 +256,20 @@ func newWorkflowDeps(projectDir, teamPath, runID string, compiled *compiledWorkf
 				if strings.HasPrefix(filepath.ToSlash(spec.PromptPath), ".orquestalite/packs/development/") {
 					spec.PromptPath = filepath.Join(compiled.Root, "prompts", filepath.Base(spec.PromptPath))
 					specs[name] = spec
+				}
+			}
+		}
+		if v := compiled.IR.Verification; v != nil {
+			for name, spec := range specs {
+				path := spec.PromptPath
+				if !filepath.IsAbs(path) {
+					path = filepath.Join(projectDir, path)
+				}
+				raw, err := os.ReadFile(path)
+				if err != nil || v.PromptHashes[name] == "" || checks.Hash(raw) != v.PromptHashes[name] {
+					logger.Close()
+					store.Close()
+					return nil, fmt.Errorf("verified role %s prompt differs from pinned content", name)
 				}
 			}
 		}
@@ -273,6 +308,12 @@ func newWorkflowDeps(projectDir, teamPath, runID string, compiled *compiledWorkf
 			guard = builtGuard
 		}
 		invoker = &invoke.RoleInvoker{Specs: specs, Dir: projectDir, Fallback: fallbackCaller, Log: logger, Health: tracker, MemPath: filepath.Join(stateDir, "memory.md"), Runner: invoke.ExecRunner{}, DefaultRateLimitPattern: defaultPattern, AgentHealthThreshold: agentHealthThreshold, UsageGuard: guard, ConventionsPath: cfg.ConventionsFile, AgentEnv: optStatus.Env(), Sessions: sessions.Load(projectDir), ResumeRoles: resumeRoles, Artifacts: artifactStore, CodeWritingRoles: map[string]bool{}}
+		invoker.TelemetryRoot = filepath.Join(stateDir, "runs", runID)
+		if v := compiled.IR.Verification; v != nil {
+			invoker.PromptBudgets = v.PromptBudgets
+			invoker.Supervision = v.Supervision
+			invoker.MemoryProject = v.MemoryProject
+		}
 	}
 	validator := func(ref string, raw []byte) error {
 		schema, ok := compiled.IR.Schemas[ref]
@@ -281,7 +322,12 @@ func newWorkflowDeps(projectDir, teamPath, runID string, compiled *compiledWorkf
 		}
 		return schema.ValidateJSON(raw)
 	}
-	if err = registry.Register(&builtin.AgentExecutor{Invoker: invoker, Validate: validator}); err != nil {
+	if err = registerVerification(projectDir, runID, compiled, registry, store); err != nil {
+		logger.Close()
+		store.Close()
+		return nil, err
+	}
+	if err = registry.Register(&builtin.AgentExecutor{Invoker: invoker, Validate: validator, Verification: compiled.IR.Verification, ArtifactRoot: filepath.Join(stateDir, "runs", runID)}); err != nil {
 		logger.Close()
 		store.Close()
 		return nil, err
@@ -291,7 +337,9 @@ func newWorkflowDeps(projectDir, teamPath, runID string, compiled *compiledWorkf
 		store.Close()
 		return nil, err
 	}
-	return &workflowDeps{runtime: &workflow.Runtime{Store: store, Activities: registry, Catalog: compiled.Catalog, Config: loadGateConfig(teamPath)}, store: store, logger: logger, registry: registry}, nil
+	return &workflowDeps{runtime: &workflow.Runtime{Store: store, Activities: registry, Catalog: compiled.Catalog, Config: loadGateConfig(teamPath), CompletionValidator: func(ctx context.Context, run *workflow.Run) error {
+		return verifyFinalCandidate(ctx, projectDir, store, run)
+	}}, store: store, logger: logger, registry: registry}, nil
 }
 
 func durationSeconds(value int) time.Duration { return time.Duration(value) * time.Second }
@@ -486,6 +534,28 @@ func FlowCLI(ctx context.Context, projectDir string, args []string, out io.Write
 			return err
 		}
 		defer store.Close()
+		if args[4] == "approve" {
+			approvals, err := store.ListApprovals(ctx, args[1])
+			if err != nil {
+				return err
+			}
+			for _, approval := range approvals {
+				if approval.ID != args[2] || !strings.HasPrefix(approval.Reason, supervision.ErrCheckpointRequired.Error()) {
+					continue
+				}
+				task, role, err := supervisorCheckpointIdentity(ctx, store, args[1], approval)
+				if err != nil {
+					return err
+				}
+				ack, err := supervision.HasAcknowledgement(filepath.Join(projectDir, ".orquestalite", "runs", args[1]), task, role, approval.CreatedAt)
+				if err != nil {
+					return err
+				}
+				if !ack {
+					return fmt.Errorf("supervisor checkpoint requires a recorded decision: use orq-lite supervisor decide")
+				}
+			}
+		}
 		return store.DecideApproval(ctx, args[1], args[2], args[4])
 	default:
 		return fmt.Errorf("unknown flow command %q", args[0])
@@ -497,11 +567,16 @@ func flowCLIRun(ctx context.Context, projectDir string, args []string, out io.Wr
 		return fmt.Errorf("usage: orq-lite flow run <flow-ref-or-path> [key=value ...]")
 	}
 	target := args[0]
-	compiled, err := compileWorkflowTarget(projectDir, target)
+	sourceKey, policyTarget, acceptDrift, inputArgs, err := splitRunOptions(args[1:])
 	if err != nil {
 		return err
 	}
-	sourceKey, policyTarget, acceptDrift, inputArgs, err := splitRunOptions(args[1:])
+	if sourceKey != "" {
+		if reused, err := reuseWorkflowTrigger(ctx, projectDir, sourceKey, out); reused || err != nil {
+			return err
+		}
+	}
+	compiled, err := compileWorkflowTarget(projectDir, target)
 	if err != nil {
 		return err
 	}
@@ -541,8 +616,38 @@ func flowCLIRun(ctx context.Context, projectDir string, args []string, out io.Wr
 			pack = compiled.IR.Pack.Name + "@" + compiled.IR.Pack.Version + ":" + string(compiled.IR.Pack.Digest)
 		}
 		fmt.Fprintf(out, "run_id=%s status=%s flow=%s hash=%s policy=%s policy_source=%s policy_hash=%x pack=%s artifacts=%s\n", run.ID, run.Status, run.FlowRef, run.DefinitionHash, policy.Ref, policy.Source, policyHash, pack, filepath.Join(projectDir, ".orquestalite", "runs", run.ID))
+		if run.Status == workflow.RunSucceeded {
+			if reportErr := reportBlockedPlan(ctx, deps.store, run.ID, out); reportErr != nil {
+				return errors.Join(runErr, reportErr)
+			}
+		}
 	}
 	return runErr
+}
+
+func reportBlockedPlan(ctx context.Context, store *workflow.Store, runID string, out io.Writer) error {
+	steps, err := store.ListSteps(ctx, runID)
+	if err != nil {
+		return err
+	}
+	for _, step := range steps {
+		if activity.ExecutorRef(step.ActivityRef) != "plan.outcome@1" || step.StepID != "plan_outcome" || step.Status != workflow.StepSucceeded {
+			continue
+		}
+		var outcome struct {
+			Status  string            `json:"status"`
+			Blocked []string          `json:"blocked"`
+			Pending []json.RawMessage `json:"pending"`
+		}
+		if err := json.Unmarshal(step.Output, &outcome); err != nil {
+			return err
+		}
+		if outcome.Status == "blocked" {
+			_, err := fmt.Fprintf(out, "plan_status=blocked pending=%d blocked=%s full_scope_approved=false\n", len(outcome.Pending), strings.Join(outcome.Blocked, ","))
+			return err
+		}
+	}
+	return nil
 }
 
 // reportUnfinishedRun makes an already-existing resume discoverable. It does

@@ -17,12 +17,15 @@ import (
 
 // Spec describes how to invoke an agent subprocess.
 type Spec struct {
+	Dir                        string
 	Cmd                        []string
 	Provider                   string
 	Model                      string
 	Effort                     string
 	DangerouslySkipPermissions bool
 	SafeMode                   bool
+	ReadOnly                   bool
+	ObserveEvent               func(providers.Event) error
 	ExtraArgs                  []string
 	ResumeSessionID            string
 	ForkSession                bool
@@ -56,6 +59,7 @@ type Result struct {
 	SessionID    string
 	FinalText    string
 	Events       []providers.Event
+	StopReason   error
 	// CodexHeader is non-nil when stdout begins with an "OpenAI Codex" banner.
 	// Keys include: workdir, model, provider, approval, sandbox.
 	CodexHeader map[string]string
@@ -162,6 +166,7 @@ func RunAgent(ctx context.Context, s Spec) (*Result, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(cctx, launch.Args[0], launch.Args[1:]...)
+	cmd.Dir = s.Dir
 	processtree.Configure(cmd)
 	if len(s.Env) > 0 {
 		cmd.Env = s.Env
@@ -205,7 +210,7 @@ func RunAgent(ctx context.Context, s Spec) (*Result, error) {
 	res := &Result{}
 	stdoutDone := make(chan struct{})
 	stderrDone := make(chan struct{})
-	go scanStdout(outR, provider, res, stdoutDone)
+	go scanStdoutObserved(outR, provider, res, stdoutDone, s.ObserveEvent, cancel)
 	go scanStderr(errR, res, stderrDone)
 
 	err = cmd.Wait()
@@ -243,6 +248,9 @@ func RunAgent(ctx context.Context, s Spec) (*Result, error) {
 }
 
 func buildLaunch(ctx context.Context, s Spec) (providers.Launch, providers.Provider, error) {
+	if s.ReadOnly && !providers.CapabilitiesFor(s.Provider).ReadOnlySandbox {
+		return providers.Launch{}, nil, errors.New("provider cannot enforce read-only sandbox")
+	}
 	if s.Provider != "" {
 		if len(s.Cmd) > 0 {
 			return providers.Launch{}, nil, errors.New("spec cannot specify both cmd and provider")
@@ -256,6 +264,7 @@ func buildLaunch(ctx context.Context, s Spec) (providers.Launch, providers.Provi
 			Effort:               s.Effort,
 			DangerouslySkipPerms: s.DangerouslySkipPermissions,
 			SafeMode:             s.SafeMode,
+			ReadOnly:             s.ReadOnly,
 			ExtraArgs:            s.ExtraArgs,
 			ResumeSessionID:      s.ResumeSessionID,
 			ForkSession:          s.ForkSession,
@@ -306,6 +315,10 @@ func drainOrClose(r *os.File, done <-chan struct{}, deadline time.Time) {
 }
 
 func scanStdout(r io.Reader, p providers.Provider, res *Result, done chan<- struct{}) {
+	scanStdoutObserved(r, p, res, done, nil, func() {})
+}
+
+func scanStdoutObserved(r io.Reader, p providers.Provider, res *Result, done chan<- struct{}, observe func(providers.Event) error, cancel func()) {
 	defer close(done)
 
 	scanner := bufio.NewScanner(r)
@@ -319,6 +332,12 @@ func scanStdout(r io.Reader, p providers.Provider, res *Result, done chan<- stru
 		}
 		for _, ev := range p.ParseLine(line) {
 			res.Events = append(res.Events, ev)
+			if observe != nil && res.StopReason == nil {
+				if err := observe(ev); err != nil {
+					res.StopReason = err
+					cancel()
+				}
+			}
 			switch ev.Type {
 			case providers.EventResult:
 				res.FinalText = ev.Result

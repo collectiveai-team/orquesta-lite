@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/collectiveai-team/orquesta-lite/internal/activity"
+	"github.com/collectiveai-team/orquesta-lite/internal/checks"
 )
 
 type Digest string
@@ -21,8 +22,17 @@ type ResourceRef struct {
 // DirectoryCatalog resolves a local, already-installed pack. It never uses the
 // network. Versioned files (`name@1.json`) take precedence over `name.json`.
 type DirectoryCatalog struct {
-	Root     string
-	Builtins map[string]activity.Spec
+	Root        string
+	ProjectRoot string
+	Builtins    map[string]activity.Spec
+}
+
+func (c *DirectoryCatalog) ResolveChecks(path string) (*checks.Resolved, error) {
+	root := c.ProjectRoot
+	if root == "" {
+		root = c.Root
+	}
+	return checks.Resolve(root, path)
 }
 
 func NewDirectoryCatalog(root string, builtins []activity.Spec) *DirectoryCatalog {

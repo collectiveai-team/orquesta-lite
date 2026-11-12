@@ -154,6 +154,7 @@ type exprParser struct {
 	tokens   []exprToken
 	position int
 	resolve  Resolver
+	skipping bool
 }
 
 func (p *exprParser) peek() *exprToken {
@@ -177,7 +178,12 @@ func (p *exprParser) parseOr() (any, error) {
 	}
 	for p.peek() != nil && p.peek().text == "||" {
 		p.take()
+		previous := p.skipping
+		if value, ok := left.(bool); ok && value {
+			p.skipping = true
+		}
 		right, err := p.parseAnd()
+		p.skipping = previous
 		if err != nil {
 			return nil, err
 		}
@@ -197,7 +203,12 @@ func (p *exprParser) parseAnd() (any, error) {
 	}
 	for p.peek() != nil && p.peek().text == "&&" {
 		p.take()
+		previous := p.skipping
+		if value, ok := left.(bool); ok && !value {
+			p.skipping = true
+		}
 		right, err := p.parseNot()
+		p.skipping = previous
 		if err != nil {
 			return nil, err
 		}
@@ -216,6 +227,9 @@ func (p *exprParser) parseNot() (any, error) {
 		value, err := p.parseNot()
 		if err != nil {
 			return nil, err
+		}
+		if p.skipping {
+			return false, nil
 		}
 		boolean, ok := value.(bool)
 		if !ok {
@@ -241,6 +255,9 @@ func (p *exprParser) parseCompare() (any, error) {
 	right, err := p.parsePrimary()
 	if err != nil {
 		return nil, err
+	}
+	if p.skipping {
+		return false, nil
 	}
 	if op == "==" || op == "!=" {
 		equal := valuesEqual(left, right)
@@ -298,6 +315,9 @@ func (p *exprParser) parsePrimary() (any, error) {
 		return token.value, nil
 	}
 	if token.kind == "ref" {
+		if p.skipping {
+			return false, nil
+		}
 		value, ok := p.resolve(token.text)
 		if !ok {
 			return nil, fmt.Errorf("expression: reference %q not found", token.text)

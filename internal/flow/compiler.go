@@ -36,6 +36,11 @@ func compileDocument(doc *Document, catalog Catalog, stack map[string]bool) (*IR
 	knownSteps := map[string]bool{}
 	stepSchemas := map[string]*Schema{}
 	var diagnostics Diagnostics
+	verification, verificationErr := compileVerification(doc.Verification, catalog)
+	if verificationErr != nil {
+		diagnostics = append(diagnostics, Diagnostic{"error", "verification", verificationErr.Error()})
+	}
+	ir.Verification = verification
 	// A flow-declared policy is resolved and pinned exactly like a step's retry
 	// policy, so the budget a run executed under is inside the definition digest
 	// instead of depending on what the operator typed. Failing here means
@@ -282,6 +287,11 @@ func compileDocument(doc *Document, catalog Catalog, stack map[string]bool) (*IR
 	}
 	for name, value := range doc.Outputs {
 		validateValue("outputs."+name, value, false)
+	}
+	if ir.Verification != nil {
+		if err := validateVerifiedStructure(ir); err != nil {
+			diagnostics = append(diagnostics, Diagnostic{"error", "verification", err.Error()})
+		}
 	}
 	if diagnostics.HasErrors() {
 		return nil, diagnostics

@@ -12,6 +12,16 @@
     "require_approval": {
       "schema": "schema:flag@1",
       "default": false
+    },
+    "plan_outcome": {
+      "schema": "schema:verified-object@1",
+      "default": {
+        "status": "complete",
+        "complete": true,
+        "blocked": [],
+        "pending": [],
+        "summary": "No ticket plan supplied"
+      }
     }
   },
   "steps": [
@@ -56,6 +66,11 @@
           ],
           "reviewed_revision": "",
           "evidence": []
+        },
+        "context": {
+          "PLAN_OUTCOME": {
+            "$ref": "inputs.plan_outcome"
+          }
         }
       }
     },
@@ -71,6 +86,9 @@
           },
           "QA_REVIEW": {
             "$ref": "steps.qa.output"
+          },
+          "PLAN_OUTCOME": {
+            "$ref": "inputs.plan_outcome"
           }
         },
         "fallbackOutput": {
@@ -103,6 +121,9 @@
           },
           "ADVERSARY_REVIEW": {
             "$ref": "steps.adversary.output"
+          },
+          "PLAN_OUTCOME": {
+            "$ref": "inputs.plan_outcome"
           }
         },
         "fallbackOutput": {
@@ -138,6 +159,9 @@
           },
           "CRITIC_REVIEW": {
             "$ref": "steps.critic.output"
+          },
+          "PLAN_OUTCOME": {
+            "$ref": "inputs.plan_outcome"
           }
         },
         "fallbackOutput": {
@@ -185,7 +209,7 @@
         "equals": true,
         "message": "Required review incomplete; obtain evidence before repair or approval"
       },
-      "if": "inputs.require_approval == true"
+      "if": "inputs.require_approval == true && inputs.plan_outcome.status != \"blocked\""
     },
     {
       "id": "integration_repair",
@@ -218,6 +242,9 @@
           },
           "CONFIRMED_FINDINGS": {
             "$ref": "steps.review_evidence.output.repair_findings"
+          },
+          "PLAN_OUTCOME": {
+            "$ref": "inputs.plan_outcome"
           }
         }
       }
@@ -226,7 +253,7 @@
       "id": "governance_loop",
       "uses": "subflow:governance-cycle@1",
       "while": {
-        "condition": "item.pending == true || (item.approved != true && item.verdict.status == \"complete\" && item.verdict.decision == \"block\")",
+        "condition": "item.pending == true || (inputs.plan_outcome.status != \"blocked\" && item.approved != true && item.verdict.status == \"complete\" && item.verdict.decision == \"block\")",
         "maxIterations": 3,
         "initial": {
           "pending": true,
@@ -264,16 +291,31 @@
         },
         "visual_review": {
           "$ref": "steps.visual_verifier.output"
+        },
+        "plan_outcome": {
+          "$ref": "inputs.plan_outcome"
+        }
+      }
+    },
+    {
+      "id": "plan_review",
+      "uses": "activity:plan.review@1",
+      "with": {
+        "plan": {
+          "$ref": "inputs.plan_outcome"
+        },
+        "review": {
+          "$ref": "steps.governance_loop.output.last.verdict"
         }
       }
     },
     {
       "id": "governance_gate",
       "uses": "activity:gate.assert@1",
-      "if": "inputs.require_approval == true",
+      "if": "inputs.require_approval == true && inputs.plan_outcome.status != \"blocked\"",
       "with": {
         "value": {
-          "$ref": "steps.governance_loop.output.last.approved"
+          "$ref": "steps.plan_review.output.approved"
         },
         "equals": true,
         "message": "governance did not approve after the repair cycles"
@@ -297,13 +339,19 @@
       "$ref": "steps.integration_repair.output"
     },
     "governance": {
-      "$ref": "steps.governance_loop.output.last.verdict"
+      "$ref": "steps.plan_review.output.review"
     },
     "governance_rounds": {
       "$ref": "steps.governance_loop.output"
     },
     "approved": {
-      "$ref": "steps.governance_loop.output.last.approved"
+      "$ref": "steps.plan_review.output.approved"
+    },
+    "blocked_work": {
+      "$ref": "steps.plan_review.output.blocked"
+    },
+    "plan_outcome": {
+      "$ref": "inputs.plan_outcome"
     }
   }
 }

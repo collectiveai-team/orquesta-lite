@@ -23,6 +23,16 @@
     },
     "visual_review": {
       "schema": "schema:review-result@2"
+    },
+    "plan_outcome": {
+      "schema": "schema:verified-object@1",
+      "default": {
+        "status": "complete",
+        "complete": true,
+        "blocked": [],
+        "pending": [],
+        "summary": "No ticket plan supplied"
+      }
     }
   },
   "steps": [
@@ -40,7 +50,7 @@
     {
       "id": "repair",
       "uses": "activity:agent.invoke@1",
-      "if": "inputs.verdict.status == \"complete\" && steps.review_evidence.output.needs_repair == true",
+      "if": "inputs.plan_outcome.status != \"blocked\" && (inputs.verdict.status == \"complete\" && steps.review_evidence.output.needs_repair == true)",
       "with": {
         "role": "integrator",
         "outputSchema": "schema:iteration-result@1",
@@ -53,6 +63,9 @@
           },
           "CONFIRMED_FINDINGS": {
             "$ref": "steps.review_evidence.output.repair_findings"
+          },
+          "PLAN_OUTCOME": {
+            "$ref": "inputs.plan_outcome"
           }
         }
       }
@@ -101,6 +114,9 @@
           },
           "CONFIRMED_FINDINGS": {
             "$ref": "steps.review_evidence.output.repair_findings"
+          },
+          "PLAN_OUTCOME": {
+            "$ref": "inputs.plan_outcome"
           }
         }
       }
@@ -142,6 +158,9 @@
           },
           "VISUAL_REVIEW": {
             "$ref": "inputs.visual_review"
+          },
+          "PLAN_OUTCOME": {
+            "$ref": "inputs.plan_outcome"
           }
         },
         "fallbackOutput": {

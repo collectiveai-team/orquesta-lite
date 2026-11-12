@@ -8,17 +8,18 @@ import (
 )
 
 type IR struct {
-	APIVersion string                     `json:"apiVersion"`
-	Kind       Kind                       `json:"kind"`
-	Metadata   Metadata                   `json:"metadata"`
-	Inputs     map[string]InputSpec       `json:"inputs,omitempty"`
-	Steps      []IRStep                   `json:"steps"`
-	Outputs    map[string]Value           `json:"outputs,omitempty"`
-	Resources  map[string]Digest          `json:"resources"`
-	Schemas    map[string]*Schema         `json:"schemas,omitempty"`
-	Policies   map[string]json.RawMessage `json:"policies,omitempty"`
-	Pack       *PackSnapshot              `json:"pack,omitempty"`
-	Digest     Digest                     `json:"-"`
+	Verification *Verification              `json:"verification,omitempty"`
+	APIVersion   string                     `json:"apiVersion"`
+	Kind         Kind                       `json:"kind"`
+	Metadata     Metadata                   `json:"metadata"`
+	Inputs       map[string]InputSpec       `json:"inputs,omitempty"`
+	Steps        []IRStep                   `json:"steps"`
+	Outputs      map[string]Value           `json:"outputs,omitempty"`
+	Resources    map[string]Digest          `json:"resources"`
+	Schemas      map[string]*Schema         `json:"schemas,omitempty"`
+	Policies     map[string]json.RawMessage `json:"policies,omitempty"`
+	Pack         *PackSnapshot              `json:"pack,omitempty"`
+	Digest       Digest                     `json:"-"`
 }
 
 type IRStep struct {

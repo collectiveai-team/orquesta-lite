@@ -663,6 +663,32 @@ Resume uses the stored compiled IR and verifies pinned pack resources. It does
 not silently compile a newer installed flow, and completed steps are not rerun.
 This is why resume is normally cheaper and safer than starting another workflow.
 
+### Externally blocked ticket plans
+
+In ticket mode, `factory-governed@2`, `task-list@1` and `issue-fix@1` stop
+selecting work when no runnable ticket remains. A planner may return
+`status: "blocked"`, `next_ticket: null`, retaining the unfinished tickets in
+`pending` and recording external blockers in `blocked` and `history`.
+Dependency chains rooted in a blocked ticket also remain pending. A legacy
+`active` state with no next ticket is normalized only when every remaining
+ticket is provably blocked; cycles, missing dependencies and unexplained empty
+frontiers still fail.
+
+Factory and issue flows still run their integrated review over implemented
+work. `plan_outcome` and `blocked_work` expose the remaining IDs; the final
+whole-plan verdict stays incomplete and unapproved, even if the implemented
+subset passes review. Requested factory PRs remain drafts. A successful workflow
+execution therefore does not imply the entire plan is complete: CLI output
+also prints `plan_status=blocked`, the pending count and blocked IDs.
+An exhausted iteration budget with runnable work still fails its completion
+gate. Batch flows also preserve externally blocked scope; repaired batches
+refresh QA only when the earlier QA verdict needs rechecking.
+
+This fix applies to new runs using the updated development pack. Existing runs
+retain their pinned IR; updating the binary or pack does not rewrite an already
+failed run's definition. Use a new `review-existing@1` run to review previously
+implemented work when the historical run cannot continue.
+
 ## 9. Operate GitHub watch mode
 
 Watch compiles configured flows at startup and emits idempotent durable
@@ -736,6 +762,140 @@ orq-lite pack keep development             # stay put until the next orq-lite up
 ```
 
 A binary built without release ldflags reports version `dev` and never blocks.
+
+## Verification by runtime evidence (opt-in)
+
+`development/verified-development@1` implements one unit and verifies it;
+`development/verified-review@1` verifies existing changes. These versioned flows
+leave the existing factory and review contracts in place. Run `orq-lite init`
+for new projects or sync the development pack for an existing installation.
+The scaffold adds `verified_coder`, `verified_integrator`, and
+`verified_reviewer`; the verification block pins each agent's model explicitly.
+The current read-only reviewer adapter is Codex. Other adapters are rejected
+when a read-only guarantee is required.
+
+Declare and approve the repository's checks before launching:
+
+```bash
+mkdir -p .scratch
+orq-lite checks detect > .scratch/checks-proposal.json
+# Review argv, required flags, tiers, timeouts, paths and coverage settings.
+orq-lite checks confirm .scratch/checks-proposal.json
+git add -f .orquestalite/checks.json
+# Commit the approved profile with the repository configuration.
+orq-lite flow validate development/verified-development@1
+orq-lite flow run development/verified-development@1 features_path=features.md event=pr max_tier=1
+```
+
+Detection reads manifests and lockfiles; it never executes scripts or approves
+its own output. The JSON profile has one strict shape: `schema_version: 1`,
+`detected`, `manifests_hash`, `items`, and `coverage`. Each item declares `id`,
+`kind`, `surface`, an `argv` array, explicit `required` and `tier`, optional
+`timeout_s` (600 by default), and optional repository-relative `paths` globs.
+Globs support `*`, `?`, and `**`; character classes are rejected. Unknown fields,
+duplicate keys, stale manifest fingerprints and invalid items fail compilation.
+Coverage defaults to disabled (`threshold: 0`); the initial enabled format is
+`go-cover`, with `check_id`, `report`, and a percentage threshold from 0 to 100.
+
+The compiler embeds the resolved checks, source hash, policies, role bindings
+and prompt hashes in the IR. A resumed run uses those pinned checks and models;
+changing the live profile does not change its contract. Manifest changes require
+detecting and explicitly confirming a new proposal for subsequent runs.
+
+For committed PR changes, pass a pinned merge-base commit with `base=<sha>`;
+without an explicit base the development flow captures HEAD before coding, and
+the review flow compares current changes against HEAD. PR selection runs tiers
+up to `max_tier`, plus checks whose paths intersect the diff. Merge and release
+events run all tiers. Unknown diffs, verification configuration, manifests,
+lockfiles and CI changes conservatively select all tiers. An approved profile
+left untracked also selects all tiers, so version it as shown above.
+
+Checks execute in independent copies of a frozen candidate. Tests can create
+build outputs without changing the frozen source or the live workspace. Every
+attempt records command, exit status, duration, tree and profile hashes,
+bounded logs and excerpts, including silent failures and timeouts. Source
+mutation by a check fails verification. A unit closes only with complete,
+successful required-check evidence for the same candidate and a runtime review
+verdict. The product tree is checked again before closing and finishing.
+
+Missing or changed evidence invalidates approval and requests a decision.
+Restoring the original proof and approving reuses the completed result; it
+never repeats an already completed product effect. This also applies when an
+idempotent source key is submitted again.
+
+Risk is classified once from the first frozen candidate using sensitive paths,
+diff size and explicit test path mappings. Small, mapped changes receive one
+structural reading; standard risk receives one reliability lens; high risk
+receives Risk, Resilience, Readability and Reliability. Unknown test mappings
+raise risk conservatively. Reviewers have fresh contexts and read the same
+snapshot. A correction cannot reclassify risk; new sensitive surfaces require a
+decision.
+
+The runtime assigns finding IDs, ordering, digests and decisions. Open
+introduced `medium`, `high` and `critical` findings still block. Preexisting
+findings become local follow-up records in the review artifact; no external
+issue is published automatically. Unknown attribution requires a decision.
+Code citations prove readable source, not causality. Runtime comparisons can
+attribute a configured check failure by evaluating the same approved command
+against base and candidate; this attribution applies only to that check.
+Historical findings and their proof references cannot silently disappear.
+
+Each unit can reserve one correction. Its patch budget is
+`min(200, ceil(initial_changed_lines / 2))` added/deleted lines, with separate
+time, token and tool ceilings. A durable task owns the reservation; provider
+fallback and product-writing contract retries cannot create a second attempt.
+A read-only validator verifies the result. Unreadable-tree recovery is bounded
+and does not launch another correction. Failed evidence or exhausted budgets
+produce `needs_human`. A human review waiver cannot waive failing required
+checks or missing runtime evidence.
+
+Inspect measured cost with:
+
+```bash
+orq-lite cost --run <run-id>
+```
+
+`runs/<id>/usage.jsonl` contains normalized usage and availability; the derived
+`usage-report.json` reports total volume, weighted cache reuse and estimated
+cost. Partial and terminal usage are never double-counted. Cache-read drops of
+at least 1,024 tokens are compared only for compatible prefixes/providers/models
+and reported as estimated reuse regressions, not proven misses. Missing usage
+is explicit. Token volume is reported separately from subscription windows.
+CLI event granularity can be coarser than an API request; original streams are
+retained in invocation artifacts.
+
+Prompt budgets measure the controlled template, conventions and skills, with
+stable content before dynamic task context. The initial counter is a disclosed
+UTF-8 byte upper bound, not an exact model tokenizer; CLI-owned system prompts
+and tool schemas remain outside measurement coverage. Each role configures a
+ceiling, baseline and tolerated growth; growth beyond baseline requires a
+recorded justification. The shipped baseline is an initial configuration to
+review against the repository's conventions and skills. Custom prompt changes
+cannot silently replace a pinned run's prompt.
+
+Observable tool limits request a supervisor checkpoint. Resume cannot bypass a
+pending or rejected decision. Record the exact task/role, action and reason:
+
+```bash
+orq-lite supervisor decide <run-id> --approval <id> --task <task-id> --role <role> --action continue --reason "Bounded remaining work"
+orq-lite flow resume <run-id>
+```
+
+Actions are `replan`, `delegate` or `continue`; the decision reaches a fresh
+invocation as dynamic context. Incidents reported through the supervision API
+also request fresh-context auditing. Counters use observable provider events;
+exploratory/nonmechanical classifications are never guessed. Provider events
+may arrive after work starts, so token and tool limits cannot promise a strict
+prebilling cap or visibility into hidden provider activity. Known direct
+commands such as `checks run` do not launch an agent workflow.
+
+Exploration and transcription roles require economy model bindings or an
+explicit override reason. Native delegation is prohibited in verified prompts
+and checkpoints on observable delegation events. An IR requesting guaranteed
+native-child model control is rejected until its adapter supports it; explicit
+orq-lite role bindings do not imply control over hidden provider subagents.
+Optional `memory_project` is passed as context configuration for agent-side
+MCP use. There is no Engram dependency, and memory cannot satisfy proof refs.
 
 ## Final checklist
 

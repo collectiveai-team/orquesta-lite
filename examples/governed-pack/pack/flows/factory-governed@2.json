@@ -44,24 +44,11 @@
    }
   },
   {
-   "id": "fast_batch",
-   "uses": "subflow:fast-batch@1",
-   "if": "inputs.fast == true",
-   "with": {
-    "features_path": {
-     "$ref": "inputs.features_path"
-    },
-    "state": {
-     "$ref": "steps.plan_tickets.output"
-    }
-   }
-  },
-  {
    "id": "develop_tickets",
    "uses": "subflow:develop-ticket@1",
    "if": "inputs.fast != true",
    "while": {
-    "condition": "item.state.status == \"active\"",
+    "condition": "item.state.status == \"active\" && item.state.next_ticket != null",
     "maxIterations": {
      "$ref": "item.state.iteration_budget"
     },
@@ -81,15 +68,46 @@
    }
   },
   {
+   "id": "fast_batch",
+   "uses": "subflow:fast-batch@1",
+   "if": "inputs.fast == true && steps.plan_tickets.output.status == \"active\" && steps.plan_tickets.output.next_ticket != null",
+   "with": {
+    "features_path": {
+     "$ref": "inputs.features_path"
+    },
+    "state": {
+     "$ref": "steps.plan_tickets.output"
+    }
+   }
+  },
+  {
+   "id": "plan_outcome",
+   "uses": "activity:plan.outcome@1",
+   "with": {
+    "initial": {
+     "$ref": "steps.plan_tickets.output"
+    },
+    "iterations": {
+     "$ref": "steps.develop_tickets.output"
+    },
+    "fast": {
+     "$ref": "inputs.fast"
+    },
+    "batch": {
+     "$ref": "steps.fast_batch.output"
+    }
+   }
+  },
+  {
    "id": "ticket_plan_complete",
    "uses": "activity:gate.assert@1",
-   "if": "inputs.fast != true && steps.plan_tickets.output.status == \"active\"",
+   "if": "steps.plan_outcome.output.status != \"blocked\"",
    "with": {
     "value": {
-     "$ref": "steps.develop_tickets.output.last.state.status"
+     "$ref": "steps.plan_outcome.output.complete"
     },
-    "equals": "complete",
-    "message": "the ticket loop ended without the plan reaching status=complete"
+    "equals": true,
+    "message": "the ticket loop ended with runnable work still incomplete"
    }
   },
   {
@@ -101,6 +119,9 @@
     },
     "require_approval": {
      "$ref": "inputs.strict_governance"
+    },
+    "plan_outcome": {
+     "$ref": "steps.plan_outcome.output"
     }
    }
   },
@@ -121,7 +142,7 @@
   {
    "id": "publish_pr",
    "uses": "activity:command.run@1",
-   "if": "inputs.create_pr == true && steps.integrated_review.output.approved == true",
+   "if": "inputs.create_pr == true && steps.plan_outcome.output.complete == true && steps.integrated_review.output.approved == true",
    "with": {
     "argv": [
      "sh",
@@ -133,7 +154,7 @@
   {
    "id": "publish_draft_pr",
    "uses": "activity:command.run@1",
-   "if": "inputs.create_pr == true && steps.integrated_review.output.approved != true",
+   "if": "inputs.create_pr == true && (steps.plan_outcome.output.complete != true || steps.integrated_review.output.approved != true)",
    "with": {
     "argv": [
      "sh",
@@ -152,6 +173,9 @@
   },
   "batch": {
    "$ref": "steps.fast_batch.output"
+  },
+  "plan_outcome": {
+   "$ref": "steps.plan_outcome.output"
   }
  }
 }

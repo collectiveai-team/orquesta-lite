@@ -42,10 +42,11 @@ type Runtime struct {
 	// Config is the read-only project configuration exposed to flows through
 	// the `config.<key>` reference namespace. The host populates it from an
 	// explicit whitelist; the runtime never writes to it.
-	Config map[string]any
-	Now    func() time.Time
-	Sleep  func(context.Context, time.Duration) error
-	Jitter func(time.Duration, int, string) time.Duration
+	Config              map[string]any
+	Now                 func() time.Time
+	Sleep               func(context.Context, time.Duration) error
+	Jitter              func(time.Duration, int, string) time.Duration
+	CompletionValidator func(context.Context, *Run) error
 }
 
 type StartOptions struct {
@@ -97,6 +98,12 @@ func (r *Runtime) Start(ctx context.Context, ir *flow.IR, options StartOptions) 
 		return nil, err
 	}
 	if !created {
+		if run.Status != RunCancelled {
+			if err := r.validateRunEvidence(ctx, run); err != nil {
+				latest, _ := r.Store.GetRun(ctx, run.ID)
+				return latest, err
+			}
+		}
 		return run, nil
 	}
 	if err = r.executeRun(ctx, run, ir, options.Inputs, options.Policy); err != nil {
@@ -118,6 +125,18 @@ func (r *Runtime) Resume(ctx context.Context, runID string) (*Run, error) {
 	run, err := r.Store.GetRun(ctx, runID)
 	if err != nil {
 		return nil, err
+	}
+	if run.Status != RunCancelled {
+		if err := r.reconcileEvidenceApprovals(ctx, run); err != nil {
+			latest, _ := r.Store.GetRun(ctx, runID)
+			return latest, err
+		}
+	}
+	if run.Status != RunCancelled {
+		if proofErr := r.validateRunEvidence(ctx, run); proofErr != nil {
+			latest, loadErr := r.Store.GetRun(ctx, runID)
+			return latest, errors.Join(proofErr, loadErr)
+		}
 	}
 	if run.Status == RunSucceeded || run.Status == RunCancelled {
 		return run, nil
@@ -181,6 +200,7 @@ func (r *Runtime) executeRun(ctx context.Context, run *Run, ir *flow.IR, inputs 
 		err = ctx.Err()
 	}
 	if errors.Is(err, ErrNeedsHuman) {
+		_ = r.Store.SetRunStatus(context.Background(), run.ID, RunNeedsHuman, err.Error())
 		return err
 	}
 	if err != nil {
@@ -197,7 +217,101 @@ func (r *Runtime) executeRun(ctx context.Context, run *Run, ir *flow.IR, inputs 
 		_ = r.Store.SetRunStatus(context.Background(), run.ID, status, err.Error())
 		return err
 	}
+	if err := r.validateRunEvidence(ctx, run); err != nil {
+		return err
+	}
+	if ir.Verification != nil {
+		if err := r.validateUnitClosures(ctx, run); err != nil {
+			_ = r.Store.SetRunStatus(ctx, run.ID, RunFailed, err.Error())
+			return err
+		}
+	}
+	if r.CompletionValidator != nil {
+		if err := r.CompletionValidator(ctx, run); err != nil {
+			if errors.Is(err, ErrNeedsHuman) {
+				return err
+			}
+			_ = r.Store.SetRunStatus(ctx, run.ID, RunFailed, err.Error())
+			return err
+		}
+	}
 	return r.Store.SetRunStatus(ctx, run.ID, RunSucceeded, "")
+}
+
+func (r *Runtime) validateUnitClosures(ctx context.Context, run *Run) error {
+	steps, err := r.Store.ListSteps(ctx, run.ID)
+	if err != nil {
+		return err
+	}
+	units := map[string]bool{}
+	closed := map[string]bool{}
+	for _, step := range steps {
+		if step.Status != StepSucceeded {
+			continue
+		}
+		var out struct {
+			Unit   string `json:"unit"`
+			Closed bool   `json:"closed"`
+		}
+		if json.Unmarshal(step.Output, &out) != nil || out.Unit == "" {
+			continue
+		}
+		if activity.ExecutorRef(step.ActivityRef) == "risk.classify@1" {
+			units[out.Unit] = true
+		}
+		if activity.ExecutorRef(step.ActivityRef) == "unit.close@1" && out.Closed {
+			closed[out.Unit] = true
+		}
+	}
+	if len(units) == 0 {
+		return fmt.Errorf("verified run has no runtime-classified unit")
+	}
+	for id := range units {
+		if !closed[id] {
+			return fmt.Errorf("verified unit %s has no evidence-backed closure", id)
+		}
+	}
+	return nil
+}
+
+// Revalidate even terminal runs. Lost evidence invalidates approval, but never
+// resets downstream steps or repeats an already completed product effect.
+func (r *Runtime) validateRunEvidence(ctx context.Context, run *Run) error {
+	steps, err := r.Store.ListSteps(ctx, run.ID)
+	if err != nil {
+		return err
+	}
+	for _, step := range steps {
+		if step.Status != StepSucceeded {
+			continue
+		}
+		executor, ok := r.Activities.Resolve(activity.ExecutorRef(step.ActivityRef))
+		if !ok {
+			continue // Virtual subflow and aggregate steps have no executor.
+		}
+		validator, ok := executor.(activity.EvidenceValidator)
+		if !ok {
+			continue
+		}
+		// foreach aggregate outputs are arrays, not an executor receipt. Its
+		// individual instances are validated separately.
+		if len(step.Output) > 0 && step.Output[0] == '[' {
+			continue
+		}
+		request, result, loadErr := r.Store.EvidenceRequest(ctx, step)
+		proofErr := loadErr
+		if proofErr == nil {
+			proofErr = validator.ValidateEvidence(ctx, request, result)
+		}
+		if err := proofErr; err != nil {
+			reason := "evidence invalid for " + step.StepID + ": " + err.Error()
+			if _, approvalErr := r.Store.CreateApproval(ctx, &step, reason); approvalErr != nil {
+				return errors.Join(err, approvalErr)
+			}
+			return fmt.Errorf("%w: %s", ErrNeedsHuman, reason)
+		}
+	}
+	return nil
 }
 
 type executionState struct {
@@ -698,6 +812,38 @@ func (s *executionState) executeActivity(ctx context.Context, step flow.IRStep, 
 	if err := validateSchema(step.Activity.InputSchema, rawInputs, s.schemas); err != nil {
 		return nil, &activity.Error{Class: activity.ErrorInvalidContract, Op: step.Activity.Ref() + " input", Err: err}
 	}
+	if stored.Status == StepNeedsHuman {
+		approval, err := s.runtime.Store.GetApprovalForStep(ctx, stored.ID)
+		if err != nil {
+			return nil, err
+		}
+		if approval.Status == "pending" {
+			return nil, ErrNeedsHuman
+		}
+		if approval.Status == "rejected" {
+			return nil, fmt.Errorf("approval %s rejected", approval.ID)
+		}
+		if latest, err := s.runtime.Store.LatestAttempt(ctx, stored.ID); err == nil && latest.Status == AttemptSucceeded {
+			validator, ok := executor.(activity.EvidenceValidator)
+			if !ok {
+				return nil, fmt.Errorf("cannot restore completed effect without evidence validator")
+			}
+			request, result, err := s.runtime.Store.EvidenceRequest(ctx, *stored)
+			if err != nil {
+				return nil, err
+			}
+			if err := validator.ValidateEvidence(ctx, request, result); err != nil {
+				if _, persistErr := s.runtime.Store.CreateApproval(ctx, stored, "evidence remains invalid: "+err.Error()); persistErr != nil {
+					return nil, persistErr
+				}
+				return nil, ErrNeedsHuman
+			}
+			if err := s.runtime.Store.RestoreEvidenceStep(ctx, stored); err != nil {
+				return nil, err
+			}
+			return decodeAny(stored.Output)
+		}
+	}
 	if (step.Activity.Name == "command.run" || step.Activity.Name == "gate.run") && !s.policy.AllowShell {
 		var input struct {
 			Shell string `json:"shell"`
@@ -783,6 +929,13 @@ func (s *executionState) executeActivity(ctx context.Context, step flow.IRStep, 
 		if execErr == nil {
 			if err = validateSchema(step.Activity.OutputSchema, result.Output, s.schemas); err != nil {
 				execErr = &activity.Error{Class: activity.ErrorInvalidContract, Op: step.Activity.Ref() + " output", Err: err}
+			}
+		}
+		if execErr == nil {
+			if validator, ok := executor.(activity.EvidenceValidator); ok {
+				if proofErr := validator.ValidateEvidence(ctx, request, result); proofErr != nil {
+					execErr = &activity.ApprovalRequiredError{Reason: "runtime evidence invalid: " + proofErr.Error()}
+				}
 			}
 		}
 		if execErr == nil {

@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"reflect"
+	"slices"
 	"testing"
 )
 
@@ -55,6 +56,10 @@ func TestCodexBuildFreshResumeAndFork(t *testing.T) {
 
 func TestCodexParseLineEvents(t *testing.T) {
 	p := Codex{}
+	native := p.ParseLine(`{"type":"item.started","item":{"type":"collab_agent_tool_call","tool":"spawn_agent"}}`)
+	if len(native) != 1 || native[0].Type != EventToolCall || native[0].ToolName != "native_agent" {
+		t.Fatalf("native delegation not observable: %+v", native)
+	}
 
 	events := p.ParseLine(`{"type":"thread.started","thread_id":"thread-1"}`)
 	if len(events) != 1 || events[0].Type != EventSessionID || events[0].SessionID != "thread-1" {
@@ -72,5 +77,20 @@ func TestCodexParseLineEvents(t *testing.T) {
 	}
 	if got := events[0].Usage["input_tokens"]; got != 80 {
 		t.Fatalf("input_tokens = %d, want 80", got)
+	}
+}
+
+func TestCodexReadonlyBoundaryRejectsAllUnverifiedExtraArgs(t *testing.T) {
+	for _, args := range [][]string{{"--sandbox", "danger-full-access"}, {"-c", "sandbox_mode=\"danger-full-access\""}, {"--cd", "/live"}, {"--verbose"}} {
+		if _, err := (Codex{}).Build(context.Background(), "review", Options{ReadOnly: true, ExtraArgs: args}); err == nil {
+			t.Fatalf("readonly boundary accepted %v", args)
+		}
+	}
+	launch, err := (Codex{}).Build(context.Background(), "review", Options{ReadOnly: true, DangerouslySkipPerms: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(launch.Args, "read-only") || slices.Contains(launch.Args, "--dangerously-bypass-approvals-and-sandbox") {
+		t.Fatalf("readonly launch weakened: %v", launch.Args)
 	}
 }

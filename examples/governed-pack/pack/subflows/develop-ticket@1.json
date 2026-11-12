@@ -36,7 +36,8 @@
           },
           "COMMIT_FAILURE": ""
         }
-      }
+      },
+      "if": "inputs.state.status == \"active\" && inputs.state.next_ticket != null"
     },
     {
       "id": "verify_ticket",
@@ -58,12 +59,13 @@
             "$ref": "steps.implement_ticket.output"
           }
         }
-      }
+      },
+      "if": "inputs.state.status == \"active\" && inputs.state.next_ticket != null"
     },
     {
       "id": "ticket_lint",
       "uses": "activity:gate.run@1",
-      "if": "steps.verify_ticket.output.approved == true",
+      "if": "inputs.state.status == \"active\" && inputs.state.next_ticket != null && (steps.verify_ticket.output.approved == true)",
       "with": {
         "argv": {
           "$ref": "config.lint_argv"
@@ -73,7 +75,7 @@
     {
       "id": "ticket_tests",
       "uses": "activity:gate.run@1",
-      "if": "steps.verify_ticket.output.approved == true",
+      "if": "inputs.state.status == \"active\" && inputs.state.next_ticket != null && (steps.verify_ticket.output.approved == true)",
       "with": {
         "argv": {
           "$ref": "config.test_argv"
@@ -99,12 +101,13 @@
         "body": {
           "$ref": "steps.implement_ticket.output.summary"
         }
-      }
+      },
+      "if": "inputs.state.status == \"active\" && inputs.state.next_ticket != null"
     },
     {
       "id": "repair_commit",
       "uses": "activity:agent.invoke@1",
-      "if": "steps.commit_ticket.output.blocked == true",
+      "if": "inputs.state.status == \"active\" && inputs.state.next_ticket != null && (steps.commit_ticket.output.blocked == true)",
       "with": {
         "role": "coder",
         "outputSchema": "schema:ticket-implementation@1",
@@ -137,7 +140,7 @@
     {
       "id": "commit_retry",
       "uses": "activity:git.commit@1",
-      "if": "steps.commit_ticket.output.blocked == true",
+      "if": "inputs.state.status == \"active\" && inputs.state.next_ticket != null && (steps.commit_ticket.output.blocked == true)",
       "with": {
         "type": {
           "$ref": "inputs.commit_type"
@@ -177,12 +180,29 @@
           "APPEND": "false",
           "TRIAGE": ""
         }
+      },
+      "if": "inputs.state.status == \"active\" && inputs.state.next_ticket != null"
+    },
+    {
+      "id": "resolve_state",
+      "uses": "activity:plan.outcome@1",
+      "with": {
+        "initial": {
+          "$ref": "inputs.state"
+        },
+        "iterations": [
+          {
+            "state": {
+              "$ref": "steps.update_ticket_plan.output"
+            }
+          }
+        ]
       }
     }
   ],
   "outputs": {
     "state": {
-      "$ref": "steps.update_ticket_plan.output"
+      "$ref": "steps.resolve_state.output.state"
     },
     "implementation": {
       "$ref": "steps.implement_ticket.output"

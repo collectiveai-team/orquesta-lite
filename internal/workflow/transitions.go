@@ -306,8 +306,11 @@ func (s *Store) CreateApproval(ctx context.Context, step *StepRun, reason string
 		return nil, err
 	}
 	defer tx.Rollback()
-	_, err = tx.ExecContext(ctx, `INSERT INTO approvals(id,run_id,step_run_id,reason,status,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(run_id,step_run_id) DO NOTHING`, id, step.RunID, step.ID, reason, "pending", stamp(now))
+	_, err = tx.ExecContext(ctx, `INSERT INTO approvals(id,run_id,step_run_id,reason,status,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT(run_id,step_run_id) DO UPDATE SET reason=excluded.reason,status='pending',decision='',decided_at=NULL,created_at=excluded.created_at`, id, step.RunID, step.ID, reason, "pending", stamp(now))
 	if err != nil {
+		return nil, err
+	}
+	if err = tx.QueryRowContext(ctx, `SELECT id FROM approvals WHERE run_id=? AND step_run_id=?`, step.RunID, step.ID).Scan(&id); err != nil {
 		return nil, err
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE step_runs SET status=?,updated_at=? WHERE id=?`, StepNeedsHuman, stamp(now), step.ID); err != nil {

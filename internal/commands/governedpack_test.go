@@ -49,7 +49,7 @@ func TestGovernedFactoryV2DefaultsToFastAndAlwaysRunsIntegratedReview(t *testing
 	if _, ok := conditions["integrated_review"]; !ok {
 		t.Fatal("factory-governed@2 has no integrated_review step")
 	}
-	if conditions["fast_batch"] != "inputs.fast == true" || conditions["develop_tickets"] != "inputs.fast != true" {
+	if conditions["fast_batch"] != "inputs.fast == true && steps.plan_tickets.output.status == \"active\" && steps.plan_tickets.output.next_ticket != null" || conditions["develop_tickets"] != "inputs.fast != true" {
 		t.Fatalf("implementation mode conditions = fast:%q tickets:%q", conditions["fast_batch"], conditions["develop_tickets"])
 	}
 }
@@ -214,9 +214,19 @@ func TestGovernedPackPlanDrivenLoopsAreGatedOnCompletion(t *testing.T) {
 			continue
 		}
 		var loops, gated []string
+		outcomeLoops := map[string]string{}
 		for _, step := range compiled.IR.Steps {
 			if step.While != nil {
 				loops = append(loops, step.ID)
+			}
+			if step.Uses.Kind == "activity" && step.Uses.Name == "plan.outcome" {
+				if ref := step.With["iterations"].Ref; ref != nil {
+					for _, loop := range loops {
+						if ref.Path == "steps."+loop+".output" {
+							outcomeLoops[step.ID] = loop
+						}
+					}
+				}
 			}
 			if step.Uses.Kind != "activity" || step.Uses.Name != "gate.assert" {
 				continue
@@ -226,12 +236,13 @@ func TestGovernedPackPlanDrivenLoopsAreGatedOnCompletion(t *testing.T) {
 				continue
 			}
 			equals, ok := step.With["equals"]
-			if !ok || equals.Literal != "complete" {
+			if !ok || equals.Literal != true {
 				continue
 			}
-			// steps.<loop>.output.last.state.status
-			for _, loop := range loops {
-				if strings.HasPrefix(value.Ref.Path, "steps."+loop+".output") && strings.HasSuffix(value.Ref.Path, "status") {
+			// The normalized outcome accepts external blockers but still gates
+			// a runnable backlog left over after iteration exhaustion.
+			for outcome, loop := range outcomeLoops {
+				if value.Ref.Path == "steps."+outcome+".output.complete" && strings.Contains(step.If, "status != \"blocked\"") {
 					gated = append(gated, loop)
 				}
 			}

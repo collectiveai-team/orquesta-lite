@@ -30,8 +30,8 @@ func (g *GitCommitExecutor) Spec() activity.Spec {
 
 type gitCommitInput struct {
 	// Enabled carries the flow's condition as data rather than as a step `if`.
-	// A skipped step resolves to nil, and `&&` does not short-circuit, so any
-	// later step guarded on this one's output would fail to resolve and kill
+	// A skipped step resolves to nil, so an unguarded structured reference in a
+	// later step would fail to resolve and kill
 	// the run. Running always and reporting a skip keeps those refs valid.
 	Enabled          *bool  `json:"enabled,omitempty"`
 	Type             string `json:"type,omitempty"`

@@ -78,7 +78,20 @@ func main() {
 		exit(commands.RunDevelopmentAlias(runCtx, ".", "factory", map[string]any{"features_path": featuresPath, "fast": *fast, "create_pr": *createPR}, os.Stdout))
 
 	case "cost":
-		exit(commands.Cost(ctx, ".", os.Stdout))
+		if len(args) == 2 && args[0] == "--run" {
+			exit(commands.CostRun(".", args[1], os.Stdout))
+		} else if len(args) == 0 {
+			exit(commands.Cost(ctx, ".", os.Stdout))
+		} else {
+			fmt.Fprintln(os.Stderr, "usage: orq-lite cost [--run ID]")
+			os.Exit(2)
+		}
+
+	case "checks":
+		exit(commands.ChecksCLI(ctx, ".", args, os.Stdout))
+
+	case "supervisor":
+		exit(commands.SupervisorCLI(ctx, ".", args, os.Stdout))
 
 	case "review":
 		fs := flag.NewFlagSet("review", flag.ExitOnError)
@@ -235,6 +248,9 @@ Commands:
   intake --issue <file> triage a GitHub issue: plan+run, or write missing_info (--no-run)
   watch <project> [--issues] [--prs] [--interval D] poll GitHub; v2 emits idempotent generic flow triggers (--issue-flow, --pr-flow)
   cost                  per-task spend rollup (run.log sessions priced via agtop)
+  cost --run ID         normalized measured tokens, cache reuse and estimated cost
+  checks detect|confirm|status|run repository checks and frozen-tree evidence
+  supervisor decide ID record a checkpoint decision and resume with fresh context
   doctor                preflight packs, team.json, gates, CLIs and credentials before spending
   status [--watch]      print durable workflow runs (--watch refreshes until Ctrl+C)
   serve [--addr A]      web dashboard with live events (default 127.0.0.1:4173)

@@ -30,7 +30,8 @@
           }
         },
         "outputSchema": "schema:ticket-implementation@1"
-      }
+      },
+      "if": "inputs.state.status == \"active\" && inputs.state.next_ticket != null"
     },
     {
       "id": "batch_lint",
@@ -39,7 +40,8 @@
         "argv": {
           "$ref": "config.lint_argv"
         }
-      }
+      },
+      "if": "inputs.state.status == \"active\" && inputs.state.next_ticket != null"
     },
     {
       "id": "batch_tests",
@@ -48,7 +50,8 @@
         "argv": {
           "$ref": "config.test_argv"
         }
-      }
+      },
+      "if": "inputs.state.status == \"active\" && inputs.state.next_ticket != null"
     },
     {
       "id": "batch_qa",
@@ -74,7 +77,8 @@
           "reviewed_revision": "",
           "evidence": []
         }
-      }
+      },
+      "if": "inputs.state.status == \"active\" && inputs.state.next_ticket != null"
     },
     {
       "id": "batch_review_evidence",
@@ -85,7 +89,8 @@
             "$ref": "steps.batch_qa.output"
           }
         ]
-      }
+      },
+      "if": "inputs.state.status == \"active\" && inputs.state.next_ticket != null"
     },
     {
       "id": "batch_review_coverage",
@@ -96,12 +101,13 @@
         },
         "equals": true,
         "message": "Batch QA incomplete; obtain review evidence before repair"
-      }
+      },
+      "if": "inputs.state.status == \"active\" && inputs.state.next_ticket != null"
     },
     {
       "id": "batch_repair",
       "uses": "activity:agent.invoke@1",
-      "if": "steps.batch_review_evidence.output.needs_repair == true",
+      "if": "inputs.state.status == \"active\" && inputs.state.next_ticket != null && (steps.batch_review_evidence.output.needs_repair == true)",
       "while": {
         "condition": "item.continue == true",
         "maxIterations": 3,
@@ -152,7 +158,8 @@
         "argv": {
           "$ref": "config.lint_argv"
         }
-      }
+      },
+      "if": "inputs.state.status == \"active\" && inputs.state.next_ticket != null"
     },
     {
       "id": "final_tests",
@@ -160,6 +167,48 @@
       "with": {
         "argv": {
           "$ref": "config.test_argv"
+        }
+      },
+      "if": "inputs.state.status == \"active\" && inputs.state.next_ticket != null"
+    },
+    {
+      "id": "final_batch_qa",
+      "uses": "activity:agent.invoke@1",
+      "if": "inputs.state.status == \"active\" && inputs.state.next_ticket != null && steps.batch_qa.output.approved != true",
+      "with": {
+        "role": "qa",
+        "vars": {
+          "FEATURES_PATH": {
+            "$ref": "inputs.features_path"
+          }
+        },
+        "context": {
+          "QA_REVIEW": {
+            "$ref": "steps.batch_qa.output"
+          },
+          "IMPLEMENTATION": {
+            "$ref": "steps.implement_batch.output"
+          },
+          "WORKFLOW_STATE": {
+            "$ref": "inputs.state"
+          },
+          "ADVERSARY_REVIEW": "",
+          "CRITIC_REVIEW": "",
+          "VISUAL_REVIEW": ""
+        },
+        "outputSchema": "schema:review-result@2",
+        "fallbackOutput": {
+          "version": 2,
+          "status": "unavailable",
+          "decision": "inconclusive",
+          "approved": false,
+          "summary": "Post-repair batch reviewer unavailable",
+          "findings": [],
+          "limitations": [
+            "The repaired batch did not receive a valid independent QA checkpoint"
+          ],
+          "reviewed_revision": "",
+          "evidence": []
         }
       }
     }
@@ -170,6 +219,9 @@
     },
     "qa": {
       "$ref": "steps.batch_qa.output"
+    },
+    "final_qa": {
+      "$ref": "steps.final_batch_qa.output"
     }
   }
 }
