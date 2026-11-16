@@ -227,11 +227,15 @@ func (s *Store) SetRunStatus(ctx context.Context, runID string, status RunStatus
 func validRunTransition(from, to RunStatus) bool {
 	switch from {
 	case RunPending:
-		return to == RunRunning || to == RunCancelled
+		return to == RunRunning || to == RunCancelled || to == RunPaused
 	case RunRunning:
-		return to == RunSucceeded || to == RunFailed || to == RunCancelled || to == RunNeedsHuman
+		return to == RunSucceeded || to == RunFailed || to == RunCancelled || to == RunNeedsHuman || to == RunWaitingExternal || to == RunPaused
+	case RunWaitingExternal:
+		return to == RunRunning || to == RunCancelled || to == RunNeedsHuman || to == RunFailed || to == RunPaused
+	case RunPaused:
+		return to == RunRunning || to == RunCancelled || to == RunNeedsHuman
 	case RunNeedsHuman:
-		return to == RunRunning || to == RunFailed || to == RunCancelled
+		return to == RunRunning || to == RunFailed || to == RunCancelled || to == RunPaused
 	case RunFailed:
 		return to == RunRunning || to == RunCancelled
 	case RunSucceeded, RunCancelled:
@@ -239,6 +243,37 @@ func validRunTransition(from, to RunStatus) bool {
 	default:
 		return false
 	}
+}
+
+// activateRun fences automatic reconciliation against concurrent operator
+// control. Only an explicit resume may clear a pause or intervention state.
+func (s *Store) activateRun(ctx context.Context, runID string, unpause bool) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var status RunStatus
+	if err = tx.QueryRowContext(ctx, `SELECT status FROM workflow_runs WHERE id=?`, runID).Scan(&status); err != nil {
+		return false, err
+	}
+	if status == RunSucceeded || status == RunCancelled || (!unpause && status != RunRunning && status != RunWaitingExternal && status != RunPending) {
+		return false, nil
+	}
+	if status == RunRunning {
+		return true, tx.Commit()
+	}
+	if !validRunTransition(status, RunRunning) {
+		return false, fmt.Errorf("invalid workflow transition %s -> running", status)
+	}
+	now := s.now().UTC()
+	if _, err = tx.ExecContext(ctx, `UPDATE workflow_runs SET status=?,error='',finished_at=NULL,updated_at=? WHERE id=?`, RunRunning, stamp(now), runID); err != nil {
+		return false, err
+	}
+	if err = insertEvent(ctx, tx, runID, "workflow_running", map[string]any{"error": ""}, now); err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
 }
 
 func insertEvent(ctx context.Context, tx *sql.Tx, runID, event string, fields map[string]any, now time.Time) error {

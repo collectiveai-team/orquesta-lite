@@ -11,7 +11,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-const schemaVersion = 3
+const schemaVersion = 5
 
 type Store struct {
 	db           *sql.DB
@@ -69,6 +69,40 @@ func (s *Store) migrate() error {
 			return fmt.Errorf("workflow: migrate schema 2 -> 3: %w", err)
 		}
 		if _, err := s.db.Exec("PRAGMA user_version=3"); err != nil {
+			return err
+		}
+		version = 3
+	}
+	if version == 3 {
+		tx, err := s.db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if _, err = tx.Exec(schemaV4); err != nil {
+			return fmt.Errorf("workflow: migrate schema 3 -> 4: %w", err)
+		}
+		if _, err = tx.Exec("PRAGMA user_version=4"); err != nil {
+			return err
+		}
+		if err = tx.Commit(); err != nil {
+			return err
+		}
+		version = 4
+	}
+	if version == 4 {
+		tx, err := s.db.Begin()
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		if _, err = tx.Exec(schemaV5); err != nil {
+			return fmt.Errorf("workflow: migrate schema 4 -> 5: %w", err)
+		}
+		if _, err = tx.Exec("PRAGMA user_version=5"); err != nil {
+			return err
+		}
+		if err = tx.Commit(); err != nil {
 			return err
 		}
 	}
@@ -205,7 +239,7 @@ func scanRun(row rowScanner) (*Run, error) {
 // `flow run` can point an operator at the resume that already exists instead
 // of silently starting a second run of work already in flight.
 func (s *Store) LatestUnfinishedRun(ctx context.Context, flowRef string) (*Run, error) {
-	row := s.db.QueryRowContext(ctx, runSelect+` WHERE flow_ref=? AND status IN (?,?,?) ORDER BY started_at DESC, id DESC LIMIT 1`, flowRef, RunPending, RunRunning, RunNeedsHuman)
+	row := s.db.QueryRowContext(ctx, runSelect+` WHERE flow_ref=? AND status IN (?,?,?,?,?) ORDER BY started_at DESC, id DESC LIMIT 1`, flowRef, RunPending, RunRunning, RunNeedsHuman, RunWaitingExternal, RunPaused)
 	return scanRun(row)
 }
 

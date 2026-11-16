@@ -12,25 +12,29 @@ import (
 type RunStatus string
 
 const (
-	RunPending    RunStatus = "pending"
-	RunRunning    RunStatus = "running"
-	RunSucceeded  RunStatus = "succeeded"
-	RunFailed     RunStatus = "failed"
-	RunCancelled  RunStatus = "cancelled"
-	RunNeedsHuman RunStatus = "needs_human"
+	RunPending         RunStatus = "pending"
+	RunRunning         RunStatus = "running"
+	RunWaitingExternal RunStatus = "waiting_external"
+	RunPaused          RunStatus = "paused"
+	RunSucceeded       RunStatus = "succeeded"
+	RunFailed          RunStatus = "failed"
+	RunCancelled       RunStatus = "cancelled"
+	RunNeedsHuman      RunStatus = "needs_human"
 )
 
 type StepStatus string
 
 const (
-	StepPending        StepStatus = "pending"
-	StepReady          StepStatus = "ready"
-	StepRunning        StepStatus = "running"
-	StepSucceeded      StepStatus = "succeeded"
-	StepFailed         StepStatus = "failed"
-	StepSkipped        StepStatus = "skipped"
-	StepOutcomeUnknown StepStatus = "outcome_unknown"
-	StepNeedsHuman     StepStatus = "needs_human"
+	StepPending         StepStatus = "pending"
+	StepReady           StepStatus = "ready"
+	StepRunning         StepStatus = "running"
+	StepWaitingExternal StepStatus = "waiting_external"
+	StepSucceeded       StepStatus = "succeeded"
+	StepRouted          StepStatus = "routed"
+	StepFailed          StepStatus = "failed"
+	StepSkipped         StepStatus = "skipped"
+	StepOutcomeUnknown  StepStatus = "outcome_unknown"
+	StepNeedsHuman      StepStatus = "needs_human"
 )
 
 type AttemptStatus string

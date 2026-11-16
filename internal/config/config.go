@@ -106,13 +106,24 @@ type RateLimitBackoff struct {
 }
 
 type Runtime struct {
-	RetentionRuns    int              `json:"retention_runs,omitempty"`
-	ArtifactMaxBytes int64            `json:"artifact_max_bytes,omitempty"`
-	ProviderBackoff  RateLimitBackoff `json:"provider_backoff,omitempty"`
+	RetentionRuns    int                        `json:"retention_runs,omitempty"`
+	ArtifactMaxBytes int64                      `json:"artifact_max_bytes,omitempty"`
+	ProviderBackoff  RateLimitBackoff           `json:"provider_backoff,omitempty"`
+	ExternalAdapters map[string]ExternalAdapter `json:"external_adapters,omitempty"`
 	// ContextOptimization configures the external tools that shrink what an
 	// agent invocation carries. Both default to enabled-when-available: a
 	// missing tool degrades to an unoptimized run and never fails one.
 	ContextOptimization ContextOptimization `json:"context_optimization,omitempty"`
+}
+
+// ExternalAdapter contains connection metadata only. TokenEnv names an
+// environment variable; credential values never belong in the workflow IR.
+type ExternalAdapter struct {
+	Type      string            `json:"type"`
+	BaseURL   string            `json:"base_url"`
+	CompanyID string            `json:"company_id"`
+	TokenEnv  string            `json:"token_env,omitempty"`
+	Employees map[string]string `json:"employees,omitempty"`
 }
 
 // ContextOptimization holds the two measured context-reduction tools. Neither

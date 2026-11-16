@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -214,7 +215,7 @@ func newWorkflowDeps(projectDir, teamPath, runID string, compiled *compiledWorkf
 		runtimeConfig = partial.Runtime
 	}
 	artifactExecutor := &builtin.ArtifactExecutor{Root: filepath.Join(stateDir, "runs", runID), MaxBytes: runtimeConfig.ArtifactLimit(), AllowedReadRoots: []string{projectDir}}
-	for _, executor := range []activity.Executor{command, gate, builtin.GateAssertExecutor{}, builtin.ReviewAggregateExecutor{}, builtin.PlanOutcomeExecutor{}, builtin.PlanReviewExecutor{}, artifactExecutor, builtin.ApprovalExecutor{}, &builtin.GitCommitExecutor{DefaultDir: projectDir}} {
+	for _, executor := range []activity.Executor{command, gate, builtin.ExternalExecutor{}, builtin.GateAssertExecutor{}, builtin.ReviewAggregateExecutor{}, builtin.PlanOutcomeExecutor{}, builtin.PlanReviewExecutor{}, artifactExecutor, builtin.ApprovalExecutor{}, &builtin.GitCommitExecutor{DefaultDir: projectDir}} {
 		if err = registry.Register(executor); err != nil {
 			logger.Close()
 			store.Close()
@@ -337,7 +338,13 @@ func newWorkflowDeps(projectDir, teamPath, runID string, compiled *compiledWorkf
 		store.Close()
 		return nil, err
 	}
-	return &workflowDeps{runtime: &workflow.Runtime{Store: store, Activities: registry, Catalog: compiled.Catalog, Config: loadGateConfig(teamPath), CompletionValidator: func(ctx context.Context, run *workflow.Run) error {
+	adapters, err := externalAdapters(referencedExternalSettings(compiled.IR, runtimeConfig.ExternalAdapters))
+	if err != nil {
+		logger.Close()
+		store.Close()
+		return nil, err
+	}
+	return &workflowDeps{runtime: &workflow.Runtime{Store: store, Activities: registry, Catalog: compiled.Catalog, ExternalAdapters: adapters, Config: loadGateConfig(teamPath), CompletionValidator: func(ctx context.Context, run *workflow.Run) error {
 		return verifyFinalCandidate(ctx, projectDir, store, run)
 	}}, store: store, logger: logger, registry: registry}, nil
 }
@@ -460,7 +467,7 @@ func (d *workflowDeps) close(ctx context.Context) error {
 // FlowCLI dispatches durable v2 workflow commands.
 func FlowCLI(ctx context.Context, projectDir string, args []string, out io.Writer) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: orq-lite flow <validate|inspect|list|check-result|run|status|resume|cancel|approve|events> <arguments>")
+		return fmt.Errorf("usage: orq-lite flow <validate|inspect|list|check-result|run|status|resume|pause|cancel|external|approve|events> <arguments>")
 	}
 	switch args[0] {
 	case "validate", "inspect":
@@ -482,8 +489,29 @@ func FlowCLI(ctx context.Context, projectDir string, args []string, out io.Write
 		return listWorkflows(projectDir, out)
 	case "check-result":
 		return flowCheckResult(projectDir, args[1:], out)
+	case "external":
+		return flowExternalCLI(ctx, projectDir, args[1:], out)
 	case "run":
 		return flowCLIRun(ctx, projectDir, args[1:], out)
+	case "lookup":
+		if len(args) != 2 {
+			return fmt.Errorf("usage: orq-lite flow lookup <source-key>")
+		}
+		store, err := workflow.Open(filepath.Join(projectDir, ".orquestalite", "workflows.db"))
+		if err != nil {
+			return err
+		}
+		defer store.Close()
+		run, err := store.GetRunBySourceKey(ctx, args[1])
+		if errors.Is(err, sql.ErrNoRows) {
+			return writePrettyJSON(out, nil)
+		}
+		if err != nil {
+			return err
+		}
+		// Keep control-plane lookups bounded: pinned IR and inputs are loaded
+		// by the engine itself, never round-tripped through webhook handlers.
+		return writePrettyJSON(out, map[string]any{"id": run.ID, "sourceKey": run.SourceKey, "status": run.Status, "error": run.Error, "startedAt": run.StartedAt, "updatedAt": run.UpdatedAt, "finishedAt": run.FinishedAt})
 	case "status", "events":
 		if len(args) != 2 {
 			return fmt.Errorf("usage: orq-lite flow %s <run-id>", args[0])
@@ -509,22 +537,40 @@ func FlowCLI(ctx context.Context, projectDir string, args []string, out io.Write
 			return err
 		}
 		approvals, _ := store.ListApprovals(ctx, args[1])
-		return writePrettyJSON(out, map[string]any{"run": run, "steps": steps, "approvals": approvals})
+		external, err := store.ListExternalAttempts(ctx, args[1])
+		if err != nil {
+			return err
+		}
+		return writePrettyJSON(out, map[string]any{"run": run, "steps": steps, "approvals": approvals, "externalAttempts": external})
 	case "resume":
 		if len(args) != 2 {
 			return fmt.Errorf("usage: orq-lite flow resume <run-id>")
 		}
 		return resumeWorkflow(ctx, projectDir, args[1], out)
-	case "cancel":
+	case "pause", "cancel":
 		if len(args) != 2 {
-			return fmt.Errorf("usage: orq-lite flow cancel <run-id>")
+			return fmt.Errorf("usage: orq-lite flow %s <run-id>", args[0])
 		}
 		store, err := workflow.Open(filepath.Join(projectDir, ".orquestalite", "workflows.db"))
 		if err != nil {
 			return err
 		}
 		defer store.Close()
-		return store.SetRunStatus(ctx, args[1], workflow.RunCancelled, "cancelled by operator")
+		runtime := &workflow.Runtime{Store: store}
+		if args[0] == "pause" {
+			return runtime.Pause(ctx, args[1])
+		}
+		// Stop scheduling before loading adapter configuration: a broken or
+		// missing connection must never prevent local cancellation.
+		if err := store.SetRunStatus(ctx, args[1], workflow.RunCancelled, "cancelled by operator"); err != nil {
+			return err
+		}
+		adapters, err := loadExternalAdapters(filepath.Join(projectDir, "team.json"))
+		if err != nil {
+			return err
+		}
+		runtime.ExternalAdapters = adapters
+		return runtime.CancelExternal(ctx, args[1])
 	case "approve":
 		if len(args) != 5 || args[3] != "--decision" {
 			return fmt.Errorf("usage: orq-lite flow approve <run-id> <approval-id> --decision approve|reject")

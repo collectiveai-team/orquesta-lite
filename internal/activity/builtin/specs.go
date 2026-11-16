@@ -10,6 +10,7 @@ import "github.com/collectiveai-team/orquesta-lite/internal/activity"
 // vanished from the listing.
 func Specs() []activity.Spec {
 	return []activity.Spec{
+		ExternalExecutor{}.Spec(),
 		(&AgentExecutor{}).Spec(),
 		(&CommandExecutor{}).Spec(),
 		(&GateExecutor{}).Spec(),

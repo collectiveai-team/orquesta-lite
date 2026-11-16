@@ -53,6 +53,14 @@ The objective must be present in the workflow input/evidence throughout the loop
 
 ## State
 
+External steps use `external.dispatch@1` in the same durable runtime. A stable
+employee assignment is pinned per attempt; notifications enter a durable inbox
+and only authoritative inspection plus flow validation can advance execution.
+The Orquesta host authenticates webhooks and drives startup/periodic
+reconciliation through the engine or CLI bridge. It does not delegate flow
+transitions to Paperclip. See `docs/specs/external-steps.md` and
+`docs/external-steps.md` for the contract and operating commands.
+
 ```text
 .orquestalite/
   packs/<name>/<version>/
