@@ -48,6 +48,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/workflows/{id}", s.handleWorkflow)
 	mux.HandleFunc("GET /api/workflows/{id}/steps", s.handleWorkflowSteps)
 	mux.HandleFunc("GET /api/workflows/{id}/approvals", s.handleWorkflowApprovals)
+	mux.HandleFunc("GET /api/workflows/{id}/external", s.handleWorkflowExternal)
 	static, err := fs.Sub(staticFS, "static")
 	if err != nil {
 		panic(err)

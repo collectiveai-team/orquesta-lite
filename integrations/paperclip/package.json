@@ -1,0 +1,11 @@
+{
+  "name": "orq-lite-paperclip-relay",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {".": "./manifest.mjs"},
+  "files": ["manifest.mjs", "worker.mjs", "relay.mjs", "README.md"],
+  "paperclipPlugin": {"manifest": "./manifest.mjs", "worker": "./worker.mjs"},
+  "scripts": {"test": "node --test relay.test.mjs"},
+  "peerDependencies": {"@paperclipai/plugin-sdk": "*"},
+  "engines": {"node": ">=24.11.0"}
+}

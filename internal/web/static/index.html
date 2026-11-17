@@ -11,7 +11,7 @@
     h1 { font-size:22px; margin:0 } h2 { font-size:14px; color:#98a4bc; text-transform:uppercase; letter-spacing:.08em }
     .pill { border:1px solid #33405a; border-radius:999px; padding:5px 10px; font-size:12px }
     .ok { color:#68d391 } .error { color:#fc8181 } .warn { color:#f6c85f }
-    section { margin-top:28px; background:#11182a; border:1px solid #263149; border-radius:12px; padding:18px }
+    section { margin-top:28px; background:#11182a; border:1px solid #263149; border-radius:12px; padding:18px; overflow-x:auto }
     table { width:100%; border-collapse:collapse; font-size:12px } th,td { padding:10px 8px; border-bottom:1px solid #263149; text-align:left; vertical-align:top }
     th { color:#98a4bc } code { color:#9dd6ff } .empty { color:#748099; padding:12px 0 }
     #events { max-height:260px; overflow:auto; white-space:pre-wrap; color:#aab5cb; font-size:11px }
@@ -20,15 +20,50 @@
 <body>
   <header><h1>orquestalite <span class="warn">v2</span></h1><span id="health" class="pill">checking setup…</span></header>
   <section><h2>Durable workflow runs</h2><div id="runs" class="empty">loading…</div></section>
+  <section><h2>External work and attempts</h2><div id="external" class="empty">loading…</div></section>
   <section><h2>Installed flow catalog</h2><div id="flows" class="empty">loading…</div></section>
   <section><h2>Live runtime events</h2><div id="events"></div></section>
   <script>
     const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     const table = (headers, rows) => rows.length ? `<table><thead><tr>${headers.map(h=>`<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.map(row=>`<tr>${row.map(v=>`<td>${esc(v)}</td>`).join('')}</tr>`).join('')}</tbody></table>` : '<div class="empty">none</div>';
+    const usage = attempt => {
+      const reported = attempt.usage || attempt.result?.usage || attempt.result || {};
+      const amount = reported.costUSD;
+      const cost = amount == null || !Number.isFinite(amount) || amount < 0 ? 'not reported' : `$${amount.toFixed(4)}`;
+      const tokens = value => Number.isInteger(value) && value >= 0 ? value : '—';
+      return `${cost} / ${tokens(reported.inputTokens)} in, ${tokens(reported.outputTokens)} out`;
+    };
+    const elapsed = (start, end) => {
+      const seconds = Math.max(0, Math.floor(((end ? Date.parse(end) : Date.now()) - Date.parse(start)) / 1000));
+      if (!Number.isFinite(seconds)) return '';
+      return seconds < 60 ? `${seconds}s` : seconds < 3600 ? `${Math.floor(seconds / 60)}m ${seconds % 60}s` : `${Math.floor(seconds / 3600)}h ${Math.floor(seconds % 3600 / 60)}m`;
+    };
     async function refresh() {
       const [doctor, workflows, flows] = await Promise.all(['/api/doctor','/api/workflows','/api/flows'].map(path=>fetch(path).then(r=>r.json())));
       const health = document.querySelector('#health'); health.textContent = doctor.ok ? 'setup ready' : 'setup needs attention'; health.className = `pill ${doctor.ok?'ok':'error'}`;
-      document.querySelector('#runs').innerHTML = table(['run','status','flow','updated','error'], (workflows.workflows||[]).map(run=>[run.id,run.status,run.flow_ref,run.updated_at,run.error]));
+      const runs = workflows.workflows || [];
+      document.querySelector('#runs').innerHTML = table(['run','status','flow','updated','error'], runs.map(run=>[run.id,run.status,run.flowRef,run.updatedAt,run.error]));
+      const attempts = (await Promise.all(runs.map(async run => {
+        const response = await fetch(`/api/workflows/${encodeURIComponent(run.id)}/external`);
+        if (!response.ok) return [];
+        const body = await response.json();
+        return (body.attempts || []).map(attempt => ({...attempt, runStatus:run.status}));
+      }))).flat();
+      document.querySelector('#external').innerHTML = table(
+        ['flow run / step','status','employee','issue / run','attempt','waiting','last check','decision','cancellation','cost / tokens'],
+        attempts.map(attempt=>[
+          `${attempt.runId} / ${attempt.stepId}`,
+          attempt.status === 'decided' ? attempt.outcome : ['paused','cancelled','needs_human','failed'].includes(attempt.runStatus) ? attempt.runStatus : 'waiting_external',
+          attempt.employeeId,
+          `${attempt.references?.issueId || 'dispatch pending'} / ${attempt.result?.references?.runId || attempt.references?.runId || '—'}`,
+          `${attempt.number} · ${attempt.id}`,
+          elapsed(attempt.createdAt, attempt.status === 'decided' || attempt.runStatus === 'cancelled' ? attempt.updatedAt : null),
+          attempt.lastCheckedAt || '—',
+          `${attempt.decision || 'waiting'}${attempt.outcome && attempt.outcome !== 'waiting' ? ` (${attempt.outcome})` : ''}`,
+          attempt.cancellation ? `${attempt.cancellation.accepted ? 'accepted' : 'not confirmed'} · ${attempt.cancellation.detail || ''}` : '—',
+          usage(attempt)
+        ])
+      );
       document.querySelector('#flows').innerHTML = table(['flow','pack','roles','inputs'], (flows.flows||[]).map(flow=>[flow.name,flow.pack,flow.roles.join(', '),Object.keys(flow.inputs).join(', ')]));
     }
     refresh().catch(error => { document.querySelector('#health').textContent = error.message; document.querySelector('#health').className='pill error'; });

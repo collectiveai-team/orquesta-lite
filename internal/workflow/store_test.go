@@ -56,7 +56,7 @@ func TestStoreCreateRunStepAttemptAndOutbox(t *testing.T) {
 }
 
 func TestStoreMigratesEverySupportedSchema(t *testing.T) {
-	for _, version := range []int{1, 2} {
+	for _, version := range []int{1, 2, 3, 4} {
 		t.Run(fmt.Sprintf("v%d", version), func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "workflows.db")
 			db, err := sql.Open("sqlite", "file:"+path)
@@ -68,6 +68,16 @@ func TestStoreMigratesEverySupportedSchema(t *testing.T) {
 			}
 			if version >= 2 {
 				if _, err = db.Exec(schemaV2); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if version >= 3 {
+				if _, err = db.Exec(schemaV3); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if version >= 4 {
+				if _, err = db.Exec(schemaV4); err != nil {
 					t.Fatal(err)
 				}
 			}

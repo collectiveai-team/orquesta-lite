@@ -15,11 +15,15 @@ import (
 
 	"github.com/collectiveai-team/orquesta-lite/internal/activity"
 	"github.com/collectiveai-team/orquesta-lite/internal/execlock"
+	"github.com/collectiveai-team/orquesta-lite/internal/external"
 	"github.com/collectiveai-team/orquesta-lite/internal/flow"
 	"github.com/collectiveai-team/orquesta-lite/internal/runid"
 )
 
 var ErrNeedsHuman = errors.New("workflow needs human input")
+
+var ErrWaitingExternal = errors.New("workflow waiting for external work")
+var ErrPaused = errors.New("workflow is paused")
 
 const maxWorkflowValueBytes = 8 << 20
 
@@ -36,9 +40,10 @@ const whileIterationCeiling = 1000
 const whileOutputCapacityHint = 8
 
 type Runtime struct {
-	Store      *Store
-	Activities *activity.Registry
-	Catalog    flow.Catalog
+	Store            *Store
+	Activities       *activity.Registry
+	Catalog          flow.Catalog
+	ExternalAdapters map[string]external.Adapter
 	// Config is the read-only project configuration exposed to flows through
 	// the `config.<key>` reference namespace. The host populates it from an
 	// explicit whitelist; the runtime never writes to it.
@@ -78,6 +83,9 @@ func (r *Runtime) Start(ctx context.Context, ir *flow.IR, options StartOptions) 
 		return nil, err
 	}
 	options.Inputs = bound
+	if options.Inputs == nil {
+		options.Inputs = map[string]any{}
+	}
 	inputsRaw, err := json.Marshal(options.Inputs)
 	if err != nil {
 		return nil, err
@@ -122,9 +130,16 @@ func (r *Runtime) Resume(ctx context.Context, runID string) (*Run, error) {
 		return nil, lockErr
 	}
 	defer release()
+	return r.resumeLocked(ctx, runID, true)
+}
+
+func (r *Runtime) resumeLocked(ctx context.Context, runID string, unpause bool) (*Run, error) {
 	run, err := r.Store.GetRun(ctx, runID)
 	if err != nil {
 		return nil, err
+	}
+	if run.Status == RunPaused && !unpause {
+		return run, nil
 	}
 	if run.Status != RunCancelled {
 		if err := r.reconcileEvidenceApprovals(ctx, run); err != nil {
@@ -153,8 +168,12 @@ func (r *Runtime) Resume(ctx context.Context, runID string) (*Run, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err = r.Store.SetRunStatus(ctx, runID, RunRunning, ""); err != nil {
+	activated, err := r.Store.activateRun(ctx, runID, unpause)
+	if err != nil {
 		return nil, err
+	}
+	if !activated {
+		return r.Store.GetRun(ctx, runID)
 	}
 	if err = r.executeRun(ctx, run, &ir, inputs, policy); err != nil {
 		latest, loadErr := r.Store.GetRun(ctx, runID)
@@ -186,7 +205,7 @@ func (r *Runtime) executeRun(ctx context.Context, run *Run, ir *flow.IR, inputs 
 				return
 			case <-ticker.C:
 				latest, err := r.Store.GetRun(ctx, run.ID)
-				if err != nil || latest.Status == RunCancelled {
+				if err != nil || latest.Status == RunCancelled || latest.Status == RunPaused {
 					stop()
 					return
 				}
@@ -198,6 +217,20 @@ func (r *Runtime) executeRun(ctx context.Context, run *Run, ir *flow.IR, inputs 
 	_, err := state.executeIR(ctx, ir)
 	if ctx.Err() != nil {
 		err = ctx.Err()
+	}
+	if latest, loadErr := r.Store.GetRun(context.Background(), run.ID); loadErr == nil && latest.Status == RunPaused {
+		return ErrPaused
+	}
+	if parent.Err() != nil && r.onlyExternalWorkPending(context.Background(), run.ID) {
+		// A host shutdown while merely inspecting external work must preserve
+		// its recoverable wait, rather than turn process loss into intervention.
+		return r.Store.SetRunStatus(context.Background(), run.ID, RunWaitingExternal, "")
+	}
+	if errors.Is(err, ErrWaitingExternal) {
+		return r.Store.SetRunStatus(context.Background(), run.ID, RunWaitingExternal, "")
+	}
+	if errors.Is(err, ErrPaused) {
+		return err
 	}
 	if errors.Is(err, ErrNeedsHuman) {
 		_ = r.Store.SetRunStatus(context.Background(), run.ID, RunNeedsHuman, err.Error())
@@ -215,6 +248,9 @@ func (r *Runtime) executeRun(ctx context.Context, run *Run, ir *flow.IR, inputs 
 			return err
 		}
 		_ = r.Store.SetRunStatus(context.Background(), run.ID, status, err.Error())
+		if status == RunCancelled {
+			r.cancelExternalForDeadline(context.Background(), run.ID)
+		}
 		return err
 	}
 	if err := r.validateRunEvidence(ctx, run); err != nil {
@@ -354,7 +390,7 @@ func newExecutionState(runtime *Runtime, run *Run, policy Policy, inputs map[str
 
 func (s *executionState) executeIR(ctx context.Context, ir *flow.IR) (map[string]any, error) {
 	for _, step := range ir.Steps {
-		if err := s.checkBudget(ctx); err != nil {
+		if err := s.checkControlBudget(ctx); err != nil {
 			return nil, err
 		}
 		if err := ctx.Err(); err != nil {
@@ -392,6 +428,9 @@ func (s *executionState) executeIR(ctx context.Context, ir *flow.IR) (map[string
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
+			if errors.Is(err, ErrWaitingExternal) || errors.Is(err, ErrPaused) {
+				return nil, err
+			}
 			original := err
 			var handled *handlerHandledError
 			if errors.As(err, &handled) {
@@ -402,6 +441,9 @@ func (s *executionState) executeIR(ctx context.Context, ir *flow.IR) (map[string
 				err = s.runHandler(context.WithoutCancel(ctx), step, "on_error", step.OnError, "")
 			} else {
 				err = nil
+			}
+			if errors.Is(err, ErrWaitingExternal) || errors.Is(err, ErrPaused) {
+				return nil, err
 			}
 			if err != nil {
 				original = errors.Join(original, fmt.Errorf("step %s handler: %w", step.ID, err))
@@ -490,7 +532,7 @@ func (s *executionState) executeForeach(ctx context.Context, step flow.IRStep) (
 				child.index = index
 				child.hasItem = true
 				output, executeErr := child.executeInstance(workerCtx, step, key)
-				if executeErr != nil && workerCtx.Err() == nil && !errors.Is(executeErr, ErrNeedsHuman) {
+				if executeErr != nil && workerCtx.Err() == nil && !errors.Is(executeErr, ErrNeedsHuman) && !errors.Is(executeErr, ErrWaitingExternal) && !errors.Is(executeErr, ErrPaused) {
 					handler := step.OnError
 					kind := "on_error"
 					if errors.Is(executeErr, context.Canceled) || errors.Is(executeErr, context.DeadlineExceeded) {
@@ -729,6 +771,9 @@ func (s *executionState) executeInstance(ctx context.Context, step flow.IRStep, 
 	if stored.Status == StepSkipped {
 		return nil, nil
 	}
+	if stored.Status == StepRouted {
+		return decodeAny(stored.Output)
+	}
 	if stored.Status == StepFailed {
 		return nil, &activity.Error{Class: stored.ErrorClass, Op: step.Uses.String(), Err: fmt.Errorf("persisted terminal failure: %s", stored.Error)}
 	}
@@ -815,6 +860,9 @@ func (s *executionState) executeActivity(ctx context.Context, step flow.IRStep, 
 	if stored.Status == StepNeedsHuman {
 		approval, err := s.runtime.Store.GetApprovalForStep(ctx, stored.ID)
 		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) && step.Activity.Name == "external.dispatch" {
+				return nil, ErrNeedsHuman
+			}
 			return nil, err
 		}
 		if approval.Status == "pending" {
@@ -870,6 +918,9 @@ func (s *executionState) executeActivity(ctx context.Context, step flow.IRStep, 
 		if approval.Status == "rejected" {
 			return nil, fmt.Errorf("approval %s rejected", approval.ID)
 		}
+	}
+	if step.Activity.Name == "external.dispatch" {
+		return s.executeExternal(ctx, step, stored)
 	}
 	if stored.Status == StepRunning || stored.Status == StepOutcomeUnknown {
 		recovered, output, err := s.recoverAttempt(ctx, executor, stored)
@@ -1030,16 +1081,8 @@ func (s *executionState) stepPolicy(step flow.IRStep) (Policy, error) {
 }
 
 func (s *executionState) checkBudget(ctx context.Context) error {
-	if err := ctx.Err(); err != nil {
+	if err := s.checkControlBudget(ctx); err != nil {
 		return err
-	}
-	if current, err := s.runtime.Store.GetRun(ctx, s.run.ID); err != nil {
-		return err
-	} else if current.Status == RunCancelled {
-		return context.Canceled
-	}
-	if deadline, ok := s.policy.deadline(s.run.StartedAt); ok && !s.runtime.now().Before(deadline) {
-		return fmt.Errorf("workflow duration budget exhausted")
 	}
 	usage, err := s.runtime.Store.RunUsage(ctx, s.run.ID)
 	if err != nil {
@@ -1053,6 +1096,25 @@ func (s *executionState) checkBudget(ctx context.Context) error {
 	}
 	if s.policy.MaxCostUSD > 0 && usage.CostUSD >= s.policy.MaxCostUSD {
 		return fmt.Errorf("workflow cost budget exhausted: %.6f >= %.6f", usage.CostUSD, s.policy.MaxCostUSD)
+	}
+	return nil
+}
+
+// Inspection and replay consume no attempt. Only new effects spend execution
+// budgets, while pause, cancellation, and wall deadlines apply to every pass.
+func (s *executionState) checkControlBudget(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if current, err := s.runtime.Store.GetRun(ctx, s.run.ID); err != nil {
+		return err
+	} else if current.Status == RunCancelled {
+		return context.Canceled
+	} else if current.Status == RunPaused {
+		return ErrPaused
+	}
+	if deadline, ok := s.policy.deadline(s.run.StartedAt); ok && !s.runtime.now().Before(deadline) {
+		return fmt.Errorf("workflow duration budget exhausted")
 	}
 	return nil
 }

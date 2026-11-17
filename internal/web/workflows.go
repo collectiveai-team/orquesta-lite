@@ -86,3 +86,25 @@ func (s *Server) handleWorkflowApprovals(w http.ResponseWriter, r *http.Request)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"approvals": approvals})
 }
+
+func (s *Server) handleWorkflowExternal(w http.ResponseWriter, r *http.Request) {
+	store, err := s.openWorkflowStore()
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "workflow store not found"})
+		return
+	}
+	defer store.Close()
+	if _, err := store.GetRun(r.Context(), r.PathValue("id")); errors.Is(err, sql.ErrNoRows) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "workflow not found"})
+		return
+	} else if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	attempts, err := store.ListExternalAttempts(r.Context(), r.PathValue("id"))
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"attempts": attempts})
+}

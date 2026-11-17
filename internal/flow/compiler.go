@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/collectiveai-team/orquesta-lite/internal/external"
 )
 
 type Diagnostic struct{ Severity, Path, Message string }
@@ -128,6 +130,9 @@ func compileDocument(doc *Document, catalog Catalog, stack map[string]bool) (*IR
 					ir.Resources[ref.String()] = digest
 				}
 			}
+			if spec.Name == "external.dispatch" {
+				diagnostics = append(diagnostics, compileExternalStep(path, handler.With, catalog, ir)...)
+			}
 		case "subflow":
 			subdoc, digest, resolveErr := catalog.ResolveDocument(resource)
 			if resolveErr != nil {
@@ -244,6 +249,9 @@ func compileDocument(doc *Document, catalog Catalog, stack map[string]bool) (*IR
 						diagnostics = append(diagnostics, Diagnostic{"error", path + ".with.outputSchema", "agent.invoke requires outputSchema"})
 					}
 				}
+				if spec.Name == "external.dispatch" {
+					diagnostics = append(diagnostics, compileExternalStep(path, step.With, catalog, ir)...)
+				}
 			}
 		case "subflow":
 			subdoc, digest, resolveErr := catalog.ResolveDocument(resource)
@@ -302,6 +310,47 @@ func compileDocument(doc *Document, catalog Catalog, stack map[string]bool) (*IR
 	}
 	ir.Digest = digestBytes(raw)
 	return ir, diagnostics
+}
+
+// External contracts remain data in the pinned IR. Literal validation catches
+// bad routes before a run starts; resolved inputs are validated again at runtime.
+func compileExternalStep(path string, with map[string]Value, catalog Catalog, ir *IR) Diagnostics {
+	var diagnostics Diagnostics
+	for _, name := range []string{"adapter", "employee", "instructions", "completionCondition", "timeoutSeconds"} {
+		if _, exists := with[name]; !exists {
+			diagnostics = append(diagnostics, Diagnostic{"error", path + ".with." + name, "external.dispatch requires " + name})
+		}
+	}
+	allLiteral := true
+	for _, value := range with {
+		_ = walkRefs(value, func(string) error { allLiteral = false; return nil })
+	}
+	if allLiteral {
+		resolved := map[string]any{}
+		for name, value := range with {
+			resolved[name], _ = ResolveValue(value, func(string) (any, bool) { return nil, false })
+		}
+		raw, err := json.Marshal(resolved)
+		if err == nil {
+			_, err = external.DecodeStep(raw)
+		}
+		if err != nil {
+			diagnostics = append(diagnostics, Diagnostic{"error", path + ".with", err.Error()})
+		}
+	}
+	if value, exists := with["outputSchema"]; exists {
+		name, literal := value.Literal.(string)
+		ref, err := ParseResourceRef(name)
+		if !literal || err != nil || ref.Kind != "schema" {
+			diagnostics = append(diagnostics, Diagnostic{"error", path + ".with.outputSchema", "external outputSchema must be a literal schema:name@version ref"})
+		} else if schema, digest, err := catalog.ResolveSchema(ref); err != nil {
+			diagnostics = append(diagnostics, Diagnostic{"error", path + ".with.outputSchema", err.Error()})
+		} else {
+			ir.Schemas[ref.String()] = schema
+			ir.Resources[ref.String()] = digest
+		}
+	}
+	return diagnostics
 }
 
 // checkSubflowCallSite compares a call site's `with` against the inputs the

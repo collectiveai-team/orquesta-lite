@@ -27,7 +27,7 @@ func TestWorkflowAPI(t *testing.T) {
 	}
 	store.Close()
 	server := &Server{Dir: dir}
-	for _, path := range []string{"/api/workflows", "/api/workflows/r1", "/api/workflows/r1/steps", "/api/workflows/r1/approvals"} {
+	for _, path := range []string{"/api/workflows", "/api/workflows/r1", "/api/workflows/r1/steps", "/api/workflows/r1/approvals", "/api/workflows/r1/external"} {
 		recorder := httptest.NewRecorder()
 		server.Handler().ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
 		if recorder.Code != http.StatusOK {
@@ -36,5 +36,15 @@ func TestWorkflowAPI(t *testing.T) {
 		if recorder.Header().Get("Cache-Control") != "no-store" {
 			t.Fatalf("%s missing no-store", path)
 		}
+	}
+	missing := httptest.NewRecorder()
+	server.Handler().ServeHTTP(missing, httptest.NewRequest(http.MethodGet, "/api/workflows/missing/external", nil))
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("missing external workflow code=%d body=%s", missing.Code, missing.Body.String())
+	}
+	mutation := httptest.NewRecorder()
+	server.Handler().ServeHTTP(mutation, httptest.NewRequest(http.MethodPost, "/api/workflows/r1/external", nil))
+	if mutation.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("external dashboard must remain read-only, code=%d", mutation.Code)
 	}
 }

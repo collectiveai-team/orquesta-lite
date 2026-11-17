@@ -1,0 +1,13 @@
+{
+  "runtime": {
+    "external_adapters": {
+      "paperclip": {
+        "type": "paperclip",
+        "base_url": "http://localhost:3100",
+        "company_id": "replace-with-paperclip-company-id",
+        "token_env": "PAPERCLIP_API_KEY",
+        "employees": {"coder": "replace-with-stable-agent-id"}
+      }
+    }
+  }
+}
