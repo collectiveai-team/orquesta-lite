@@ -22,6 +22,7 @@ type blockedPlanFixture struct {
 	schemas      map[string]*flow.Schema
 	roles        map[string]int
 	ticketScopes []string
+	gateArgs     [][]string
 	publication  []string
 }
 
@@ -62,7 +63,7 @@ func (e *blockedPlanExecutor) Execute(_ context.Context, request activity.Reques
 				return activity.Result{}, fmt.Errorf("%s invoked without a ticket", role)
 			}
 			if role == "coder" {
-				output = map[string]any{"ticket_id": ticket["id"], "complete": true, "summary": "Implemented workable ticket", "files_changed": []string{}, "gates": []string{}, "remaining": []string{}}
+				output = map[string]any{"ticket_id": ticket["id"], "complete": true, "summary": "Implemented workable ticket", "files_changed": []string{}, "checks": []any{map[string]any{"argv": []string{"true"}, "exit_code": 0}}, "remaining": []string{}}
 			} else {
 				output = map[string]any{"ticket_id": ticket["id"], "approved": true, "summary": "Workable ticket verified", "findings": []string{}, "gates": []string{}}
 			}
@@ -94,6 +95,12 @@ func (e *blockedPlanExecutor) Execute(_ context.Context, request activity.Reques
 		}
 		output = map[string]any{"committed": true, "blocked": false, "retried": false, "exit_code": 0}
 	case "gate.run":
+		argv, _ := input["argv"].([]any)
+		args := make([]string, 0, len(argv))
+		for _, value := range argv {
+			args = append(args, fmt.Sprint(value))
+		}
+		f.gateArgs = append(f.gateArgs, args)
 		output = map[string]any{"passed": true, "exit_code": 0}
 	case "command.run":
 		argv, _ := input["argv"].([]any)
@@ -146,7 +153,7 @@ func runBlockedPlanFlow(t *testing.T, name string, initial, final map[string]any
 	}
 	fixture := &blockedPlanFixture{initial: initial, final: final, schemas: ir.Schemas, roles: map[string]int{}}
 	registry := activity.NewRegistry()
-	for _, executor := range []activity.Executor{builtin.GateAssertExecutor{}, builtin.ReviewAggregateExecutor{}, builtin.PlanOutcomeExecutor{}, builtin.PlanReviewExecutor{}} {
+	for _, executor := range []activity.Executor{builtin.GateAssertExecutor{}, builtin.ReviewAggregateExecutor{}, builtin.PlanOutcomeExecutor{}, builtin.PlanReviewExecutor{}, builtin.TicketPreflightExecutor{}, builtin.TicketCheckpointExecutor{}, builtin.PlanAdvanceExecutor{}, builtin.MutationConfigExecutor{}} {
 		if err := registry.Register(executor); err != nil {
 			t.Fatal(err)
 		}
@@ -165,6 +172,9 @@ func runBlockedPlanFlow(t *testing.T, name string, initial, final map[string]any
 	defer store.Close()
 	runtime := &workflow.Runtime{Store: store, Activities: registry, Catalog: catalog, Config: map[string]any{"lint_argv": []any{"fixture-lint"}, "test_argv": []any{"fixture-tests"}}}
 	run, runErr := runtime.Start(context.Background(), ir, workflow.StartOptions{RunID: "blocked-plan-fixture", Inputs: inputs, Policy: workflow.Policy{MaxAttempts: 100}})
+	if run == nil {
+		return nil, nil, fixture, runErr
+	}
 	steps, err := store.ListSteps(context.Background(), run.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -216,7 +226,7 @@ func TestBlockedPlanStillRunsIntegratedReview(t *testing.T) {
 				if err != nil || run.Status != workflow.RunSucceeded {
 					t.Fatalf("blocked plan prevented final review: run=%+v err=%v", run, err)
 				}
-				if f.roles["coder"] != 1 || f.roles["ticket_qa"] != 1 || !slices.Equal(f.ticketScopes, []string{"T01"}) {
+				if f.roles["coder"] != 1 || f.roles["ticket_qa"] != 0 || !slices.Equal(f.ticketScopes, []string{"T01"}) {
 					t.Fatalf("empty ticket invoked/committed: roles=%v scopes=%v", f.roles, f.ticketScopes)
 				}
 				for _, role := range []string{"qa", "adversary", "critic", "visual_verifier", "gov_reviewer"} {
@@ -301,5 +311,52 @@ func TestBlockedPlanDirectTicketSubflowGuardsNullTicket(t *testing.T) {
 				t.Fatalf("direct no-ticket call produced effects: roles=%v scopes=%v", f.roles, f.ticketScopes)
 			}
 		})
+	}
+}
+
+func TestFastFactoryCommitsEachTicketAndRunsMutationOnlyAtTheEnd(t *testing.T) {
+	first := blockedPlanTicket("T01")
+	second := blockedPlanTicket("T02", "T01")
+	third := blockedPlanTicket("T03", "T02")
+	initial := blockedPlanState("active", first, []map[string]any{second, third}, []string{}, 5)
+	inputs := map[string]any{"features_path": "features.md", "fast": true, "mutation_enabled": true, "mutation_argv": []string{"mutation-runner"}}
+	run, steps, fixture, err := runBlockedPlanFlow(t, "factory-governed", initial, initial, inputs)
+	if err != nil || run == nil || run.Status != workflow.RunSucceeded {
+		t.Fatalf("fast ticket loop failed: run=%+v err=%v", run, err)
+	}
+	if fixture.roles["ticket_planner"] != 1 || fixture.roles["coder"] != 3 || fixture.roles["ticket_qa"] != 0 || !slices.Equal(fixture.ticketScopes, []string{"T01", "T02", "T03"}) {
+		t.Fatalf("fast mode did not checkpoint each ticket: roles=%v commits=%v", fixture.roles, fixture.ticketScopes)
+	}
+	mutationCalls := 0
+	for _, args := range fixture.gateArgs {
+		if slices.Equal(args, []string{"mutation-runner"}) {
+			mutationCalls++
+		}
+	}
+	if mutationCalls != 1 {
+		t.Fatalf("mutation gate calls=%d, all gates=%v", mutationCalls, fixture.gateArgs)
+	}
+	var integratedIndex, mutationIndex int = -1, -1
+	for index, step := range steps {
+		if step.StepID == "integrated_review" {
+			integratedIndex = index
+		}
+		if step.StepID == "mutation_tests" {
+			mutationIndex = index
+		}
+	}
+	if integratedIndex < 0 || mutationIndex <= integratedIndex {
+		t.Fatalf("mutation gate ran before integrated review: review=%d mutation=%d", integratedIndex, mutationIndex)
+	}
+}
+
+func TestMutationCommandIsValidatedBeforePlanning(t *testing.T) {
+	state := blockedPlanState("active", blockedPlanTicket("T01"), []map[string]any{}, []string{}, 2)
+	run, _, fixture, err := runBlockedPlanFlow(t, "factory-governed", state, state, map[string]any{"features_path": "features.md", "fast": true, "mutation_enabled": true, "mutation_argv": []string{}})
+	if err == nil || run == nil || run.Status == workflow.RunSucceeded {
+		t.Fatalf("empty mutation command was accepted: run=%+v err=%v", run, err)
+	}
+	if fixture.roles["ticket_planner"] != 0 || fixture.roles["coder"] != 0 {
+		t.Fatalf("agent work started before mutation command validation: %v", fixture.roles)
 	}
 }

@@ -107,6 +107,38 @@ func TestPackSyncLeavesAPackThatStillVerifies(t *testing.T) {
 	}
 }
 
+func TestPackSyncMigratesOlderPromptPathsWithoutChangingOtherTeamSettings(t *testing.T) {
+	dir := initProject(t, "v0.10.0")
+	teamPath := filepath.Join(dir, "team.json")
+	team, err := os.ReadFile(teamPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	older := strings.ReplaceAll(string(team), "/development/7/prompts/", "/development/6/prompts/")
+	older = strings.Replace(older, `"conventions_file": "CONVENTIONS.md"`, `"conventions_file": "CUSTOM.md"`, 1)
+	if err := os.WriteFile(teamPath, []byte(older), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var preview bytes.Buffer
+	if err := PackCLI(context.Background(), dir, []string{"sync", "development", "--dry-run"}, &preview); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(preview.String(), "team.json") {
+		t.Fatalf("dry run hid the team migration: %s", preview.String())
+	}
+	stillOlder, _ := os.ReadFile(teamPath)
+	if string(stillOlder) != older {
+		t.Fatal("dry run changed team.json")
+	}
+	if err := PackCLI(context.Background(), dir, []string{"sync", "development"}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	migrated, _ := os.ReadFile(teamPath)
+	if strings.Contains(string(migrated), "/development/6/prompts/") || !strings.Contains(string(migrated), "/development/7/prompts/") || !strings.Contains(string(migrated), `"conventions_file": "CUSTOM.md"`) {
+		t.Fatalf("sync did not safely migrate prompt paths: %s", migrated)
+	}
+}
+
 func TestPackKeepStampsAcknowledgedWithoutTouchingFiles(t *testing.T) {
 	dir := initProject(t, "v0.6.1")
 	target := filepath.Join(installedPackRoot(dir), "prompts", "coder.md")

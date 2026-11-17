@@ -59,13 +59,26 @@ func TestStatusHandlesMissingWorkflowDatabase(t *testing.T) {
 func TestStatusWatchRendersAndStops(t *testing.T) {
 	dir := t.TempDir()
 	createStatusRun(t, dir)
-	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	var out bytes.Buffer
-	if err := StatusWatch(ctx, dir, &out, 10*time.Millisecond); err != nil {
+	out := &cancelAfterSecondStatus{cancel: cancel}
+	if err := StatusWatch(ctx, dir, out, time.Millisecond); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Count(out.String(), "run-123") < 2 || !strings.Contains(out.String(), "\x1b[2J") {
 		t.Fatalf("watch output = %q", out.String())
 	}
+}
+
+type cancelAfterSecondStatus struct {
+	bytes.Buffer
+	cancel context.CancelFunc
+}
+
+func (out *cancelAfterSecondStatus) Write(p []byte) (int, error) {
+	n, err := out.Buffer.Write(p)
+	if strings.Count(out.String(), "run-123") >= 2 {
+		out.cancel()
+	}
+	return n, err
 }

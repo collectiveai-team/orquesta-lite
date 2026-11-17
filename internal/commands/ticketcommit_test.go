@@ -14,7 +14,7 @@ import (
 // the run instead of skipping it.
 func loadDevelopTicket(t *testing.T) map[string]any {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "examples", "governed-pack", "pack", "subflows", "develop-ticket@1.json"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "examples", "governed-pack", "pack", "subflows", "develop-ticket@2.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,8 +50,8 @@ func TestDevelopTicketCommitsAfterTheGatesPass(t *testing.T) {
 		t.Fatalf("want git.commit@1, got %v", commit["uses"])
 	}
 	order := stepOrder(t)
-	if order["commit_ticket"] < order["ticket_tests"] {
-		t.Fatal("the commit must come after the test gate, not before it")
+	if order["commit_ticket"] < order["preflight"] {
+		t.Fatal("the commit must come after focused test report validation")
 	}
 }
 
@@ -75,8 +75,8 @@ func TestCommitStepCarriesApprovalAsDataNotAsACondition(t *testing.T) {
 		t.Fatal("commit_ticket must guard a missing/non-runnable ticket")
 	}
 	with, _ := commit["with"].(map[string]any)
-	if _, ok := with["enabled"]; !ok {
-		t.Fatal("commit_ticket must receive the QA verdict as its `enabled` input")
+	if got, ok := with["enabled"].(map[string]any); !ok || got["$ref"] != "steps.preflight.output.approved" {
+		t.Fatal("commit_ticket must receive focused preflight approval as its enabled input")
 	}
 }
 
@@ -108,6 +108,17 @@ func TestAStillBlockedCommitFailsTheRun(t *testing.T) {
 	with, _ := retry["with"].(map[string]any)
 	if with["requireCommitted"] != true {
 		t.Fatal("commit_retry must set requireCommitted so a still-red hook stops the run")
+	}
+}
+
+func TestHookRepairChecksFocusedTestsBeforeRetryingCommit(t *testing.T) {
+	steps := developTicketSteps(t)
+	order := stepOrder(t)
+	if !(order["repair_commit"] < order["repair_preflight"] && order["repair_preflight"] < order["repair_checks"] && order["repair_checks"] < order["commit_retry"]) {
+		t.Fatalf("hook repair checks must precede commit retry: %v", order)
+	}
+	if steps["repair_preflight"]["uses"] != "activity:ticket.preflight@1" || steps["repair_checks"]["uses"] != "activity:gate.assert@1" {
+		t.Fatalf("hook repair does not validate focused tests: preflight=%v gate=%v", steps["repair_preflight"], steps["repair_checks"])
 	}
 }
 
@@ -274,7 +285,7 @@ func TestIssueFixCommitsAsAFix(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, step := range doc.Steps {
-		if step.Uses != "subflow:develop-ticket@1" {
+		if step.Uses != "subflow:develop-ticket@2" {
 			continue
 		}
 		if step.With["commit_type"] != "fix" {

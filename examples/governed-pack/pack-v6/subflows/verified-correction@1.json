@@ -1,0 +1,241 @@
+{
+  "apiVersion": "orq.dev/v2",
+  "kind": "Subflow",
+  "metadata": {
+    "name": "verified-correction",
+    "version": "1"
+  },
+  "inputs": {
+    "features_path": {
+      "schema": "schema:path@1"
+    },
+    "unit": {
+      "schema": "schema:text@1",
+      "default": "change"
+    },
+    "base": {
+      "schema": "schema:text@1",
+      "default": ""
+    },
+    "event": {
+      "schema": "schema:text@1",
+      "default": "pr"
+    },
+    "max_tier": {
+      "schema": "schema:verified-tier@1",
+      "default": 1
+    },
+    "original_snapshot": {
+      "schema": "schema:verified-object@1"
+    },
+    "review_tasks": {
+      "schema": "schema:verified-strings@1"
+    },
+    "previous_review": {
+      "schema": "schema:verified-object@1"
+    },
+    "check_evidence": {
+      "schema": "schema:verified-object@1"
+    }
+  },
+  "steps": [
+    {
+      "id": "reserve",
+      "uses": "activity:correction.reserve@1",
+      "with": {
+        "unit": {
+          "$ref": "inputs.unit"
+        }
+      }
+    },
+    {
+      "id": "repair",
+      "uses": "activity:agent.invoke@1",
+      "with": {
+        "role": "verified_integrator",
+        "outputSchema": "schema:iteration-result@1",
+        "unit": {
+          "$ref": "inputs.unit"
+        },
+        "correction": true,
+        "fresh_context": true,
+        "context": {
+          "FEATURES_PATH": {
+            "$ref": "inputs.features_path"
+          },
+          "UNIT": {
+            "$ref": "inputs.unit"
+          },
+          "BUDGET": {
+            "$ref": "steps.reserve.output"
+          },
+          "PREVIOUS_REVIEW": {
+            "$ref": "inputs.previous_review"
+          },
+          "CHECK_EVIDENCE": {
+            "$ref": "inputs.check_evidence"
+          }
+        }
+      }
+    },
+    {
+      "id": "candidate",
+      "uses": "activity:checks.prepare@1",
+      "with": {
+        "base": {
+          "$ref": "inputs.original_snapshot.base_revision"
+        }
+      }
+    },
+    {
+      "id": "checks",
+      "uses": "activity:checks.run@1",
+      "with": {
+        "snapshot": {
+          "$ref": "steps.candidate.output.snapshot"
+        },
+        "event": {
+          "$ref": "inputs.event"
+        },
+        "max_tier": {
+          "$ref": "inputs.max_tier"
+        },
+        "report_only": true
+      }
+    },
+    {
+      "id": "failed_checks",
+      "uses": "activity:review.failed_checks@1",
+      "with": {
+        "checks": {
+          "$ref": "steps.checks.output"
+        },
+        "previous": {
+          "$ref": "inputs.previous_review"
+        }
+      }
+    },
+    {
+      "id": "comparisons",
+      "uses": "activity:review.compare@1",
+      "foreach": {
+        "items": {
+          "$ref": "steps.failed_checks.output.check_ids"
+        }
+      },
+      "with": {
+        "snapshot": {
+          "$ref": "steps.candidate.output.snapshot"
+        },
+        "check_id": {
+          "$ref": "item"
+        }
+      }
+    },
+    {
+      "id": "reviews",
+      "uses": "activity:agent.invoke@1",
+      "with": {
+        "role": "verified_reviewer",
+        "outputSchema": "schema:review-claims@3",
+        "snapshot": {
+          "$ref": "steps.candidate.output.snapshot"
+        },
+        "unit": {
+          "$ref": "inputs.unit"
+        },
+        "read_only": true,
+        "fresh_context": true,
+        "context": {
+          "FEATURES_PATH": {
+            "$ref": "inputs.features_path"
+          },
+          "LENS": {
+            "$ref": "item"
+          },
+          "TREE_HASH": {
+            "$ref": "steps.candidate.output.snapshot.tree_hash"
+          },
+          "SNAPSHOT": {
+            "$ref": "steps.candidate.output.snapshot"
+          },
+          "PREVIOUS_REVIEW": {
+            "$ref": "inputs.previous_review"
+          },
+          "COMPARISONS": {
+            "$ref": "steps.comparisons.output"
+          },
+          "CHECK_EVIDENCE": {
+            "$ref": "steps.checks.output"
+          }
+        }
+      },
+      "foreach": {
+        "items": {
+          "$ref": "inputs.review_tasks"
+        }
+      }
+    },
+    {
+      "id": "evaluate",
+      "uses": "activity:review.evaluate@1",
+      "with": {
+        "unit": {
+          "$ref": "inputs.unit"
+        },
+        "snapshot": {
+          "$ref": "steps.candidate.output.snapshot"
+        },
+        "reviews": {
+          "$ref": "steps.reviews.output"
+        },
+        "previous": [
+          {
+            "$ref": "inputs.previous_review"
+          }
+        ]
+      }
+    },
+    {
+      "id": "validate",
+      "uses": "activity:correction.validate@1",
+      "with": {
+        "unit": {
+          "$ref": "inputs.unit"
+        },
+        "snapshot": {
+          "$ref": "steps.candidate.output.snapshot"
+        },
+        "checks": {
+          "$ref": "steps.checks.output"
+        },
+        "review": {
+          "$ref": "steps.evaluate.output.review"
+        }
+      }
+    },
+    {
+      "id": "close",
+      "uses": "activity:unit.close@1",
+      "with": {
+        "unit": {
+          "$ref": "inputs.unit"
+        },
+        "snapshot": {
+          "$ref": "steps.candidate.output.snapshot"
+        },
+        "checks": {
+          "$ref": "steps.checks.output"
+        },
+        "review": {
+          "$ref": "steps.evaluate.output.review"
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "result": {
+      "$ref": "steps.close.output"
+    }
+  }
+}

@@ -215,7 +215,7 @@ func newWorkflowDeps(projectDir, teamPath, runID string, compiled *compiledWorkf
 		runtimeConfig = partial.Runtime
 	}
 	artifactExecutor := &builtin.ArtifactExecutor{Root: filepath.Join(stateDir, "runs", runID), MaxBytes: runtimeConfig.ArtifactLimit(), AllowedReadRoots: []string{projectDir}}
-	for _, executor := range []activity.Executor{command, gate, builtin.ExternalExecutor{}, builtin.GateAssertExecutor{}, builtin.ReviewAggregateExecutor{}, builtin.PlanOutcomeExecutor{}, builtin.PlanReviewExecutor{}, artifactExecutor, builtin.ApprovalExecutor{}, &builtin.GitCommitExecutor{DefaultDir: projectDir}} {
+	for _, executor := range []activity.Executor{command, gate, builtin.ExternalExecutor{}, builtin.GateAssertExecutor{}, builtin.ReviewAggregateExecutor{}, builtin.PlanOutcomeExecutor{}, builtin.PlanReviewExecutor{}, builtin.TicketPreflightExecutor{}, builtin.TicketCheckpointExecutor{}, builtin.PlanAdvanceExecutor{}, builtin.MutationConfigExecutor{}, artifactExecutor, builtin.ApprovalExecutor{}, &builtin.GitCommitExecutor{DefaultDir: projectDir}} {
 		if err = registry.Register(executor); err != nil {
 			logger.Close()
 			store.Close()

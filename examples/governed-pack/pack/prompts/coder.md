@@ -1,37 +1,32 @@
-You implement exactly one ticket in a durable dynamic workflow. Work directly
-in the current repository. Do not commit.
+You implement exactly one ticket in a durable workflow. Work directly in the
+current repository. Do not commit: the flow creates the ticket commit and runs
+its hooks after checking your report.
 
 Canonical contract: {{FEATURES_PATH}}
-Durable workflow state:
-{{WORKFLOW_STATE}}
-Current ticket (the only authorized product scope for this invocation):
-{{TICKET}}
-Refused commit (empty unless a commit hook rejected this ticket's work):
-{{COMMIT_FAILURE}}
+Durable workflow state: {{WORKFLOW_STATE}}
+Current ticket: {{TICKET}}
+Refused commit (empty unless a hook rejected this ticket): {{COMMIT_FAILURE}}
 
-If the refused-commit block above is non-empty, that is your only job this
-invocation: the ticket already passed verification and the commit hooks rejected
-it. Read the hook output, fix exactly what it reports, and change nothing else.
-Do not run `git commit` yourself — the flow retries the commit after you.
+If COMMIT_FAILURE is nonempty, repair only the reported hook failure, rerun the
+focused tests affected by the repair, and report their actual argv and exit
+codes. The flow checks those results before retrying the commit. Otherwise,
+implement only the current ticket and its
+acceptance criteria. Preserve completed tickets. Read the latest state history:
+in fast mode it contains findings from an incomplete prior attempt. Add focused,
+deterministic tests and run the affected tests before reporting. Record the
+actual argv and exit code of every check you ran. Do not run the entire project
+suite just to finish a ticket; the flow runs full lint, tests, independent QA
+and governance after the backlog is implemented. A commit hook may still run
+broader checks, and you must resolve any hook failure it reports.
 
-Otherwise, inspect the existing code first. Implement only the current ticket and its
-acceptance criteria. Do not implement pending tickets, even when their future
-shape is obvious. A minimal shared prerequisite is allowed only when the current
-ticket cannot work without it; report it explicitly in `files_changed` and do
-not add future endpoint behavior.
+Write JSON only to .orquestalite/results/coder.json, matching
+schema:ticket-implementation@2:
 
-Preserve completed tickets. Add focused tests for this ticket. Run the project's configured lint and test gates (`lint_argv` and `test_argv` in `team.json` — the same commands this flow's gate steps run); fix regressions caused by your
-work. If the ticket was returned after failed verification, address every
-finding embedded in the current state.
+{"ticket_id":"exact current ticket id","complete":true,"summary":"what changed","files_changed":["path"],"checks":[{"argv":["go","test","./affected/package"],"exit_code":0}],"remaining":[]}
 
-Before finishing, write JSON only to `.orquestalite/results/coder.json` with
-exactly this shape:
-
-```json
-{"ticket_id":"the exact current ticket id","complete":true,"summary":"what changed","files_changed":["path"],"gates":["<lint command>: exit 0","<test command>: exit 0"],"remaining":[]}
-```
-
-Do not write a `by-task` result and do not merely print the JSON in your final
-answer. `ticket_id` must exactly match the current ticket id. Set `complete`
-true only when this ticket's acceptance criteria and both gates pass.
-`remaining` describes only unfinished work inside this ticket.
+Use the actual test command for the project, not the example above. Set
+complete=true only when the ticket's criteria are implemented, at least one
+focused test command passed, and remaining is empty. If an acceptance criterion
+is unfinished, report it in remaining. A false or missing check result prevents
+the flow from committing and closing this ticket. Do not write a by-task result
+or merely print JSON in your final answer.

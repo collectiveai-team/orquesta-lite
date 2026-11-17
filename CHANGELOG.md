@@ -3,6 +3,12 @@
 All notable changes to orq-lite are recorded here. Versions follow the git
 tags cut as GitHub releases (the binary's `--version` is stamped from the tag).
 
+## Unreleased — development@7
+
+- `factory-governed@2` and `task-list@1` now implement one ticket per durable invocation in both fast modes. Fast mode selects the next ready ticket mechanically; normal mode replans after each ticket.
+- The ticket loop checks focused test results, commits each ticket through Git hooks, and keeps incomplete or uncommitted tickets open. Independent QA and full gates run after ticket delivery; optional mutation argv runs after final review or tests.
+- The built-in pack now installs development@7 and preserves frozen development@6 for pinned runs. `factory-fast@1` remains the legacy one-shot flow.
+
 ## v0.10.0 — durable external steps with Paperclip
 
 ### Added

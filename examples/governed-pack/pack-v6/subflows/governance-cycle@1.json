@@ -1,0 +1,194 @@
+{
+  "apiVersion": "orq.dev/v2",
+  "kind": "Subflow",
+  "metadata": {
+    "name": "governance-cycle",
+    "version": "1"
+  },
+  "inputs": {
+    "features_path": {
+      "schema": "schema:path@1"
+    },
+    "verdict": {
+      "schema": "schema:review-result@2"
+    },
+    "qa_review": {
+      "schema": "schema:review-result@2"
+    },
+    "critic_review": {
+      "schema": "schema:review-result@2"
+    },
+    "adversary_review": {
+      "schema": "schema:review-result@2"
+    },
+    "visual_review": {
+      "schema": "schema:review-result@2"
+    },
+    "plan_outcome": {
+      "schema": "schema:verified-object@1",
+      "default": {
+        "status": "complete",
+        "complete": true,
+        "blocked": [],
+        "pending": [],
+        "summary": "No ticket plan supplied"
+      }
+    }
+  },
+  "steps": [
+    {
+      "id": "review_evidence",
+      "uses": "activity:review.aggregate@1",
+      "with": {
+        "reviews": [
+          {
+            "$ref": "inputs.verdict"
+          }
+        ]
+      }
+    },
+    {
+      "id": "repair",
+      "uses": "activity:agent.invoke@1",
+      "if": "inputs.plan_outcome.status != \"blocked\" && (inputs.verdict.status == \"complete\" && steps.review_evidence.output.needs_repair == true)",
+      "with": {
+        "role": "integrator",
+        "outputSchema": "schema:iteration-result@1",
+        "context": {
+          "FEATURES_PATH": {
+            "$ref": "inputs.features_path"
+          },
+          "FEEDBACK": {
+            "$ref": "inputs.verdict"
+          },
+          "CONFIRMED_FINDINGS": {
+            "$ref": "steps.review_evidence.output.repair_findings"
+          },
+          "PLAN_OUTCOME": {
+            "$ref": "inputs.plan_outcome"
+          }
+        }
+      }
+    },
+    {
+      "id": "lint",
+      "uses": "activity:gate.run@1",
+      "with": {
+        "argv": {
+          "$ref": "config.lint_argv"
+        }
+      }
+    },
+    {
+      "id": "tests",
+      "uses": "activity:gate.run@1",
+      "with": {
+        "argv": {
+          "$ref": "config.test_argv"
+        }
+      }
+    },
+    {
+      "id": "commit",
+      "uses": "activity:git.commit@1",
+      "with": {
+        "type": "fix",
+        "scope": "review",
+        "subject": "repair review findings",
+        "body": "Repairs for the findings confirmed by the integrated review and governance."
+      }
+    },
+    {
+      "id": "repair_commit",
+      "uses": "activity:agent.invoke@1",
+      "if": "steps.commit.output.blocked == true",
+      "with": {
+        "role": "integrator",
+        "outputSchema": "schema:iteration-result@1",
+        "context": {
+          "FEATURES_PATH": {
+            "$ref": "inputs.features_path"
+          },
+          "FEEDBACK": {
+            "$ref": "steps.commit.output"
+          },
+          "CONFIRMED_FINDINGS": {
+            "$ref": "steps.review_evidence.output.repair_findings"
+          },
+          "PLAN_OUTCOME": {
+            "$ref": "inputs.plan_outcome"
+          }
+        }
+      }
+    },
+    {
+      "id": "commit_retry",
+      "uses": "activity:git.commit@1",
+      "if": "steps.commit.output.blocked == true",
+      "with": {
+        "type": "fix",
+        "scope": "review",
+        "subject": "repair review findings",
+        "body": {
+          "$ref": "steps.repair_commit.output.summary"
+        },
+        "requireCommitted": true
+      }
+    },
+    {
+      "id": "governance",
+      "uses": "activity:agent.invoke@1",
+      "with": {
+        "role": "gov_reviewer",
+        "outputSchema": "schema:review-result@2",
+        "vars": {
+          "FEATURES_PATH": {
+            "$ref": "inputs.features_path"
+          }
+        },
+        "context": {
+          "QA_REVIEW": {
+            "$ref": "inputs.qa_review"
+          },
+          "CRITIC_REVIEW": {
+            "$ref": "inputs.critic_review"
+          },
+          "ADVERSARY_REVIEW": {
+            "$ref": "inputs.adversary_review"
+          },
+          "VISUAL_REVIEW": {
+            "$ref": "inputs.visual_review"
+          },
+          "PLAN_OUTCOME": {
+            "$ref": "inputs.plan_outcome"
+          }
+        },
+        "fallbackOutput": {
+          "version": 2,
+          "status": "unavailable",
+          "decision": "inconclusive",
+          "approved": false,
+          "summary": "Governance reviewer unavailable",
+          "findings": [],
+          "limitations": [
+            "Governance did not produce a valid review-result@2 after every contract retry; its verdict is unknown"
+          ],
+          "reviewed_revision": "",
+          "evidence": []
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "pending": false,
+    "approved": {
+      "$ref": "steps.governance.output.approved"
+    },
+    "verdict": {
+      "$ref": "steps.governance.output"
+    },
+    "commit": {
+      "$ref": "steps.commit.output"
+    }
+  }
+}

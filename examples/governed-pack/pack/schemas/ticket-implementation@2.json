@@ -1,0 +1,60 @@
+{
+  "type": "object",
+  "properties": {
+    "ticket_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "complete": {
+      "type": "boolean"
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "files_changed": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "argv": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1
+          },
+          "exit_code": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "argv",
+          "exit_code"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "remaining": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "ticket_id",
+    "complete",
+    "summary",
+    "files_changed",
+    "checks",
+    "remaining"
+  ],
+  "additionalProperties": false
+}

@@ -8,6 +8,12 @@ Implementation result for the current ticket:
 {{IMPLEMENTATION}}
 Verification result for the current ticket:
 {{VERIFICATION}}
+
+In development@7 this verification is a checkpoint built from the coder's
+focused test report and a successful ticket commit, including the project's
+commit hooks. It is not an independent QA review. Full lint, tests and QA run
+after all tickets. Treat a failed checkpoint as unfinished work; never mark a
+ticket complete from the coder's claim alone.
 Append mode: {{APPEND}}
 Triage: {{TRIAGE}}
 
@@ -47,7 +53,9 @@ In `advance` mode:
   transitive dependents), set status `blocked` and next_ticket=null instead.
 - If verification is not approved, keep the same ticket as `next_ticket`, add
   the concrete findings to its acceptance criteria or objective, and increment
-  the revision. You may split it if the findings prove it is too large.
+  the revision. Do not select another ticket while this ticket has uncommitted
+  changes; the next commit would otherwise include the earlier partial work.
+  Once it is committed, you may split or reorder the remaining tickets.
 - Never mark a ticket complete based only on the coder's claim; verification is
   authoritative.
 - Re-emit `iteration_budget` every time (see below). It is not carried forward

@@ -33,7 +33,7 @@ Minimum viable config for the shipped pack:
   "roles": {
     "coder": {
       "agents": ["primary"],
-      "prompt": ".orquestalite/packs/development/5/prompts/coder.md",
+      "prompt": ".orquestalite/packs/development/7/prompts/coder.md",
       "result_path": ".orquestalite/results/coder.json",
       "timeout_seconds": 1800
     }
@@ -48,7 +48,7 @@ Providers: `claude`, `codex`, `gemini`, `opencode`, `agy` (Antigravity). Optiona
 
 `agy` differs from the others in two ways that bite at configuration time. Its model ids carry the reasoning effort as a suffix (`gemini-3.8-flash-high`), and the CLI rejects an `effort` that disagrees with one — set the model or the effort, never both. And its session lives in the macOS Keychain, so `doctor` verifies it by running `agy models` (an authenticated call) instead of looking for a file: a pass means the session is live. A failure warns with the CLI's own message and never fails the preflight, because a closed session and a dead network look identical from outside.
 
-**A flow only resolves the roles it references** — there is no required role set. Read the flow's steps to know which roles to declare. `factory-governed@2` needs `ticket_planner`, `coder`/`batch_coder`, `ticket_qa`, `qa`, `adversary`, `critic`, `integrator`, `gov_reviewer`.
+**A flow only resolves the roles it references** — there is no required role set. Read the flow's steps to know which roles to declare. `factory-governed@2` in development@7 needs `ticket_planner`, `coder`, `qa`, `adversary`, `critic`, `integrator`, `gov_reviewer`, and `visual_verifier`.
 
 `lint_argv` / `test_argv` are argv, not shell strings, because flows run them directly. A flow referencing `config.lint_argv` when the project does not declare it **cannot start** — the pre-run validator rejects it.
 
@@ -68,9 +68,9 @@ Two fields that decide whether a run survives trouble:
 | A PR needs a verdict | `pr-review@1` | `review` |
 | A GitHub issue needs triage then work | `issue-fix@1` | `intake` |
 
-`factory-governed@2` takes `fast` (default **true**): `true` gives the whole backlog to `batch_coder` in one pass; `false` runs one ticket per iteration through `develop-ticket@1`.
+`factory-governed@2` takes `fast` (default **true**). Both values implement and commit one ticket per invocation through `develop-ticket@2`, then run integrated review. `true` advances the next dependency-ready ticket mechanically; `false` invokes the planner after each committed checkpoint. The old single-invocation batch remains only in `factory-fast@1` and frozen older packs.
 
-**That choice is not economic.** Measured on the same spec: batch $30.51 / 94 min, per-ticket $31.63 / 101 min, identical output quality on four independent instruments. Choose on **feedback locality** — per-ticket catches a defect against a small diff attributed to one ticket and re-scopes it through the planner at 89% fidelity; batch delivers findings after dozens of files are written, unattributable, with one repair loop capped for the whole change set. A single long session also costs ~28% more than N short ones for the same work, because a growing prefix is re-read every turn.
+Each ticket coder reports focused test argv and exit codes. `ticket.preflight` checks the report; `git.commit` runs hooks; `ticket.checkpoint` requires a commit. Full lint, tests and independent QA run at the end. Optional mutation testing uses `mutation_enabled=true` and a JSON `mutation_argv` input, for example `'mutation_argv=["mutmut","run"]'`. These modes have not yet been benchmarked against each other; old batch-versus-ticket cost measurements do not predict their relative cost.
 
 ## 3. Running
 

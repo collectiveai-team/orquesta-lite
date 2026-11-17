@@ -1,0 +1,357 @@
+{
+  "apiVersion": "orq.dev/v2",
+  "kind": "Subflow",
+  "metadata": {
+    "name": "integrated-review",
+    "version": "1"
+  },
+  "inputs": {
+    "features_path": {
+      "schema": "schema:path@1"
+    },
+    "require_approval": {
+      "schema": "schema:flag@1",
+      "default": false
+    },
+    "plan_outcome": {
+      "schema": "schema:verified-object@1",
+      "default": {
+        "status": "complete",
+        "complete": true,
+        "blocked": [],
+        "pending": [],
+        "summary": "No ticket plan supplied"
+      }
+    }
+  },
+  "steps": [
+    {
+      "id": "lint",
+      "uses": "activity:gate.run@1",
+      "with": {
+        "argv": {
+          "$ref": "config.lint_argv"
+        }
+      }
+    },
+    {
+      "id": "tests",
+      "uses": "activity:gate.run@1",
+      "with": {
+        "argv": {
+          "$ref": "config.test_argv"
+        }
+      }
+    },
+    {
+      "id": "qa",
+      "uses": "activity:agent.invoke@1",
+      "with": {
+        "role": "qa",
+        "outputSchema": "schema:review-result@2",
+        "vars": {
+          "FEATURES_PATH": {
+            "$ref": "inputs.features_path"
+          }
+        },
+        "fallbackOutput": {
+          "version": 2,
+          "status": "unavailable",
+          "decision": "inconclusive",
+          "approved": false,
+          "summary": "Required reviewer unavailable",
+          "findings": [],
+          "limitations": [
+            "Provider did not produce a valid review checkpoint"
+          ],
+          "reviewed_revision": "",
+          "evidence": []
+        },
+        "context": {
+          "PLAN_OUTCOME": {
+            "$ref": "inputs.plan_outcome"
+          }
+        }
+      }
+    },
+    {
+      "id": "adversary",
+      "uses": "activity:agent.invoke@1",
+      "with": {
+        "role": "adversary",
+        "outputSchema": "schema:review-result@2",
+        "context": {
+          "FEATURES_PATH": {
+            "$ref": "inputs.features_path"
+          },
+          "QA_REVIEW": {
+            "$ref": "steps.qa.output"
+          },
+          "PLAN_OUTCOME": {
+            "$ref": "inputs.plan_outcome"
+          }
+        },
+        "fallbackOutput": {
+          "version": 2,
+          "status": "unavailable",
+          "decision": "inconclusive",
+          "approved": false,
+          "summary": "Required reviewer unavailable",
+          "findings": [],
+          "limitations": [
+            "Provider did not produce a valid review checkpoint"
+          ],
+          "reviewed_revision": "",
+          "evidence": []
+        }
+      }
+    },
+    {
+      "id": "critic",
+      "uses": "activity:agent.invoke@1",
+      "with": {
+        "role": "critic",
+        "outputSchema": "schema:review-result@2",
+        "context": {
+          "FEATURES_PATH": {
+            "$ref": "inputs.features_path"
+          },
+          "QA_REVIEW": {
+            "$ref": "steps.qa.output"
+          },
+          "ADVERSARY_REVIEW": {
+            "$ref": "steps.adversary.output"
+          },
+          "PLAN_OUTCOME": {
+            "$ref": "inputs.plan_outcome"
+          }
+        },
+        "fallbackOutput": {
+          "version": 2,
+          "status": "unavailable",
+          "decision": "inconclusive",
+          "approved": false,
+          "summary": "Required reviewer unavailable",
+          "findings": [],
+          "limitations": [
+            "Provider did not produce a valid review checkpoint"
+          ],
+          "reviewed_revision": "",
+          "evidence": []
+        }
+      }
+    },
+    {
+      "id": "visual_verifier",
+      "uses": "activity:agent.invoke@1",
+      "with": {
+        "role": "visual_verifier",
+        "outputSchema": "schema:review-result@2",
+        "context": {
+          "FEATURES_PATH": {
+            "$ref": "inputs.features_path"
+          },
+          "QA_REVIEW": {
+            "$ref": "steps.qa.output"
+          },
+          "ADVERSARY_REVIEW": {
+            "$ref": "steps.adversary.output"
+          },
+          "CRITIC_REVIEW": {
+            "$ref": "steps.critic.output"
+          },
+          "PLAN_OUTCOME": {
+            "$ref": "inputs.plan_outcome"
+          }
+        },
+        "fallbackOutput": {
+          "version": 2,
+          "status": "unavailable",
+          "decision": "inconclusive",
+          "approved": false,
+          "summary": "Required reviewer unavailable",
+          "findings": [],
+          "limitations": [
+            "Provider did not produce a valid review checkpoint"
+          ],
+          "reviewed_revision": "",
+          "evidence": []
+        }
+      }
+    },
+    {
+      "id": "review_evidence",
+      "uses": "activity:review.aggregate@1",
+      "with": {
+        "reviews": [
+          {
+            "$ref": "steps.qa.output"
+          },
+          {
+            "$ref": "steps.adversary.output"
+          },
+          {
+            "$ref": "steps.critic.output"
+          },
+          {
+            "$ref": "steps.visual_verifier.output"
+          }
+        ]
+      }
+    },
+    {
+      "id": "review_coverage",
+      "uses": "activity:gate.assert@1",
+      "with": {
+        "value": {
+          "$ref": "steps.review_evidence.output.ready"
+        },
+        "equals": true,
+        "message": "Required review incomplete; obtain evidence before repair or approval"
+      },
+      "if": "inputs.require_approval == true && inputs.plan_outcome.status != \"blocked\""
+    },
+    {
+      "id": "integration_repair",
+      "uses": "activity:agent.invoke@1",
+      "while": {
+        "condition": "item.continue == true",
+        "maxIterations": 3,
+        "initial": {
+          "continue": {
+            "$ref": "steps.review_evidence.output.needs_repair"
+          },
+          "summary": "global QA and critic findings must be reconciled",
+          "remaining": [
+            "review QA and critic findings"
+          ]
+        }
+      },
+      "with": {
+        "role": "integrator",
+        "outputSchema": "schema:iteration-result@1",
+        "context": {
+          "FEATURES_PATH": {
+            "$ref": "inputs.features_path"
+          },
+          "FEEDBACK": {
+            "$ref": "item"
+          },
+          "ITERATION": {
+            "$ref": "index"
+          },
+          "CONFIRMED_FINDINGS": {
+            "$ref": "steps.review_evidence.output.repair_findings"
+          },
+          "PLAN_OUTCOME": {
+            "$ref": "inputs.plan_outcome"
+          }
+        }
+      }
+    },
+    {
+      "id": "governance_loop",
+      "uses": "subflow:governance-cycle@1",
+      "while": {
+        "condition": "item.pending == true || (inputs.plan_outcome.status != \"blocked\" && item.approved != true && item.verdict.status == \"complete\" && item.verdict.decision == \"block\")",
+        "maxIterations": 3,
+        "initial": {
+          "pending": true,
+          "approved": false,
+          "verdict": {
+            "version": 2,
+            "status": "partial",
+            "decision": "inconclusive",
+            "approved": false,
+            "summary": "Governance has not run yet",
+            "findings": [],
+            "limitations": [
+              "Governance has not run yet"
+            ],
+            "reviewed_revision": "",
+            "evidence": []
+          }
+        }
+      },
+      "with": {
+        "features_path": {
+          "$ref": "inputs.features_path"
+        },
+        "verdict": {
+          "$ref": "item.verdict"
+        },
+        "qa_review": {
+          "$ref": "steps.qa.output"
+        },
+        "critic_review": {
+          "$ref": "steps.critic.output"
+        },
+        "adversary_review": {
+          "$ref": "steps.adversary.output"
+        },
+        "visual_review": {
+          "$ref": "steps.visual_verifier.output"
+        },
+        "plan_outcome": {
+          "$ref": "inputs.plan_outcome"
+        }
+      }
+    },
+    {
+      "id": "plan_review",
+      "uses": "activity:plan.review@1",
+      "with": {
+        "plan": {
+          "$ref": "inputs.plan_outcome"
+        },
+        "review": {
+          "$ref": "steps.governance_loop.output.last.verdict"
+        }
+      }
+    },
+    {
+      "id": "governance_gate",
+      "uses": "activity:gate.assert@1",
+      "if": "inputs.require_approval == true && inputs.plan_outcome.status != \"blocked\"",
+      "with": {
+        "value": {
+          "$ref": "steps.plan_review.output.approved"
+        },
+        "equals": true,
+        "message": "governance did not approve after the repair cycles"
+      }
+    }
+  ],
+  "outputs": {
+    "qa": {
+      "$ref": "steps.qa.output"
+    },
+    "adversary": {
+      "$ref": "steps.adversary.output"
+    },
+    "critic": {
+      "$ref": "steps.critic.output"
+    },
+    "visual_verifier": {
+      "$ref": "steps.visual_verifier.output"
+    },
+    "repairs": {
+      "$ref": "steps.integration_repair.output"
+    },
+    "governance": {
+      "$ref": "steps.plan_review.output.review"
+    },
+    "governance_rounds": {
+      "$ref": "steps.governance_loop.output"
+    },
+    "approved": {
+      "$ref": "steps.plan_review.output.approved"
+    },
+    "blocked_work": {
+      "$ref": "steps.plan_review.output.blocked"
+    },
+    "plan_outcome": {
+      "$ref": "inputs.plan_outcome"
+    }
+  }
+}

@@ -21,9 +21,29 @@
   "strict_governance": {
    "schema": "schema:flag@1",
    "default": false
+  },
+  "mutation_argv": {
+   "schema": "schema:argv@1",
+   "default": []
+  },
+  "mutation_enabled": {
+   "schema": "schema:flag@1",
+   "default": false
   }
  },
  "steps": [
+  {
+   "id": "mutation_config",
+   "uses": "activity:mutation.config@1",
+   "with": {
+    "enabled": {
+     "$ref": "inputs.mutation_enabled"
+    },
+    "argv": {
+     "$ref": "inputs.mutation_argv"
+    }
+   }
+  },
   {
    "id": "plan_tickets",
    "uses": "activity:agent.invoke@1",
@@ -45,8 +65,7 @@
   },
   {
    "id": "develop_tickets",
-   "uses": "subflow:develop-ticket@1",
-   "if": "inputs.fast != true",
+   "uses": "subflow:develop-ticket@2",
    "while": {
     "condition": "item.state.status == \"active\" && item.state.next_ticket != null",
     "maxIterations": {
@@ -64,19 +83,9 @@
     },
     "state": {
      "$ref": "item.state"
-    }
-   }
-  },
-  {
-   "id": "fast_batch",
-   "uses": "subflow:fast-batch@1",
-   "if": "inputs.fast == true && steps.plan_tickets.output.status == \"active\" && steps.plan_tickets.output.next_ticket != null",
-   "with": {
-    "features_path": {
-     "$ref": "inputs.features_path"
     },
-    "state": {
-     "$ref": "steps.plan_tickets.output"
+    "fast": {
+     "$ref": "inputs.fast"
     }
    }
   },
@@ -89,12 +98,6 @@
     },
     "iterations": {
      "$ref": "steps.develop_tickets.output"
-    },
-    "fast": {
-     "$ref": "inputs.fast"
-    },
-    "batch": {
-     "$ref": "steps.fast_batch.output"
     }
    }
   },
@@ -122,6 +125,16 @@
     },
     "plan_outcome": {
      "$ref": "steps.plan_outcome.output"
+    }
+   }
+  },
+  {
+   "id": "mutation_tests",
+   "uses": "activity:gate.run@1",
+   "if": "inputs.mutation_enabled == true",
+   "with": {
+    "argv": {
+     "$ref": "inputs.mutation_argv"
     }
    }
   },
@@ -170,9 +183,6 @@
   },
   "governance": {
    "$ref": "steps.integrated_review.output"
-  },
-  "batch": {
-   "$ref": "steps.fast_batch.output"
   },
   "plan_outcome": {
    "$ref": "steps.plan_outcome.output"

@@ -25,9 +25,9 @@ const (
 	// inside it in place, which is exactly why a project needs the orq-lite
 	// version recorded alongside it to know its copy has fallen behind.
 	builtinPackName    = "development"
-	builtinPackVersion = "6"
+	builtinPackVersion = "7"
 	// builtinPackSource is the directory the current pack occupies inside the
-	// embedded filesystem. The frozen v5 copy lives beside it under pack-v5.
+	// embedded filesystem. Frozen v5 and v6 copies preserve pinned references.
 	builtinPackSource = "pack"
 )
 
@@ -87,10 +87,7 @@ func writeOrMigrateTeam(path string, defaults []byte) error {
 	if err != nil {
 		return err
 	}
-	oldPrefix := []byte(".orquestalite/packs/development/4/prompts/")
-	newPrefix := []byte(".orquestalite/packs/development/6/prompts/")
-	migrated := bytes.ReplaceAll(existing, oldPrefix, newPrefix)
-	migrated = bytes.ReplaceAll(migrated, []byte(".orquestalite/packs/development/5/prompts/"), newPrefix)
+	migrated := migrateTeamPromptPaths(existing)
 	if bytes.Equal(existing, migrated) {
 		return nil
 	}
@@ -99,6 +96,13 @@ func writeOrMigrateTeam(path string, defaults []byte) error {
 		mode = info.Mode().Perm()
 	}
 	return os.WriteFile(path, migrated, mode)
+}
+
+func migrateTeamPromptPaths(existing []byte) []byte {
+	newPrefix := []byte(".orquestalite/packs/development/7/prompts/")
+	migrated := bytes.ReplaceAll(existing, []byte(".orquestalite/packs/development/4/prompts/"), newPrefix)
+	migrated = bytes.ReplaceAll(migrated, []byte(".orquestalite/packs/development/5/prompts/"), newPrefix)
+	return bytes.ReplaceAll(migrated, []byte(".orquestalite/packs/development/6/prompts/"), newPrefix)
 }
 
 func builtinPackRoot(projectDir string) string {
@@ -112,10 +116,13 @@ func builtinPackRoot(projectDir string) string {
 // files came from a version that did not write them is the one lie that would
 // make the drift check useless.
 //
-// Only the current pack is stamped. The frozen v5 copy exists so pinned refs
-// keep resolving; it does not change, so there is nothing to tell anyone about.
+// Only the current pack is stamped. Frozen v5 and v6 copies keep pinned refs
+// resolving; they do not change, so there is nothing to tell anyone about.
 func installBuiltinDevelopmentPack(projectDir string) error {
 	if err := installEmbeddedPack(projectDir, "pack-v5", "5"); err != nil {
+		return err
+	}
+	if err := installEmbeddedPack(projectDir, "pack-v6", "6"); err != nil {
 		return err
 	}
 	if err := installEmbeddedPack(projectDir, builtinPackSource, builtinPackVersion); err != nil {
