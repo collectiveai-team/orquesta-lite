@@ -9,6 +9,48 @@ tags cut as GitHub releases (the binary's `--version` is stamped from the tag).
 - The ticket loop checks focused test results, commits each ticket through Git hooks, and keeps incomplete or uncommitted tickets open. Independent QA and full gates run after ticket delivery; optional mutation argv runs after final review or tests.
 - The built-in pack now installs development@7 and preserves frozen development@6 for pinned runs. `factory-fast@1` remains the legacy one-shot flow.
 
+## v0.10.0 — durable external steps with Paperclip
+
+### Added
+
+- **External workflow steps:** `activity:external.dispatch@1` assigns work through
+  a configured adapter and suspends the durable flow in `waiting_external`.
+  The engine retains the attempt, deadline, idempotency key and remote
+  references; it verifies the external result before continuing to the next
+  synchronous step.
+- **Paperclip adapter:** assign an issue to a pinned Paperclip agent and project,
+  then inspect the issue, execution run and `orq-result` document. Schema,
+  evidence and completion gates remain owned by orq-lite.
+  `outputMode: "deliverables"` preserves the JSON shape expected by following
+  steps. Reported run cost and tokens are retained without estimating missing
+  values.
+- **Durable callback and recovery controls:** `flow external receive` commits
+  normalized notifications to an inbox; `reconcile` and `watch` inspect
+  Paperclip separately. Duplicate or stale callbacks cannot advance another
+  attempt. Pause, cancel, timeout and retry preserve attempt history; retry
+  waits for confirmed cancellation of active remote work.
+- **Paperclip notification relay and visibility:** the plugin forwards issue and
+  agent-run event identifiers to a host webhook endpoint. The dashboard and
+  workflow API expose external attempts, remote references, decisions and
+  reported usage. A coding-step example is in `examples/paperclip-coding`.
+
+### Upgrade notes and scope
+
+- External steps are opt-in. Configure `runtime.external_adapters.paperclip` in
+  `team.json`, use a Paperclip version that honors issue-create body
+  `idempotencyKey`, and supply credentials through the environment when the
+  Paperclip deployment requires them. See `docs/external-steps.md` and
+  `integrations/paperclip/README.md`.
+- The relay sends notifications to an authenticated host webhook receiver; the
+  orq-lite binary exposes a CLI inbox and reconciler, not an HTTP listener.
+  Callback loss is recoverable through reconciliation.
+- This release includes the **Paperclip adapter only**. The engine has an
+  adapter interface, but other external systems are not configurable through
+  a generic webhook adapter in v0.10.0.
+- Validation against a real Paperclip instance covered dispatch, callbacks,
+  recovery and control states. That test agent reported zero tokens and no
+  cost; positive provider usage was not exercised.
+
 ## v0.9.0 — runtime evidence, bounded review and cost visibility
 
 ### Added
