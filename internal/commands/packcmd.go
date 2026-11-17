@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -252,11 +253,24 @@ func packSync(projectDir string, dryRun bool, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	teamPath := filepath.Join(projectDir, "team.json")
+	team, teamErr := os.ReadFile(teamPath)
+	if teamErr != nil && !os.IsNotExist(teamErr) {
+		return teamErr
+	}
+	migrateTeam := teamErr == nil && !bytes.Equal(team, migrateTeamPromptPaths(team))
+	changeCount := len(changes)
+	if migrateTeam {
+		changeCount++
+	}
 	for _, change := range changes {
 		fmt.Fprintf(out, "  %-40s %s\n", change.Path, change.Kind)
 	}
+	if migrateTeam {
+		fmt.Fprintln(out, "  team.json                                older development prompt paths -> development@7")
+	}
 	if dryRun {
-		fmt.Fprintf(out, "%d file(s) would change; re-run without --dry-run to apply\n", len(changes))
+		fmt.Fprintf(out, "%d file(s) would change; re-run without --dry-run to apply\n", changeCount)
 		return nil
 	}
 	if err = packsync.Apply(root, governedpack.FS, builtinPackSource); err != nil {
@@ -267,11 +281,16 @@ func packSync(projectDir string, dryRun bool, out io.Writer) error {
 	if err = packVerifies(root); err != nil {
 		return fmt.Errorf("pack %s@%s does not verify after sync: %w", builtinPackName, builtinPackVersion, err)
 	}
+	if migrateTeam {
+		if err = writeOrMigrateTeam(teamPath, mustReadAsset("assets/team.json")); err != nil {
+			return err
+		}
+	}
 	version := buildinfo.Version
 	if err = packstate.Save(projectDir, builtinPackName, builtinPackVersion, packstate.Stamp{InstalledFrom: version, Acknowledged: version}); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "synced %s@%s to orq-lite %s (%d file(s) changed)\n", builtinPackName, builtinPackVersion, version, len(changes))
+	fmt.Fprintf(out, "synced %s@%s to orq-lite %s (%d file(s) changed)\n", builtinPackName, builtinPackVersion, version, changeCount)
 	return nil
 }
 

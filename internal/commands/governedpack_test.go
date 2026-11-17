@@ -49,8 +49,13 @@ func TestGovernedFactoryV2DefaultsToFastAndAlwaysRunsIntegratedReview(t *testing
 	if _, ok := conditions["integrated_review"]; !ok {
 		t.Fatal("factory-governed@2 has no integrated_review step")
 	}
-	if conditions["fast_batch"] != "inputs.fast == true && steps.plan_tickets.output.status == \"active\" && steps.plan_tickets.output.next_ticket != null" || conditions["develop_tickets"] != "inputs.fast != true" {
-		t.Fatalf("implementation mode conditions = fast:%q tickets:%q", conditions["fast_batch"], conditions["develop_tickets"])
+	if _, exists := conditions["fast_batch"]; exists || conditions["develop_tickets"] != "" {
+		t.Fatalf("factory must use one durable ticket loop in both modes: %+v", conditions)
+	}
+	for _, step := range doc.Steps {
+		if step.ID == "develop_tickets" && step.Uses != "subflow:develop-ticket@2" {
+			t.Fatalf("develop_tickets uses %s", step.Uses)
+		}
 	}
 }
 

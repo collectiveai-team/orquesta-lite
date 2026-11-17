@@ -14,7 +14,7 @@ import (
 // the run instead of skipping it.
 func loadDevelopTicket(t *testing.T) map[string]any {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "examples", "governed-pack", "pack", "subflows", "develop-ticket@1.json"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "examples", "governed-pack", "pack", "subflows", "develop-ticket@2.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -50,8 +50,8 @@ func TestDevelopTicketCommitsAfterTheGatesPass(t *testing.T) {
 		t.Fatalf("want git.commit@1, got %v", commit["uses"])
 	}
 	order := stepOrder(t)
-	if order["commit_ticket"] < order["ticket_tests"] {
-		t.Fatal("the commit must come after the test gate, not before it")
+	if order["commit_ticket"] < order["preflight"] {
+		t.Fatal("the commit must come after focused test report validation")
 	}
 }
 
@@ -75,8 +75,8 @@ func TestCommitStepCarriesApprovalAsDataNotAsACondition(t *testing.T) {
 		t.Fatal("commit_ticket must guard a missing/non-runnable ticket")
 	}
 	with, _ := commit["with"].(map[string]any)
-	if _, ok := with["enabled"]; !ok {
-		t.Fatal("commit_ticket must receive the QA verdict as its `enabled` input")
+	if got, ok := with["enabled"].(map[string]any); !ok || got["$ref"] != "steps.preflight.output.approved" {
+		t.Fatal("commit_ticket must receive focused preflight approval as its enabled input")
 	}
 }
 
@@ -274,7 +274,7 @@ func TestIssueFixCommitsAsAFix(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, step := range doc.Steps {
-		if step.Uses != "subflow:develop-ticket@1" {
+		if step.Uses != "subflow:develop-ticket@2" {
 			continue
 		}
 		if step.With["commit_type"] != "fix" {

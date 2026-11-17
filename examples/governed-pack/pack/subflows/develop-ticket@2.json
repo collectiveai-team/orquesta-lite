@@ -1,0 +1,210 @@
+{
+  "apiVersion": "orq.dev/v2",
+  "kind": "Subflow",
+  "metadata": {
+    "name": "develop-ticket",
+    "version": "2"
+  },
+  "inputs": {
+    "features_path": {
+      "schema": "schema:path@1"
+    },
+    "state": {
+      "schema": "schema:workflow-state@2"
+    },
+    "commit_type": {
+      "schema": "schema:text@1",
+      "default": "feat"
+    },
+    "fast": {
+      "schema": "schema:flag@1",
+      "default": false
+    }
+  },
+  "steps": [
+    {
+      "id": "implement_ticket",
+      "uses": "activity:agent.invoke@1",
+      "with": {
+        "role": "coder",
+        "outputSchema": "schema:ticket-implementation@2",
+        "context": {
+          "FEATURES_PATH": {
+            "$ref": "inputs.features_path"
+          },
+          "WORKFLOW_STATE": {
+            "$ref": "inputs.state"
+          },
+          "TICKET": {
+            "$ref": "inputs.state.next_ticket"
+          },
+          "COMMIT_FAILURE": ""
+        }
+      },
+      "if": "inputs.state.status == \"active\" && inputs.state.next_ticket != null"
+    },
+    {
+      "id": "preflight",
+      "uses": "activity:ticket.preflight@1",
+      "if": "inputs.state.status == \"active\" && inputs.state.next_ticket != null",
+      "with": {
+        "state": {
+          "$ref": "inputs.state"
+        },
+        "implementation": {
+          "$ref": "steps.implement_ticket.output"
+        }
+      }
+    },
+    {
+      "id": "commit_ticket",
+      "uses": "activity:git.commit@1",
+      "with": {
+        "enabled": {
+          "$ref": "steps.preflight.output.approved"
+        },
+        "type": {
+          "$ref": "inputs.commit_type"
+        },
+        "scope": {
+          "$ref": "inputs.state.next_ticket.id"
+        },
+        "subject": {
+          "$ref": "inputs.state.next_ticket.title"
+        },
+        "body": {
+          "$ref": "steps.implement_ticket.output.summary"
+        }
+      },
+      "if": "inputs.state.status == \"active\" && inputs.state.next_ticket != null"
+    },
+    {
+      "id": "repair_commit",
+      "uses": "activity:agent.invoke@1",
+      "if": "inputs.state.status == \"active\" && inputs.state.next_ticket != null && (steps.commit_ticket.output.blocked == true)",
+      "with": {
+        "role": "coder",
+        "outputSchema": "schema:ticket-implementation@2",
+        "context": {
+          "FEATURES_PATH": {
+            "$ref": "inputs.features_path"
+          },
+          "WORKFLOW_STATE": {
+            "$ref": "inputs.state"
+          },
+          "TICKET": {
+            "$ref": "inputs.state.next_ticket"
+          },
+          "COMMIT_FAILURE": {
+            "$ref": "steps.commit_ticket.output"
+          }
+        },
+        "fallbackOutput": {
+          "ticket_id": "_unavailable",
+          "complete": false,
+          "summary": "coder could not repair the commit hook failure",
+          "files_changed": [],
+          "checks": [],
+          "remaining": [
+            "commit hook failure unresolved"
+          ]
+        }
+      }
+    },
+    {
+      "id": "commit_retry",
+      "uses": "activity:git.commit@1",
+      "if": "inputs.state.status == \"active\" && inputs.state.next_ticket != null && (steps.commit_ticket.output.blocked == true)",
+      "with": {
+        "type": {
+          "$ref": "inputs.commit_type"
+        },
+        "scope": {
+          "$ref": "inputs.state.next_ticket.id"
+        },
+        "subject": {
+          "$ref": "inputs.state.next_ticket.title"
+        },
+        "body": {
+          "$ref": "steps.repair_commit.output.summary"
+        },
+        "requireCommitted": true
+      }
+    },
+    {
+      "id": "checkpoint",
+      "uses": "activity:ticket.checkpoint@1",
+      "if": "inputs.state.status == \"active\" && inputs.state.next_ticket != null",
+      "with": {
+        "preflight": {
+          "$ref": "steps.preflight.output"
+        },
+        "commit": {
+          "$ref": "steps.commit_ticket.output"
+        },
+        "retry": {
+          "$ref": "steps.commit_retry.output"
+        }
+      }
+    },
+    {
+      "id": "update_ticket_plan",
+      "uses": "activity:agent.invoke@1",
+      "if": "inputs.fast != true && inputs.state.status == \"active\" && inputs.state.next_ticket != null",
+      "with": {
+        "role": "ticket_planner",
+        "outputSchema": "schema:workflow-state@2",
+        "context": {
+          "MODE": "advance",
+          "FEATURES_PATH": {
+            "$ref": "inputs.features_path"
+          },
+          "CURRENT_STATE": {
+            "$ref": "inputs.state"
+          },
+          "IMPLEMENTATION": {
+            "$ref": "steps.implement_ticket.output"
+          },
+          "VERIFICATION": {
+            "$ref": "steps.checkpoint.output"
+          },
+          "APPEND": "false",
+          "TRIAGE": ""
+        }
+      }
+    },
+    {
+      "id": "resolve_state",
+      "uses": "activity:plan.advance@1",
+      "if": "inputs.state.status == \"active\" && inputs.state.next_ticket != null",
+      "with": {
+        "state": {
+          "$ref": "inputs.state"
+        },
+        "verification": {
+          "$ref": "steps.checkpoint.output"
+        },
+        "fast": {
+          "$ref": "inputs.fast"
+        },
+        "planned_state": {
+          "$ref": "steps.update_ticket_plan.output"
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "state": {
+      "$ref": "steps.resolve_state.output"
+    },
+    "implementation": {
+      "$ref": "steps.implement_ticket.output"
+    },
+    "verification": {
+      "$ref": "steps.checkpoint.output"
+    },
+    "commit": {
+      "$ref": "steps.commit_ticket.output"
+    }
+  }
+}

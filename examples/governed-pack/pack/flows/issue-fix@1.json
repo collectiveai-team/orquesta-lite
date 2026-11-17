@@ -79,7 +79,7 @@
     },
     {
       "id": "develop_tickets",
-      "uses": "subflow:develop-ticket@1",
+      "uses": "subflow:develop-ticket@2",
       "if": "steps.triage.output.actionable == true && inputs.run == true",
       "while": {
         "condition": "item.state.status == \"active\" && item.state.next_ticket != null",

@@ -1,0 +1,181 @@
+{
+ "apiVersion": "orq.dev/v2",
+ "kind": "Flow",
+ "metadata": {
+  "name": "factory-governed",
+  "version": "2",
+  "policy": "policy:development@3"
+ },
+ "inputs": {
+  "features_path": {
+   "schema": "schema:path@1"
+  },
+  "fast": {
+   "schema": "schema:flag@1",
+   "default": true
+  },
+  "create_pr": {
+   "schema": "schema:flag@1",
+   "default": false
+  },
+  "strict_governance": {
+   "schema": "schema:flag@1",
+   "default": false
+  }
+ },
+ "steps": [
+  {
+   "id": "plan_tickets",
+   "uses": "activity:agent.invoke@1",
+   "with": {
+    "role": "ticket_planner",
+    "outputSchema": "schema:workflow-state@2",
+    "vars": {
+     "MODE": "initial",
+     "FEATURES_PATH": {
+      "$ref": "inputs.features_path"
+     },
+     "CURRENT_STATE": "{}",
+     "IMPLEMENTATION": "{}",
+     "VERIFICATION": "{}",
+     "APPEND": "false",
+     "TRIAGE": ""
+    }
+   }
+  },
+  {
+   "id": "develop_tickets",
+   "uses": "subflow:develop-ticket@1",
+   "if": "inputs.fast != true",
+   "while": {
+    "condition": "item.state.status == \"active\" && item.state.next_ticket != null",
+    "maxIterations": {
+     "$ref": "item.state.iteration_budget"
+    },
+    "initial": {
+     "state": {
+      "$ref": "steps.plan_tickets.output"
+     }
+    }
+   },
+   "with": {
+    "features_path": {
+     "$ref": "inputs.features_path"
+    },
+    "state": {
+     "$ref": "item.state"
+    }
+   }
+  },
+  {
+   "id": "fast_batch",
+   "uses": "subflow:fast-batch@1",
+   "if": "inputs.fast == true && steps.plan_tickets.output.status == \"active\" && steps.plan_tickets.output.next_ticket != null",
+   "with": {
+    "features_path": {
+     "$ref": "inputs.features_path"
+    },
+    "state": {
+     "$ref": "steps.plan_tickets.output"
+    }
+   }
+  },
+  {
+   "id": "plan_outcome",
+   "uses": "activity:plan.outcome@1",
+   "with": {
+    "initial": {
+     "$ref": "steps.plan_tickets.output"
+    },
+    "iterations": {
+     "$ref": "steps.develop_tickets.output"
+    },
+    "fast": {
+     "$ref": "inputs.fast"
+    },
+    "batch": {
+     "$ref": "steps.fast_batch.output"
+    }
+   }
+  },
+  {
+   "id": "ticket_plan_complete",
+   "uses": "activity:gate.assert@1",
+   "if": "steps.plan_outcome.output.status != \"blocked\"",
+   "with": {
+    "value": {
+     "$ref": "steps.plan_outcome.output.complete"
+    },
+    "equals": true,
+    "message": "the ticket loop ended with runnable work still incomplete"
+   }
+  },
+  {
+   "id": "integrated_review",
+   "uses": "subflow:integrated-review@1",
+   "with": {
+    "features_path": {
+     "$ref": "inputs.features_path"
+    },
+    "require_approval": {
+     "$ref": "inputs.strict_governance"
+    },
+    "plan_outcome": {
+     "$ref": "steps.plan_outcome.output"
+    }
+   }
+  },
+  {
+   "id": "push_branch",
+   "uses": "activity:command.run@1",
+   "if": "inputs.create_pr == true",
+   "with": {
+    "argv": [
+     "git",
+     "push",
+     "-u",
+     "origin",
+     "HEAD"
+    ]
+   }
+  },
+  {
+   "id": "publish_pr",
+   "uses": "activity:command.run@1",
+   "if": "inputs.create_pr == true && steps.plan_outcome.output.complete == true && steps.integrated_review.output.approved == true",
+   "with": {
+    "argv": [
+     "sh",
+     "-c",
+     "gh pr create --fill --head \"$(git branch --show-current)\""
+    ]
+   }
+  },
+  {
+   "id": "publish_draft_pr",
+   "uses": "activity:command.run@1",
+   "if": "inputs.create_pr == true && (steps.plan_outcome.output.complete != true || steps.integrated_review.output.approved != true)",
+   "with": {
+    "argv": [
+     "sh",
+     "-c",
+     "gh pr create --fill --draft --head \"$(git branch --show-current)\""
+    ]
+   }
+  }
+ ],
+ "outputs": {
+  "ticket_iterations": {
+   "$ref": "steps.develop_tickets.output"
+  },
+  "governance": {
+   "$ref": "steps.integrated_review.output"
+  },
+  "batch": {
+   "$ref": "steps.fast_batch.output"
+  },
+  "plan_outcome": {
+   "$ref": "steps.plan_outcome.output"
+  }
+ }
+}

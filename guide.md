@@ -261,7 +261,7 @@ ambiguous. Initialization creates:
 
 - `team.json`, containing provider-backed agents, dynamic roles, and argv
   quality gates;
-- `.orquestalite/packs/development/5`, the exact built-in verified development
+- `.orquestalite/packs/development/7`, the exact built-in verified development
   pack embedded in the binary;
 - `.orquestalite/results/`, for latest role results and immutable archives;
 - ignore rules for local runtime state and language build artifacts.
@@ -297,7 +297,7 @@ development/task-list@1
 Pin both versions when exact reproducibility matters:
 
 ```text
-development@5/task-list@1
+development@7/task-list@1
 ```
 
 ## 2. Prove the baseline is green
@@ -383,7 +383,7 @@ role set.
   "roles": {
     "coder": {
       "agents": ["primary", "reviewer"],
-      "prompt": ".orquestalite/packs/development/5/prompts/coder.md",
+      "prompt": ".orquestalite/packs/development/7/prompts/coder.md",
       "result_path": ".orquestalite/results/coder.json",
       "timeout_seconds": 1800
     }
@@ -461,16 +461,16 @@ converge better than asking each role to infer the project from nearby files.
 ## 4. Choose the development flow
 
 > Confirm with the human: does this run ship the change or only produce a
-> review, and is the objective small enough for one batch (`fast=true`)?
+> review, and should the planner reconsider the remaining tickets after each commit (`fast=false`)?
 
-The built-in `development@5` pack contains:
+The built-in `development@7` pack contains:
 
 | Flow | Purpose |
 |---|---|
 | `plan-tickets@1` | Produce or extend a bounded ticket plan. |
-| `task-list@1` | Plan, implement, ticket-QA, and run final deterministic gates. |
-| `factory-fast@1` | Implement a feature batch with one integrated QA/repair pass. |
-| `factory-governed@2` | Implement as a batch by default (or ticket-by-ticket), then always execute integrated governance. |
+| `task-list@1` | Plan, implement and commit each ticket, then run final deterministic gates. |
+| `factory-fast@1` | Legacy one-shot batch with one QA/repair pass. |
+| `factory-governed@2` | Implement and commit each ticket, then execute integrated governance. |
 | `review-existing@1` | Run integrated QA, adversary, critic, repair, and governance over an existing change. |
 | `issue-fix@1` | Triage and optionally repair an issue. |
 | `pr-review@1` | Review a PR and optionally publish the verdict. |
@@ -489,11 +489,12 @@ There is no `--engine` flag and no alternate scheduler behind these aliases.
 
 ### Recommended two-loop workflow
 
-For most development work, separate throughput from integrated criticism:
+For most development work, separate ticket delivery from integrated criticism:
 
-1. Run the delivery phase: the default batch coder maximizes throughput, while
-   `--fast=false` uses bounded coder/ticket-QA iterations for larger objectives.
-   Deterministic gates protect both paths.
+1. Run the delivery phase: each ticket has its own coder invocation, focused
+   tests, commit and hooks. `--fast=false` also asks the planner to reconsider
+   the remaining plan after each checkpoint. The default `fast=true` advances
+   the dependency-ready frontier mechanically.
 2. After the complete change exists, run an integrated review loop. QA,
    adversary, and critic inspect the assembled system; the integrator converts
    their findings into repairs; governance decides whether another bounded
@@ -546,17 +547,20 @@ development misses.
 
 ### Implementation mode
 
-`factory-governed@2` defaults to `fast=true`: one `batch_coder` implements the
-bounded objective and an initial QA/repair pass checks the assembled change.
-The full integrated QA/adversary/critic/governance phase then runs
-unconditionally. Fast changes implementation granularity; it never weakens the
-shipping gate.
+`factory-governed@2` defaults to `fast=true`. Each invocation receives one
+ticket and has its own timeout. The coder runs focused tests; the flow checks
+the structured report, creates a ticket commit and handles hook failures before
+closing the checkpoint. Fast mode selects the next ready ticket mechanically.
+Use `orq-lite factory features.md --fast=false` when a planner should split,
+reorder or block work after each ticket. This adds a planning invocation after
+each checkpoint. Neither mode runs independent ticket QA or repeats the full
+suite for every ticket. Both run the complete integrated review at the end.
 
-Use `orq-lite factory features.md --fast=false` when the objective is too large
-or risky for one batch and needs the coder/ticket-QA loop. Both modes finish
-through the same integrated governance. The separate `factory-fast@1` flow is
-the lighter, non-governed option and should receive a `review-existing@1` run
-before shipping.
+To run a configured mutation command after integrated review, pass
+`mutation_enabled=true` and a JSON argv array such as
+`'mutation_argv=["mutmut","run"]'`. A nonzero exit fails the run. The separate
+`factory-fast@1` flow retains its historical one-shot behavior and should
+receive a `review-existing@1` run before shipping.
 
 ## 5. Write an objective that survives ticket decomposition
 
@@ -592,8 +596,8 @@ Run:
 orq-lite doctor
 orq-lite pack list
 orq-lite flow list
-orq-lite flow validate development@5/factory-governed@2
-orq-lite flow inspect development@5/factory-governed@2
+orq-lite flow validate development@7/factory-governed@2
+orq-lite flow inspect development@7/factory-governed@2
 git status --short
 ```
 
@@ -616,7 +620,7 @@ Use a source key whenever the work comes from a stable external object such as
 an issue, PR, automation delivery, or objective ID:
 
 ```bash
-orq-lite flow run development@5/factory-governed@2 \
+orq-lite flow run development@7/factory-governed@2 \
   --source-key=objective:customer-import-v2 \
   features_path=features.md \
   create_pr=false
@@ -720,8 +724,8 @@ After changing any resource in that pack:
 ```bash
 python3 examples/governed-pack/regen-digests.py
 orq-lite pack install examples/governed-pack/pack
-orq-lite flow validate development@6/factory-governed@2
-orq-lite flow inspect development@6/factory-governed@2
+orq-lite flow validate development@7/factory-governed@2
+orq-lite flow inspect development@7/factory-governed@2
 ```
 
 Review every manifest digest change. Pack installation rejects missing files,
@@ -760,6 +764,11 @@ orq-lite pack sync development --dry-run   # what would change
 orq-lite pack sync development             # take this binary's copy
 orq-lite pack keep development             # stay put until the next orq-lite update
 ```
+
+When syncing development@7, `pack sync --dry-run` reports any older built-in
+prompt paths in `team.json`; the actual sync migrates those paths to v7 while
+preserving other team settings. Pinned development@5 and @6 packs remain
+installed for historical runs.
 
 A binary built without release ldflags reports version `dev` and never blocks.
 

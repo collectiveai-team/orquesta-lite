@@ -6,5 +6,5 @@ import "embed"
 
 // FS contains the complete, digest-verified development pack.
 //
-//go:embed pack pack-v5
+//go:embed pack pack-v5 pack-v6
 var FS embed.FS

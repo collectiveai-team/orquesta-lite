@@ -23,7 +23,7 @@
       "uses": "activity:agent.invoke@1",
       "with": {
         "role": "coder",
-        "outputSchema": "schema:ticket-implementation@1",
+        "outputSchema": "schema:ticket-implementation@2",
         "context": {
           "FEATURES_PATH": {
             "$ref": "inputs.features_path"
@@ -110,7 +110,7 @@
       "if": "inputs.state.status == \"active\" && inputs.state.next_ticket != null && (steps.commit_ticket.output.blocked == true)",
       "with": {
         "role": "coder",
-        "outputSchema": "schema:ticket-implementation@1",
+        "outputSchema": "schema:ticket-implementation@2",
         "context": {
           "FEATURES_PATH": {
             "$ref": "inputs.features_path"
@@ -126,14 +126,14 @@
           }
         },
         "fallbackOutput": {
-          "ticket_id": "",
+          "ticket_id": "_unavailable",
           "complete": false,
           "summary": "coder agent failed while resolving the commit hook failure",
           "files_changed": [],
-          "gates": [],
           "remaining": [
             "the commit hook failure was not resolved"
-          ]
+          ],
+          "checks": []
         }
       }
     },

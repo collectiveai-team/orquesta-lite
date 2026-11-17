@@ -1,0 +1,214 @@
+{
+  "apiVersion": "orq.dev/v2",
+  "kind": "Subflow",
+  "metadata": {
+    "name": "verified-unit",
+    "version": "1"
+  },
+  "inputs": {
+    "features_path": {
+      "schema": "schema:path@1"
+    },
+    "unit": {
+      "schema": "schema:text@1",
+      "default": "change"
+    },
+    "base": {
+      "schema": "schema:text@1",
+      "default": ""
+    },
+    "event": {
+      "schema": "schema:text@1",
+      "default": "pr"
+    },
+    "max_tier": {
+      "schema": "schema:verified-tier@1",
+      "default": 1
+    }
+  },
+  "steps": [
+    {
+      "id": "candidate",
+      "uses": "activity:checks.prepare@1",
+      "with": {
+        "base": {
+          "$ref": "inputs.base"
+        }
+      }
+    },
+    {
+      "id": "risk",
+      "uses": "activity:risk.classify@1",
+      "with": {
+        "unit": {
+          "$ref": "inputs.unit"
+        },
+        "snapshot": {
+          "$ref": "steps.candidate.output.snapshot"
+        }
+      }
+    },
+    {
+      "id": "checks",
+      "uses": "activity:checks.run@1",
+      "with": {
+        "snapshot": {
+          "$ref": "steps.candidate.output.snapshot"
+        },
+        "event": {
+          "$ref": "inputs.event"
+        },
+        "max_tier": {
+          "$ref": "inputs.max_tier"
+        },
+        "report_only": true
+      }
+    },
+    {
+      "id": "failed_checks",
+      "uses": "activity:review.failed_checks@1",
+      "with": {
+        "checks": {
+          "$ref": "steps.checks.output"
+        }
+      }
+    },
+    {
+      "id": "comparisons",
+      "uses": "activity:review.compare@1",
+      "foreach": {
+        "items": {
+          "$ref": "steps.failed_checks.output.check_ids"
+        }
+      },
+      "with": {
+        "snapshot": {
+          "$ref": "steps.candidate.output.snapshot"
+        },
+        "check_id": {
+          "$ref": "item"
+        }
+      }
+    },
+    {
+      "id": "reviews",
+      "uses": "activity:agent.invoke@1",
+      "with": {
+        "role": "verified_reviewer",
+        "outputSchema": "schema:review-claims@3",
+        "snapshot": {
+          "$ref": "steps.candidate.output.snapshot"
+        },
+        "unit": {
+          "$ref": "inputs.unit"
+        },
+        "read_only": true,
+        "fresh_context": true,
+        "context": {
+          "FEATURES_PATH": {
+            "$ref": "inputs.features_path"
+          },
+          "LENS": {
+            "$ref": "item"
+          },
+          "TREE_HASH": {
+            "$ref": "steps.candidate.output.snapshot.tree_hash"
+          },
+          "SNAPSHOT": {
+            "$ref": "steps.candidate.output.snapshot"
+          },
+          "COMPARISONS": {
+            "$ref": "steps.comparisons.output"
+          },
+          "CHECK_EVIDENCE": {
+            "$ref": "steps.checks.output"
+          }
+        }
+      },
+      "foreach": {
+        "items": {
+          "$ref": "steps.risk.output.review_tasks"
+        }
+      }
+    },
+    {
+      "id": "evaluate",
+      "uses": "activity:review.evaluate@1",
+      "with": {
+        "unit": {
+          "$ref": "inputs.unit"
+        },
+        "snapshot": {
+          "$ref": "steps.candidate.output.snapshot"
+        },
+        "reviews": {
+          "$ref": "steps.reviews.output"
+        }
+      }
+    },
+    {
+      "id": "close",
+      "uses": "activity:unit.close@1",
+      "with": {
+        "unit": {
+          "$ref": "inputs.unit"
+        },
+        "snapshot": {
+          "$ref": "steps.candidate.output.snapshot"
+        },
+        "checks": {
+          "$ref": "steps.checks.output"
+        },
+        "review": {
+          "$ref": "steps.evaluate.output.review"
+        }
+      },
+      "if": "steps.evaluate.output.needs_decision == true || (steps.evaluate.output.needs_repair != true && steps.checks.output.passed == true)"
+    },
+    {
+      "id": "correct",
+      "uses": "subflow:verified-correction@1",
+      "if": "steps.evaluate.output.needs_decision != true && (steps.evaluate.output.needs_repair == true || steps.checks.output.passed != true)",
+      "with": {
+        "features_path": {
+          "$ref": "inputs.features_path"
+        },
+        "unit": {
+          "$ref": "inputs.unit"
+        },
+        "base": {
+          "$ref": "inputs.base"
+        },
+        "event": {
+          "$ref": "inputs.event"
+        },
+        "max_tier": {
+          "$ref": "inputs.max_tier"
+        },
+        "original_snapshot": {
+          "$ref": "steps.candidate.output.snapshot"
+        },
+        "review_tasks": {
+          "$ref": "steps.risk.output.review_tasks"
+        },
+        "previous_review": {
+          "$ref": "steps.evaluate.output.review"
+        },
+        "check_evidence": {
+          "$ref": "steps.checks.output"
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "initial": {
+      "$ref": "steps.close.output"
+    },
+    "correction": {
+      "$ref": "steps.correct.output"
+    },
+    "risk": {
+      "$ref": "steps.risk.output.decision"
+    }
+  }
+}

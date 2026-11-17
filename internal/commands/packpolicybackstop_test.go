@@ -41,13 +41,13 @@ func TestGovernedPackAttemptBackstopExceedsItsOwnLoopCeiling(t *testing.T) {
 	}
 
 	// What one pass of the ticket loop costs, counted from the subflow rather
-	// than hardcoded, so adding a role to develop-ticket@1 moves this floor.
+	// than hardcoded, so adding a role to develop-ticket@2 moves this floor.
 	var developTicket struct {
 		Steps []struct {
 			Uses string `json:"uses"`
 		} `json:"steps"`
 	}
-	readPackJSON(t, filepath.Join(root, "subflows", "develop-ticket@1.json"), &developTicket)
+	readPackJSON(t, filepath.Join(root, "subflows", "develop-ticket@2.json"), &developTicket)
 	agentsPerPass := 0
 	for _, step := range developTicket.Steps {
 		if step.Uses == "activity:agent.invoke@1" {
@@ -55,7 +55,7 @@ func TestGovernedPackAttemptBackstopExceedsItsOwnLoopCeiling(t *testing.T) {
 		}
 	}
 	if agentsPerPass == 0 {
-		t.Fatal("develop-ticket@1 declares no agent steps; the derivation below is meaningless")
+		t.Fatal("develop-ticket@2 declares no agent steps; the derivation below is meaningless")
 	}
 
 	var policy struct {

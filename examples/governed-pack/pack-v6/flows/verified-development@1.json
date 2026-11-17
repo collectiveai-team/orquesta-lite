@@ -1,0 +1,159 @@
+{
+  "apiVersion": "orq.dev/v2",
+  "kind": "Flow",
+  "metadata": {
+    "name": "verified-development",
+    "version": "1",
+    "policy": "policy:development@3"
+  },
+  "verification": {
+    "version": 1,
+    "checks": ".orquestalite/checks.json",
+    "risk": {
+      "version": "1",
+      "sensitive_paths": [
+        "**/auth/**",
+        "**/payments/**",
+        "**/migrations/**",
+        "**/contracts/**",
+        "**/concurrency/**"
+      ],
+      "standard_lines": 50,
+      "high_lines": 400
+    },
+    "correction": {
+      "max_seconds": 900,
+      "max_tokens": 100000,
+      "max_tool_calls": 30,
+      "max_inconclusive": 2
+    },
+    "prompt_budgets": {
+      "verified_coder": {
+        "max_tokens": 16384,
+        "baseline_tokens": 4096,
+        "max_growth_percent": 10
+      },
+      "verified_integrator": {
+        "max_tokens": 16384,
+        "baseline_tokens": 4096,
+        "max_growth_percent": 10
+      },
+      "verified_reviewer": {
+        "max_tokens": 16384,
+        "baseline_tokens": 4096,
+        "max_growth_percent": 10
+      }
+    },
+    "supervision": {
+      "max_tool_calls": 20,
+      "max_exploratory_reads": 5,
+      "max_nonmechanical_edits": 2
+    },
+    "roles": {
+      "verified_coder": {
+        "purpose": "implementation",
+        "class": "standard",
+        "models": {
+          "codex_terra": "gpt-5.6-terra"
+        }
+      },
+      "verified_integrator": {
+        "purpose": "implementation",
+        "class": "standard",
+        "models": {
+          "codex_terra": "gpt-5.6-terra"
+        }
+      },
+      "verified_reviewer": {
+        "purpose": "review",
+        "class": "standard",
+        "models": {
+          "codex_terra": "gpt-5.6-terra"
+        }
+      }
+    }
+  },
+  "inputs": {
+    "features_path": {
+      "schema": "schema:path@1"
+    },
+    "base": {
+      "schema": "schema:text@1",
+      "default": ""
+    },
+    "event": {
+      "schema": "schema:text@1",
+      "default": "pr"
+    },
+    "max_tier": {
+      "schema": "schema:verified-tier@1",
+      "default": 1
+    },
+    "unit": {
+      "schema": "schema:text@1",
+      "default": "change"
+    }
+  },
+  "steps": [
+    {
+      "id": "base",
+      "uses": "activity:checks.base@1",
+      "with": {
+        "base": {
+          "$ref": "inputs.base"
+        }
+      }
+    },
+    {
+      "id": "implement",
+      "uses": "activity:agent.invoke@1",
+      "with": {
+        "role": "verified_coder",
+        "outputSchema": "schema:iteration-result@1",
+        "fresh_context": true,
+        "context": {
+          "FEATURES_PATH": {
+            "$ref": "inputs.features_path"
+          }
+        }
+      }
+    },
+    {
+      "id": "implementation_complete",
+      "uses": "activity:gate.assert@1",
+      "with": {
+        "value": {
+          "$ref": "steps.implement.output.continue"
+        },
+        "equals": false,
+        "message": "Implementation incomplete; stop before verification"
+      }
+    },
+    {
+      "id": "verify",
+      "uses": "subflow:verified-unit@1",
+      "with": {
+        "features_path": {
+          "$ref": "inputs.features_path"
+        },
+        "event": {
+          "$ref": "inputs.event"
+        },
+        "max_tier": {
+          "$ref": "inputs.max_tier"
+        },
+        "unit": {
+          "$ref": "inputs.unit"
+        },
+        "base": {
+          "$ref": "steps.base.output.base_revision"
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "verification": {
+      "$ref": "steps.verify.output"
+    }
+  }
+}
