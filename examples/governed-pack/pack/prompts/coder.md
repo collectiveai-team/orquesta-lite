@@ -7,8 +7,10 @@ Durable workflow state: {{WORKFLOW_STATE}}
 Current ticket: {{TICKET}}
 Refused commit (empty unless a hook rejected this ticket): {{COMMIT_FAILURE}}
 
-If COMMIT_FAILURE is nonempty, repair only the reported hook failure. The flow
-will retry the commit. Otherwise, implement only the current ticket and its
+If COMMIT_FAILURE is nonempty, repair only the reported hook failure, rerun the
+focused tests affected by the repair, and report their actual argv and exit
+codes. The flow checks those results before retrying the commit. Otherwise,
+implement only the current ticket and its
 acceptance criteria. Preserve completed tickets. Read the latest state history:
 in fast mode it contains findings from an incomplete prior attempt. Add focused,
 deterministic tests and run the affected tests before reporting. Record the

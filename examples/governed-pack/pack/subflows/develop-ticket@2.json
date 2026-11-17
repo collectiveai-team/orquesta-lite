@@ -112,6 +112,31 @@
       }
     },
     {
+      "id": "repair_preflight",
+      "uses": "activity:ticket.preflight@1",
+      "if": "inputs.state.status == \"active\" && inputs.state.next_ticket != null && (steps.commit_ticket.output.blocked == true)",
+      "with": {
+        "state": {
+          "$ref": "inputs.state"
+        },
+        "implementation": {
+          "$ref": "steps.repair_commit.output"
+        }
+      }
+    },
+    {
+      "id": "repair_checks",
+      "uses": "activity:gate.assert@1",
+      "if": "inputs.state.status == \"active\" && inputs.state.next_ticket != null && (steps.commit_ticket.output.blocked == true)",
+      "with": {
+        "value": {
+          "$ref": "steps.repair_preflight.output.approved"
+        },
+        "equals": true,
+        "message": "commit-hook repair did not pass focused tests"
+      }
+    },
+    {
       "id": "commit_retry",
       "uses": "activity:git.commit@1",
       "if": "inputs.state.status == \"active\" && inputs.state.next_ticket != null && (steps.commit_ticket.output.blocked == true)",

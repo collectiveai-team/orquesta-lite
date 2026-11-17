@@ -111,6 +111,17 @@ func TestAStillBlockedCommitFailsTheRun(t *testing.T) {
 	}
 }
 
+func TestHookRepairChecksFocusedTestsBeforeRetryingCommit(t *testing.T) {
+	steps := developTicketSteps(t)
+	order := stepOrder(t)
+	if !(order["repair_commit"] < order["repair_preflight"] && order["repair_preflight"] < order["repair_checks"] && order["repair_checks"] < order["commit_retry"]) {
+		t.Fatalf("hook repair checks must precede commit retry: %v", order)
+	}
+	if steps["repair_preflight"]["uses"] != "activity:ticket.preflight@1" || steps["repair_checks"]["uses"] != "activity:gate.assert@1" {
+		t.Fatalf("hook repair does not validate focused tests: preflight=%v gate=%v", steps["repair_preflight"], steps["repair_checks"])
+	}
+}
+
 func TestCoderPromptDocumentsTheCommitFailureInput(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "examples", "governed-pack", "pack", "prompts", "coder.md"))
 	if err != nil {
